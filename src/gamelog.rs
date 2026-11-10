@@ -58,6 +58,26 @@ pub fn parse_wild(line: &str) -> Option<WildLine> {
     })
 }
 
+/// A Pokémon the game handed over outside battle (so far: the starter from
+/// the briefcase), e.g.
+///
+///   07:31:32 INFO  STARTER  starter given: species 7 shiny 0 (case shiny 0)
+#[derive(Debug, Clone, PartialEq)]
+pub struct GiftLine {
+    /// National Dex number.
+    pub species: u32,
+    pub shiny: bool,
+}
+
+/// Parse one log line; `None` if it isn't a "starter given" line.
+pub fn parse_gift(line: &str) -> Option<GiftLine> {
+    let i = line.find(" STARTER ")?;
+    let body = &line[i + 9..];
+    let (species, rest) = number_after(body, "starter given: species ")?;
+    let shiny = number_after(rest, " shiny ").map_or(false, |(n, _)| n > 0);
+    (species > 0).then_some(GiftLine { species, shiny })
+}
+
 pub fn is_battle_start(line: &str) -> bool {
     line.contains(" BATTLE ") && line.contains("encounter effect")
 }
@@ -126,6 +146,7 @@ pub struct LogTail {
     last_scan: Option<Instant>,
     first_pick: bool,
     grouper: Grouper,
+    gifts: Vec<GiftLine>,
 }
 
 impl LogTail {
@@ -138,6 +159,7 @@ impl LogTail {
             last_scan: None,
             first_pick: true,
             grouper: Grouper::default(),
+            gifts: Vec::new(),
         }
     }
 
@@ -164,6 +186,11 @@ impl LogTail {
             self.file = Some(newest);
         }
         Ok(())
+    }
+
+    /// Starters (gifts) handed over since the last call.
+    pub fn take_gifts(&mut self) -> Vec<GiftLine> {
+        std::mem::take(&mut self.gifts)
     }
 
     /// New battles since the last call (each = the WILD lines of one battle).
@@ -197,6 +224,9 @@ impl LogTail {
             self.partial.push_str(&String::from_utf8_lossy(&buf));
             while let Some(nl) = self.partial.find('\n') {
                 let line: String = self.partial.drain(..=nl).collect();
+                if let Some(g) = parse_gift(line.trim_end()) {
+                    self.gifts.push(g);
+                }
                 if let Some(group) = self.grouper.push(line.trim_end(), now) {
                     out.push(group);
                 }
@@ -225,6 +255,20 @@ mod tests {
 07:07:31 INFO  WILD     shiny chance 4 in 8192 for species 447 at level 24 (sweet scent on rare grass)
 07:07:31 INFO  BATTLE   encounter effect took 175 ms
 ";
+
+    #[test]
+    fn parses_starter_line() {
+        assert_eq!(
+            parse_gift("07:31:32 INFO  STARTER  starter given: species 7 shiny 0 (case shiny 0)"),
+            Some(GiftLine { species: 7, shiny: false })
+        );
+        assert_eq!(
+            parse_gift("07:31:32 INFO  STARTER  starter given: species 390 shiny 1 (case shiny 1)"),
+            Some(GiftLine { species: 390, shiny: true })
+        );
+        assert_eq!(parse_gift("07:31:32 INFO  STARTER  starter given as species 7 (story starter 393)"), None);
+        assert_eq!(parse_gift("07:31:31 INFO  STARTER  the briefcase's YES: 1, 4, 7 kept for the gift (pool type -1)"), None);
+    }
 
     #[test]
     fn parses_wild_line() {

@@ -88,6 +88,8 @@ pub enum WorkerMsg {
         plate: usize,
         yellow: u32,
     },
+    /// The starter picked from the briefcase came out shiny.
+    ShinyGift,
     /// Shiny chance the game reported for the latest encounter.
     LogOdds {
         num: u32,
@@ -175,6 +177,23 @@ fn run(
                             log_battle_at = Some(Instant::now());
                             star_done = false;
                 star_track.clear();
+                        }
+                    }
+                    // Starter picked from the briefcase: one soft reset, and
+                    // the game says whether it's shiny. Screen reading can't
+                    // see this, so it's counted whichever way counting is set.
+                    for gift in tail.take_gifts() {
+                        if s.paused {
+                            continue;
+                        }
+                        let names: Vec<usize> = (gift.species as usize)
+                            .checked_sub(1)
+                            .filter(|&i| i < species.len())
+                            .into_iter()
+                            .collect();
+                        send(WorkerMsg::Encounter { names, added: 1, late: false });
+                        if gift.shiny {
+                            send(WorkerMsg::ShinyGift);
                         }
                     }
                 }

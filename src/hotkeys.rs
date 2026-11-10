@@ -13,16 +13,18 @@ pub enum HotAction {
     Pause,
     Caught,
     Undo,
+    ClickThrough,
 }
 
 impl HotAction {
-    pub const ALL: [HotAction; 6] = [
+    pub const ALL: [HotAction; 7] = [
         HotAction::ToggleHide,
         HotAction::Plus,
         HotAction::Minus,
         HotAction::Pause,
         HotAction::Caught,
         HotAction::Undo,
+        HotAction::ClickThrough,
     ];
 
     pub fn label(self) -> &'static str {
@@ -33,6 +35,7 @@ impl HotAction {
             HotAction::Pause => "Pause / resume auto count",
             HotAction::Caught => "Caught! (asks to confirm)",
             HotAction::Undo => "Undo last encounter",
+            HotAction::ClickThrough => "Click-through on / off (modular overlay)",
         }
     }
 }
@@ -107,6 +110,7 @@ pub struct KeyBinds {
     pub pause: Option<KeyBind>,
     pub caught: Option<KeyBind>,
     pub undo: Option<KeyBind>,
+    pub click_through: Option<KeyBind>,
 }
 
 impl Default for KeyBinds {
@@ -118,6 +122,7 @@ impl Default for KeyBinds {
             pause: Some(KeyBind::ctrl_shift("P")),
             caught: Some(KeyBind::ctrl_shift("C")),
             undo: Some(KeyBind::ctrl_shift("Z")),
+            click_through: Some(KeyBind::ctrl_shift("T")),
         }
     }
 }
@@ -131,6 +136,7 @@ impl KeyBinds {
             HotAction::Pause => self.pause.as_ref(),
             HotAction::Caught => self.caught.as_ref(),
             HotAction::Undo => self.undo.as_ref(),
+            HotAction::ClickThrough => self.click_through.as_ref(),
         }
     }
 
@@ -142,6 +148,7 @@ impl KeyBinds {
             HotAction::Pause => self.pause = b,
             HotAction::Caught => self.caught = b,
             HotAction::Undo => self.undo = b,
+            HotAction::ClickThrough => self.click_through = b,
         }
     }
 

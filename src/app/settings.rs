@@ -40,6 +40,36 @@ fn method_short(m: HuntMethod) -> (&'static str, &'static str) {
     }
 }
 
+/// Methods on offer. "From the game" and "Custom" are no longer offered
+/// (they still work for anyone who already picked one).
+fn method_offered(m: HuntMethod) -> bool {
+    !matches!(m, HuntMethod::FromGameLog | HuntMethod::Custom)
+}
+
+/// Egg hunting isn't well tested yet.
+fn method_experimental(m: HuntMethod) -> bool {
+    matches!(m, HuntMethod::Masuda)
+}
+
+const EXPERIMENTAL_NOTE: &str = "Experimental: issues may occur with this hunting style.";
+
+/// Small amber "issues may occur" chip in a method tile's top-right corner
+/// (left of the tick when it's selected).
+fn warn_chip(ui: &egui::Ui, tile: Rect, selected: bool) {
+    let p = ui.painter();
+    let font = egui::FontId::proportional(kit::fs(10.5));
+    let ink = theme::HP_YELLOW;
+    let galley = p.layout_no_wrap("⚠ Issues may occur".to_string(), font, ink);
+    let right = tile.right() - if selected { 32.0 } else { 10.0 };
+    let r = Rect::from_min_size(
+        egui::pos2(right - galley.size().x - 12.0, tile.top() + 9.0),
+        galley.size() + egui::vec2(12.0, 4.0),
+    );
+    p.rect_filled(r, r.height() / 2.0, ink.gamma_multiply(0.16));
+    p.rect_stroke(r, r.height() / 2.0, egui::Stroke::new(1.0f32, ink.gamma_multiply(0.6)));
+    p.galley(r.min + egui::vec2(6.0, 2.0), galley, ink);
+}
+
 /// "1 in 2,048" for a method, using the rest of the current settings.
 fn method_badge(cfg: &Config, m: HuntMethod) -> String {
     let mut c = cfg.clone();
@@ -771,7 +801,10 @@ impl App {
     /// Method tiles + method-specific controls.
     fn method_picker(&mut self, ui: &mut egui::Ui) {
         let methods: Vec<HuntMethod> = if self.setup.show_all_methods {
-            HuntMethod::ALL.to_vec()
+            HuntMethod::ALL
+                .into_iter()
+                .filter(|&m| method_offered(m) || m == self.cfg.hunt_method)
+                .collect()
         } else {
             COMMON_METHODS.to_vec()
         };
@@ -783,7 +816,7 @@ impl App {
                     let (title, sub) = method_short(m);
                     let badge = method_badge(&self.cfg, m);
                     let sel = self.cfg.hunt_method == m;
-                    if kit::choice_tile(
+                    let tile = kit::choice_tile(
                         ui,
                         egui::vec2(w, 104.0),
                         sel,
@@ -791,10 +824,16 @@ impl App {
                         title,
                         sub,
                         &badge,
-                    )
-                    .on_hover_text(m.note())
-                    .clicked()
-                    {
+                    );
+                    if method_experimental(m) {
+                        warn_chip(ui, tile.rect, sel);
+                    }
+                    let tip = if method_experimental(m) {
+                        format!("{}\n\n⚠ {EXPERIMENTAL_NOTE}", m.note())
+                    } else {
+                        m.note().to_string()
+                    };
+                    if tile.on_hover_text(tip).clicked() {
                         self.cfg.hunt_method = m;
                         self.dirty = true;
                     }
@@ -807,7 +846,7 @@ impl App {
             !self.setup.show_all_methods && !COMMON_METHODS.contains(&self.cfg.hunt_method);
         let more: Vec<&str> = HuntMethod::ALL
             .iter()
-            .filter(|m| !COMMON_METHODS.contains(m))
+            .filter(|m| !COMMON_METHODS.contains(m) && method_offered(**m))
             .map(|m| method_short(*m).0)
             .collect();
         let (label, detail) = if self.setup.show_all_methods {
@@ -832,6 +871,10 @@ impl App {
                 .size(kit::fs(11.5))
                 .color(MUTED()),
         );
+        if method_experimental(self.cfg.hunt_method) {
+            ui.add_space(4.0);
+            kit::pill(ui, &format!("⚠ {EXPERIMENTAL_NOTE}"), PillKind::Warn);
+        }
         match self.cfg.hunt_method {
             HuntMethod::PokeRadar => {
                 ui.add_space(6.0);
@@ -1483,7 +1526,168 @@ impl App {
     }
 
     fn page_overlay(&mut self, ui: &mut egui::Ui) {
+        use crate::config::{OverlayModules, OverlaySize, OverlayStyle};
         kit::page_header(ui, "OVERLAY", "How the counter window looks and behaves.");
+
+        // Either / or: the modular overlay, or the original one untouched.
+        kit::card(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Overlay style").size(kit::fs(13.0)).color(TEXT()));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let mut style = self.cfg.overlay.style;
+                    if kit::segmented(ui, &mut style, &[(OverlayStyle::Legacy, "Legacy"), (OverlayStyle::Modular, "Modular")]) {
+                        self.cfg.overlay.style = style;
+                        self.dirty = true;
+                    }
+                });
+            });
+            ui.add_space(4.0);
+            let about = if self.cfg.overlay.legacy() {
+                "The original overlay, exactly as it was. Switch to Modular to pick its sections and size."
+            } else {
+                "Turn each section on or off below and pick a size. Changes show on the overlay straight away."
+            };
+            ui.label(RichText::new(about).size(kit::fs(12.0)).color(MUTED()));
+        });
+
+        if !self.cfg.overlay.legacy() {
+            kit::section(ui, "Size");
+            kit::card(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Size").size(kit::fs(13.0)).color(TEXT()));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let mut size = self.cfg.overlay.size;
+                        if kit::segmented(ui, &mut size, &[(OverlaySize::Bar, "Bar"), (OverlaySize::Compact, "Compact"), (OverlaySize::Full, "Full")]) {
+                            self.cfg.overlay.size = size;
+                            self.dirty = true;
+                        }
+                    });
+                });
+                ui.add_space(4.0);
+                let about = match self.cfg.overlay.size {
+                    OverlaySize::Full => "The usual size. The window grows and shrinks to fit the sections you turn on.",
+                    OverlaySize::Compact => "Small and narrow: just the sprites and the counter. The other sections below are left out (Caught! and alerts still pop up when needed).",
+                    OverlaySize::Bar => "One slim line with your target, count and odds. Luck, next milestone, session, pace, streak and buttons join it if they're on; the rest are left out.",
+                };
+                ui.label(RichText::new(about).size(kit::fs(12.0)).color(MUTED()));
+            });
+
+            ui.horizontal(|ui| {
+                kit::section(ui, "Sections");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.add(egui::Button::new(RichText::new("Reset to default").size(kit::fs(12.0))).fill(kit::btn_fill())).clicked() {
+                        let keep = self.cfg.overlay.clone();
+                        self.cfg.overlay = OverlayModules {
+                            style: keep.style,
+                            size: keep.size,
+                            click_through: keep.click_through,
+                            ..OverlayModules::default()
+                        };
+                        self.cfg.level_on_overlay = true;
+                        self.cfg.show_session_timer = true;
+                        self.dirty = true;
+                    }
+                    if ui.add(egui::Button::new(RichText::new("Turn all on").size(kit::fs(12.0))).fill(kit::btn_fill())).clicked() {
+                        let o = &mut self.cfg.overlay;
+                        for f in [
+                            &mut o.status_dot, &mut o.target, &mut o.sprites, &mut o.counter, &mut o.buttons,
+                            &mut o.odds_bar, &mut o.method_line, &mut o.luck, &mut o.milestone,
+                            &mut o.session, &mut o.sparkline, &mut o.last_seen, &mut o.phases,
+                            &mut o.xp, &mut o.daily_goal, &mut o.streak, &mut o.best,
+                        ] {
+                            *f = true;
+                        }
+                        self.cfg.level_on_overlay = true;
+                        self.cfg.show_session_timer = true;
+                        self.dirty = true;
+                    }
+                });
+            });
+
+            let sep = |ui: &mut egui::Ui| {
+                ui.add_space(6.0);
+                ui.separator();
+                ui.add_space(6.0);
+            };
+            // A setting that only matters when its parent is on.
+            let sub = |ui: &mut egui::Ui, enabled: bool, label: &str, help: &str, on: &mut bool| -> bool {
+                let mut changed = false;
+                ui.horizontal(|ui| {
+                    ui.add_space(22.0);
+                    ui.add_enabled_ui(enabled, |ui| {
+                        ui.vertical(|ui| changed = kit::toggle_row(ui, label, help, on));
+                    });
+                });
+                changed
+            };
+
+            kit::section(ui, "Hunt");
+            kit::card(ui, |ui| {
+                let o = &mut self.cfg.overlay;
+                let mut d = kit::toggle_row(ui, "Target name", "The name plate, with how often your target turns up (\"SEEN 12\").", &mut o.target);
+                sep(ui);
+                d |= kit::toggle_row(ui, "Sprites", "Your target, normal and shiny, animated.", &mut o.sprites);
+                let on = o.sprites;
+                d |= sub(ui, on, "Shiny only", "One big shiny sprite instead of normal + shiny side by side.", &mut o.single_sprite);
+                sep(ui);
+                d |= kit::toggle_row(ui, "Encounter counter", "The big number, with ENCOUNTERS / PAUSED under it.", &mut o.counter);
+                let on = o.counter;
+                d |= sub(ui, on, "Today's hunting time", "A small timer next to the counter: how long you've hunted today, across all runs.", &mut self.cfg.show_session_timer);
+                sep(ui);
+                let o = &mut self.cfg.overlay;
+                d |= kit::toggle_row(ui, "Buttons", "−1, +1, pause and Caught!. Hotkeys still work when they're hidden, and the Caught! question always shows.", &mut o.buttons);
+                self.dirty |= d;
+            });
+
+            kit::section(ui, "Header");
+            kit::card(ui, |ui| {
+                let mut d = kit::toggle_row(ui, "Level badge", "Your trainer level next to the title.", &mut self.cfg.level_on_overlay);
+                sep(ui);
+                d |= kit::toggle_row(ui, "Status light", "Green watching, gold in battle, grey paused, red if something needs fixing.", &mut self.cfg.overlay.status_dot);
+                self.dirty |= d;
+            });
+
+            kit::section(ui, "Odds & luck");
+            kit::card(ui, |ui| {
+                let o = &mut self.cfg.overlay;
+                let mut d = kit::toggle_row(ui, "Odds bar", "Under / at / over the odds, filling up as you go.", &mut o.odds_bar);
+                sep(ui);
+                d |= kit::toggle_row(ui, "Method line", "What the odds are based on, e.g. \"Rare grass · Doubles · 1/4,096 each\".", &mut o.method_line);
+                sep(ui);
+                d |= kit::toggle_row(ui, "Luck", "How many hunters would have found their shiny by now. Under 50% is fine; over 80% is unlucky.", &mut o.luck);
+                sep(ui);
+                d |= kit::toggle_row(ui, "Next milestone", "The nearer of the next thousand and the next 1×, 2×… the odds, with how many to go.", &mut o.milestone);
+                self.dirty |= d;
+            });
+
+            kit::section(ui, "Session");
+            kit::card(ui, |ui| {
+                let o = &mut self.cfg.overlay;
+                let mut d = kit::toggle_row(ui, "Session strip", "This session's encounters, time and pace per hour.", &mut o.session);
+                sep(ui);
+                d |= kit::toggle_row(ui, "Pace graph", "A tiny bar graph of encounters each minute for the last 20 minutes.", &mut o.sparkline);
+                sep(ui);
+                d |= kit::toggle_row(ui, "Last encounter", "Which Pokémon were in the last battle, and how long ago.", &mut o.last_seen);
+                sep(ui);
+                d |= kit::toggle_row(ui, "Phase count", "Shinies of other Pokémon found during this hunt.", &mut o.phases);
+                self.dirty |= d;
+            });
+
+            kit::section(ui, "Progress");
+            kit::card(ui, |ui| {
+                let o = &mut self.cfg.overlay;
+                let mut d = kit::toggle_row(ui, "Trainer XP bar", "Your level and how close the next one is.", &mut o.xp);
+                sep(ui);
+                d |= kit::toggle_row(ui, "Daily goal bar", "Today's encounters towards your daily goal (set it in Profile > Goals).", &mut o.daily_goal);
+                sep(ui);
+                d |= kit::toggle_row(ui, "Streak flame", "Days in a row you've hit your daily goal.", &mut o.streak);
+                sep(ui);
+                d |= kit::toggle_row(ui, "Personal best", "Your best single day, turning gold when today beats it.", &mut o.best);
+                self.dirty |= d;
+            });
+        }
+
+        kit::section(ui, "Behaviour");
         kit::card(ui, |ui| {
             self.dirty |= kit::toggle_row(
                 ui,
@@ -1509,6 +1713,19 @@ impl App {
                 "Shows just a small badge with your target and count.",
                 &mut self.cfg.mini,
             );
+            if !self.cfg.overlay.legacy() {
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(8.0);
+                let key = self.cfg.keybinds.get(HotAction::ClickThrough).map(|b| b.text());
+                let help = match &key {
+                    Some(k) => format!("Clicks go straight through the overlay to the game. Press {k} to turn it off again (Settings > Hotkeys). It turns itself off while a shiny or the Caught! question needs a click."),
+                    None => "Clicks go straight through the overlay to the game. Set a hotkey for it in Settings > Hotkeys first, so you can turn it off again.".to_string(),
+                };
+                ui.add_enabled_ui(key.is_some() || self.cfg.overlay.click_through, |ui| {
+                    self.dirty |= kit::toggle_row(ui, "Click-through", &help, &mut self.cfg.overlay.click_through);
+                });
+            }
             ui.add_space(8.0);
             ui.separator();
             ui.add_space(8.0);
@@ -1526,22 +1743,28 @@ impl App {
                 self.cfg.mini = false;
                 self.play(crate::sound::Sfx::Milestone);
             }
-            ui.add_space(8.0);
-            ui.separator();
-            ui.add_space(8.0);
-            self.dirty |= kit::toggle_row(
-                ui,
-                "Today's hunting time",
-                "A small timer on the overlay showing how long you've hunted today, across all runs.",
-                &mut self.cfg.show_session_timer,
-            );
+            if self.cfg.overlay.legacy() {
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(8.0);
+                self.dirty |= kit::toggle_row(
+                    ui,
+                    "Today's hunting time",
+                    "A small timer on the overlay showing how long you've hunted today, across all runs.",
+                    &mut self.cfg.show_session_timer,
+                );
+            }
         });
         kit::card(ui, |ui| {
             ui.label(RichText::new("Background opacity").size(kit::fs(13.0)).color(TEXT()));
+            if !self.cfg.overlay.legacy() {
+                ui.label(RichText::new("Fade the panel so the game shows through.").size(kit::fs(12.0)).color(MUTED()));
+            }
             ui.add_space(4.0);
             ui.spacing_mut().slider_width = ui.available_width() - 70.0;
+            let lowest = if self.cfg.overlay.legacy() { 0.4 } else { 0.1 };
             self.dirty |= ui
-                .add(egui::Slider::new(&mut self.cfg.opacity, 0.4..=1.0).show_value(true))
+                .add(egui::Slider::new(&mut self.cfg.opacity, lowest..=1.0).show_value(true))
                 .changed();
         });
         self.sounds_card(ui);

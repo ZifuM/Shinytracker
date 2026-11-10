@@ -17,12 +17,25 @@ mod extras;
 mod hunt_pages;
 mod insights;
 mod notices;
+mod overlay_mod;
 mod settings;
 mod trainer;
 mod ui_kit;
 
 pub const FULL_SIZE: [f32; 2] = [280.0, 344.0];
 pub const MINI_SIZE: [f32; 2] = [84.0, 96.0];
+
+/// `shiny_alert` value for a shiny starter (it isn't on a name plate).
+pub(crate) const GIFT_PLATE: usize = 99;
+
+/// The line under "SHINY!" on the alert banner.
+fn shiny_alert_text(plate_idx: usize) -> String {
+    if plate_idx == GIFT_PLATE {
+        "Your starter is shiny!".to_string()
+    } else {
+        format!("Star on plate {} — go catch it!", plate_idx + 1)
+    }
+}
 
 #[derive(PartialEq, Clone, Copy)]
 enum Tab {
@@ -203,6 +216,16 @@ pub struct App {
     /// Achievement / level-up pop-ups waiting to show.
     toasts: std::collections::VecDeque<trainer::Toast>,
     progress_checked: Instant,
+    /// Modular overlay: size it needs (measured while drawing).
+    ov_size: Option<[f32; 2]>,
+    /// Click-through state last sent to the window.
+    applied_passthrough: Option<bool>,
+    /// Recent auto-counted encounters (unix time, how many) for the pace graph.
+    recent_enc: std::collections::VecDeque<(u64, u64)>,
+    /// When the last battle was counted (for "last encounter").
+    last_enc_at: Option<Instant>,
+    /// Slow-changing numbers for the modular overlay, refreshed every second.
+    ov_cache: Option<(Instant, overlay_mod::OvStats)>,
 }
 
 fn per_battle_for(b: BattleType) -> PerBattle {
@@ -254,6 +277,13 @@ impl App {
             cfg.star_alert_reset2 = true;
             cfg.star_alert_on3 = true;
         }
+        // Everyone moves to the modular overlay once, set up like the
+        // original (its sections on, the new extras off). After that the
+        // choices in Settings > Overlay stand.
+        if !cfg.overlay_reset1 {
+            cfg.overlay = crate::config::OverlayModules::default();
+            cfg.overlay_reset1 = true;
+        }
         let shared = Arc::new(Mutex::new(worker_settings(&cfg, 0, false)));
         let (tx, rx) = channel();
         worker::spawn(shared.clone(), tx, ctx.clone(), species.clone());
@@ -289,6 +319,11 @@ impl App {
             hotkeys: Hotkeys::new(&cfg.keybinds),
             status: Status::default(),
             last_battle: Vec::new(),
+            ov_size: None,
+            applied_passthrough: None,
+            recent_enc: std::collections::VecDeque::new(),
+            last_enc_at: None,
+            ov_cache: None,
             battle_target_hits: 0,
             battle_species: Vec::new(),
             target_flash: None,
@@ -502,6 +537,14 @@ impl App {
                     }
                 }
                 self.last_battle = names;
+                self.last_enc_at = Some(Instant::now());
+                if added > 0 {
+                    let now = now_unix();
+                    self.recent_enc.push_back((now, added as u64));
+                    while self.recent_enc.front().is_some_and(|&(t, _)| now.saturating_sub(t) > 30 * 60) {
+                        self.recent_enc.pop_front();
+                    }
+                }
                 self.dirty = true;
             }
             WorkerMsg::BattleOver => {}
@@ -511,6 +554,15 @@ impl App {
                     self.shiny_fanfare();
                 }
                 self.shiny_alert = Some(plate);
+                if self.cfg.mini {
+                    self.cfg.mini = false;
+                }
+            }
+            WorkerMsg::ShinyGift => {
+                if self.shiny_alert.is_none() {
+                    self.shiny_fanfare();
+                }
+                self.shiny_alert = Some(GIFT_PLATE);
                 if self.cfg.mini {
                     self.cfg.mini = false;
                 }
@@ -541,11 +593,28 @@ impl App {
                 self.dirty = true;
             }
             HotAction::Undo => self.undo_last(),
+            HotAction::ClickThrough => {
+                self.cfg.overlay.click_through = !self.cfg.overlay.click_through;
+                self.dirty = true;
+            }
         }
     }
 
     fn sync_window(&mut self, ctx: &egui::Context) {
-        let want = if self.cfg.mini { MINI_SIZE } else { FULL_SIZE };
+        let want = if self.cfg.mini {
+            MINI_SIZE
+        } else if self.cfg.overlay.legacy() {
+            FULL_SIZE
+        } else {
+            self.ov_size.unwrap_or(FULL_SIZE)
+        };
+        // Click-through (modular overlay only). Never while a shiny or the
+        // Caught! question needs a click.
+        let pass = self.click_through_active();
+        if self.applied_passthrough != Some(pass) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(pass));
+            self.applied_passthrough = Some(pass);
+        }
         if self.applied_size != Some(want) {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
                 want[0], want[1],
@@ -1007,7 +1076,7 @@ impl App {
                     p.text(
                         c + egui::vec2(0.0, 14.0),
                         Align2::CENTER_CENTER,
-                        format!("Star on plate {} — go catch it!", plate_idx + 1),
+                        shiny_alert_text(plate_idx),
                         egui::FontId::proportional(11.0),
                         Color32::WHITE,
                     );
@@ -2186,8 +2255,10 @@ impl eframe::App for App {
         self.sync_window(ctx);
         if self.cfg.mini {
             self.mini_ui(ctx);
-        } else {
+        } else if self.cfg.overlay.legacy() {
             self.full_ui(ctx);
+        } else {
+            self.modular_ui(ctx);
         }
         if self.show_setup {
             // Open next to the overlay, on the side with more room (same monitor).

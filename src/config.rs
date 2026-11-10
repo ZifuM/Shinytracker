@@ -219,6 +219,93 @@ pub enum UiMode {
     Dark,
 }
 
+/// Overlay layout: the original fixed Legacy overlay, or the Modular one
+/// whose sections can each be turned on and off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum OverlayStyle {
+    #[default]
+    Modular,
+    Legacy,
+}
+
+/// Size preset for the modular overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum OverlaySize {
+    #[default]
+    Full,
+    Compact,
+    Bar,
+}
+
+/// Sections of the modular overlay. What the original overlay had is on by
+/// default; the newer extras start off.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OverlayModules {
+    pub style: OverlayStyle,
+    pub size: OverlaySize,
+    /// Clicks go through to the game (toggle back with the hotkey).
+    pub click_through: bool,
+    // Header
+    pub status_dot: bool,
+    // Hunt
+    pub target: bool,
+    pub sprites: bool,
+    /// Just the shiny sprite (one big box) instead of normal + shiny.
+    pub single_sprite: bool,
+    pub counter: bool,
+    pub buttons: bool,
+    // Odds & luck
+    pub odds_bar: bool,
+    pub method_line: bool,
+    pub luck: bool,
+    pub milestone: bool,
+    // Session
+    pub session: bool,
+    pub sparkline: bool,
+    pub last_seen: bool,
+    pub phases: bool,
+    // Progress
+    pub xp: bool,
+    pub daily_goal: bool,
+    pub streak: bool,
+    pub best: bool,
+}
+
+impl Default for OverlayModules {
+    fn default() -> Self {
+        Self {
+            style: OverlayStyle::Modular,
+            size: OverlaySize::Full,
+            click_through: false,
+            status_dot: true,
+            target: true,
+            sprites: true,
+            single_sprite: false,
+            counter: true,
+            buttons: true,
+            odds_bar: true,
+            method_line: true,
+            luck: false,
+            milestone: false,
+            session: false,
+            sparkline: false,
+            last_seen: false,
+            phases: false,
+            xp: false,
+            daily_goal: false,
+            streak: false,
+            best: false,
+        }
+    }
+}
+
+impl OverlayModules {
+    pub fn legacy(&self) -> bool {
+        self.style == OverlayStyle::Legacy
+    }
+}
+
 /// How the app looks: mode plus an accent colour, optionally a gradient.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -385,6 +472,9 @@ pub struct Config {
     pub pinned: bool,
     pub mini: bool,
     pub opacity: f32,
+    /// Which overlay to show (Modular sections, or the Legacy layout) and
+    /// what the modular one includes.
+    pub overlay: OverlayModules,
     /// Keep the overlay visible over the game's borderless/fullscreen mode.
     pub borderless_fix: bool,
 
@@ -398,6 +488,9 @@ pub struct Config {
     pub star_alert_reset2: bool,
     /// One-time switch back on of the shiny star alert (now on by default).
     pub star_alert_on3: bool,
+    /// One-time switch to the modular overlay (original sections on, the
+    /// new extras off).
+    pub overlay_reset1: bool,
 }
 
 impl Default for Config {
@@ -457,6 +550,7 @@ impl Default for Config {
             settings_pos: None,
             settings_size: None,
             settings_maximized: false,
+            overlay: OverlayModules::default(),
             pinned: false,
             mini: false,
             opacity: 0.94,
@@ -467,6 +561,7 @@ impl Default for Config {
             star_alert_reset: false,
             star_alert_reset2: false,
             star_alert_on3: false,
+            overlay_reset1: false,
         }
     }
 }
