@@ -5,7 +5,6 @@ An always-on-top shiny hunting counter for **Pokémon Platinum Together**.
 <p>
   <img src="docs/overlay.png" alt="Shiny Tracker overlay" height="360">
   &nbsp;
-  <img src="docs/stats.png" alt="Run stats in settings" height="360">
 </p>
 
 ## Download
