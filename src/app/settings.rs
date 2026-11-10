@@ -483,6 +483,77 @@ impl App {
         });
     }
 
+    /// Advanced: where saves and downloads are kept, with a way to move them.
+    fn data_folder_card(&mut self, ui: &mut egui::Ui) {
+        // Folder box answered? Move everything there.
+        if let Some(rx) = &self.setup.data_picker {
+            if let Ok(res) = rx.try_recv() {
+                self.setup.data_picker = None;
+                if let Some(target) = res {
+                    self.move_data(Some(target));
+                }
+            }
+        }
+        let here = crate::config::data_dir();
+        let moved = crate::config::data_dir_moved();
+        kit::section(ui, "Data folder");
+        kit::card(ui, |ui| {
+            ui.label(
+                RichText::new(
+                    "Your hunts, runs, stats and settings are saved here, plus downloaded sprites. Move it anywhere you like (another drive, a synced folder) and everything comes along.",
+                )
+                .size(kit::fs(12.0))
+                .color(MUTED()),
+            );
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("📁").size(14.0));
+                ui.add(egui::Label::new(RichText::new(here.display().to_string()).size(kit::fs(12.5)).color(TEXT())).truncate())
+                    .on_hover_text(here.display().to_string());
+            });
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if ui.add(egui::Button::new(RichText::new("Open folder").size(kit::fs(12.5))).fill(kit::btn_fill())).clicked() {
+                    crate::share::open_dir(&here);
+                }
+                let busy = self.setup.data_picker.is_some();
+                if ui
+                    .add_enabled(!busy, egui::Button::new(RichText::new("Move to…").size(kit::fs(12.5))).fill(kit::btn_fill()))
+                    .on_hover_text("Pick a folder; a ShinyTracker folder is made inside it")
+                    .clicked()
+                {
+                    let start = dirs::document_dir().unwrap_or_default();
+                    self.setup.data_picker = Some(crate::share::pick_folder(start, ui.ctx().clone()));
+                }
+                if moved
+                    && ui
+                        .add_enabled(!busy, egui::Button::new(RichText::new("Back to default").size(kit::fs(12.5))).fill(kit::btn_fill()))
+                        .on_hover_text("Move everything back to AppData")
+                        .clicked()
+                {
+                    self.move_data(None);
+                }
+            });
+            if let Some((ok, msg)) = &self.setup.data_msg {
+                ui.add_space(6.0);
+                kit::pill(ui, msg, if *ok { PillKind::Ok } else { PillKind::Bad });
+            }
+        });
+    }
+
+    /// Save, move the data folder (None = back to default), save again there.
+    fn move_data(&mut self, target: Option<std::path::PathBuf>) {
+        self.cfg.save();
+        self.setup.data_msg = Some(match crate::config::move_data_dir(target) {
+            Ok(dir) => {
+                self.cfg.save();
+                self.dirty = false;
+                (true, format!("✔ Moved to {}", dir.display()))
+            }
+            Err(e) => (false, e),
+        });
+    }
+
     /// Advanced: version and automatic updates.
     fn updates_card(&mut self, ui: &mut egui::Ui) {
         use crate::update::{self, State};
@@ -1632,6 +1703,7 @@ impl App {
 
         self.updates_card(ui);
         self.backup_card(ui);
+        self.data_folder_card(ui);
 
         kit::section(ui, "Counter");
         kit::card(ui, |ui| {

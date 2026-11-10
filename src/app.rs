@@ -75,6 +75,9 @@ struct Setup {
     restore_pending: Option<(std::path::PathBuf, Box<Config>)>,
     /// Last backup/restore result (ok?, message).
     backup_msg: Option<(bool, String)>,
+    /// "Move data folder" box while it's open, and the last result.
+    data_picker: Option<Receiver<Option<std::path::PathBuf>>>,
+    data_msg: Option<(bool, String)>,
     show_all_methods: bool,
     welcome_step: usize,
     /// Runs page: showing the stats of this run.
@@ -312,6 +315,8 @@ impl App {
                 backup_picker: None,
                 restore_pending: None,
                 backup_msg: None,
+                data_picker: None,
+                data_msg: None,
                 show_all_methods: false,
                 welcome_step: 0,
                 view_run: None,

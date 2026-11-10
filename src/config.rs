@@ -1,7 +1,7 @@
 use crate::hotkeys::KeyBinds;
 use crate::imageproc::Region;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub use crate::card::CardOptions;
 pub use crate::stats::RunStats;
@@ -471,16 +471,210 @@ impl Default for Config {
     }
 }
 
-pub fn data_dir() -> PathBuf {
+// ───────────────────────────── data folder ─────────────────────────────
+//
+// Saves (config.json) normally live in %APPDATA%\ShinyTracker and downloads
+// (sprites, font) in %LOCALAPPDATA%\ShinyTracker. The user can move both to a
+// folder of their choice (Settings → Advanced → Data folder): everything then
+// lives in <chosen>\ShinyTracker, with downloads in its "cache" subfolder. The
+// choice is remembered in a tiny pointer file that always stays in the
+// default folder, so the app can find the data again on the next start.
+
+/// The default saves folder (%APPDATA%\ShinyTracker).
+pub fn default_data_dir() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("ShinyTracker")
 }
 
-pub fn cache_dir() -> PathBuf {
+fn default_cache_dir() -> PathBuf {
     dirs::cache_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("ShinyTracker")
+}
+
+/// Name of the pointer file (in the default folder) holding a moved location.
+const POINTER: &str = "data-location.txt";
+
+/// The moved data folder, if the user moved it (read once, then kept here).
+fn custom_dir() -> Option<PathBuf> {
+    custom_cell().read().ok().and_then(|g| g.clone())
+}
+
+fn custom_cell() -> &'static std::sync::RwLock<Option<PathBuf>> {
+    static CELL: std::sync::OnceLock<std::sync::RwLock<Option<PathBuf>>> = std::sync::OnceLock::new();
+    CELL.get_or_init(|| {
+        let p = std::fs::read_to_string(default_data_dir().join(POINTER))
+            .ok()
+            .map(|t| PathBuf::from(t.trim()))
+            .filter(|p| !p.as_os_str().is_empty() && p.is_dir());
+        std::sync::RwLock::new(p)
+    })
+}
+
+/// Where saves live now.
+pub fn data_dir() -> PathBuf {
+    custom_dir().unwrap_or_else(default_data_dir)
+}
+
+/// Where downloads (sprites, font) live now.
+pub fn cache_dir() -> PathBuf {
+    match custom_dir() {
+        Some(d) => d.join("cache"),
+        None => default_cache_dir(),
+    }
+}
+
+/// Has the user moved the data folder?
+pub fn data_dir_moved() -> bool {
+    custom_dir().is_some()
+}
+
+/// Move all saves and downloads to `<target>\ShinyTracker` (or back to the
+/// default folders with `None`). Copies everything first and only removes
+/// the old copies once that worked. Save the config right after.
+pub fn move_data_dir(target: Option<PathBuf>) -> Result<PathBuf, String> {
+    let (old_data, old_cache) = (data_dir(), cache_dir());
+    let (new_data, new_cache) = match &target {
+        Some(t) => {
+            let d = if t.file_name().is_some_and(|n| n.eq_ignore_ascii_case("ShinyTracker")) {
+                t.clone()
+            } else {
+                t.join("ShinyTracker")
+            };
+            let c = d.join("cache");
+            (d, c)
+        }
+        None => (default_data_dir(), default_cache_dir()),
+    };
+    move_between(&old_data, &old_cache, &new_data, &new_cache)?;
+    // Remember the choice.
+    let pointer = default_data_dir().join(POINTER);
+    match &target {
+        Some(_) => {
+            let _ = std::fs::create_dir_all(default_data_dir());
+            std::fs::write(&pointer, new_data.display().to_string())
+                .map_err(|e| format!("Moved, but couldn't remember the new place ({e})"))?;
+        }
+        None => {
+            let _ = std::fs::remove_file(&pointer);
+        }
+    }
+    if let Ok(mut g) = custom_cell().write() {
+        *g = target.map(|_| new_data.clone());
+    }
+    Ok(new_data)
+}
+
+/// Copy saves + downloads from the old folders to the new ones, then delete
+/// the old copies. (Separate from the pointer handling so it can be tested.)
+fn move_between(old_data: &Path, old_cache: &Path, new_data: &Path, new_cache: &Path) -> Result<(), String> {
+    let same = |a: &Path, b: &Path| {
+        let n = |p: &Path| p.display().to_string().to_lowercase().trim_end_matches(['\\', '/']).to_string();
+        n(a) == n(b)
+    };
+    if same(old_data, new_data) {
+        return Err("Your data is already in that folder".into());
+    }
+    let inside = |a: &Path, b: &Path| {
+        let (a, b) = (a.display().to_string().to_lowercase(), b.display().to_string().to_lowercase());
+        a.starts_with(&format!("{}\\", b.trim_end_matches('\\'))) || a.starts_with(&format!("{}/", b.trim_end_matches('/')))
+    };
+    if inside(new_data, old_data) || inside(old_data, new_data) {
+        return Err("Pick a folder outside the current data folder".into());
+    }
+    std::fs::create_dir_all(new_data).map_err(|e| format!("Couldn't create the folder ({e})"))?;
+    let probe = new_data.join(".write-test");
+    std::fs::write(&probe, b"ok").map_err(|_| "Can't save in that folder. Pick one in your own files".to_string())?;
+    let _ = std::fs::remove_file(&probe);
+
+    // 1. copy (saves: everything except the pointer and an inner cache folder)
+    let mut copied: Vec<PathBuf> = Vec::new();
+    copy_tree(old_data, new_data, &mut copied, &|rel| rel == Path::new(POINTER) || rel.starts_with("cache"))?;
+    if !same(old_cache, new_cache) && old_cache.is_dir() {
+        copy_tree(old_cache, new_cache, &mut copied, &|_| false)?;
+    }
+    // 2. only now remove the old copies (files we copied, then empty folders)
+    for f in &copied {
+        let _ = std::fs::remove_file(f);
+    }
+    for dir in [old_cache, old_data] {
+        remove_empty_dirs(dir);
+    }
+    Ok(())
+}
+
+/// Copy every file under `from` into `to`, skipping relative paths `skip`
+/// says to. Records each copied source file in `copied`.
+fn copy_tree(from: &Path, to: &Path, copied: &mut Vec<PathBuf>, skip: &dyn Fn(&Path) -> bool) -> Result<(), String> {
+    fn walk(root: &Path, dir: &Path, to: &Path, copied: &mut Vec<PathBuf>, skip: &dyn Fn(&Path) -> bool) -> Result<(), String> {
+        let Ok(rd) = std::fs::read_dir(dir) else { return Ok(()) };
+        for e in rd.flatten() {
+            let p = e.path();
+            let rel = p.strip_prefix(root).unwrap_or(&p).to_path_buf();
+            if skip(&rel) {
+                continue;
+            }
+            if p.is_dir() {
+                walk(root, &p, to, copied, skip)?;
+            } else {
+                let dest = to.join(&rel);
+                if let Some(parent) = dest.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| format!("Couldn't copy {} ({e})", rel.display()))?;
+                }
+                std::fs::copy(&p, &dest).map_err(|e| format!("Couldn't copy {} ({e})", rel.display()))?;
+                copied.push(p);
+            }
+        }
+        Ok(())
+    }
+    walk(from, from, to, copied, skip)
+}
+
+/// Remove folders under (and including) `dir` that are now empty.
+fn remove_empty_dirs(dir: &Path) {
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            if e.path().is_dir() {
+                remove_empty_dirs(&e.path());
+            }
+        }
+    }
+    let _ = std::fs::remove_dir(dir); // only succeeds when empty
+}
+
+#[cfg(test)]
+mod data_dir_tests {
+    use super::*;
+
+    #[test]
+    fn moves_saves_and_cache_then_cleans_up() {
+        let base = std::env::temp_dir().join(format!("st-move-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (od, oc) = (base.join("roaming/ShinyTracker"), base.join("local/ShinyTracker"));
+        std::fs::create_dir_all(oc.join("sprites/bw")).unwrap();
+        std::fs::create_dir_all(&od).unwrap();
+        std::fs::write(od.join("config.json"), "{}").unwrap();
+        std::fs::write(od.join(POINTER), "x").unwrap();
+        std::fs::write(oc.join("sprites/bw/abra.gif"), "gif").unwrap();
+        let nd = base.join("new/ShinyTracker");
+        move_between(&od, &oc, &nd, &nd.join("cache")).unwrap();
+        assert!(nd.join("config.json").is_file());
+        assert!(nd.join("cache/sprites/bw/abra.gif").is_file());
+        assert!(!nd.join(POINTER).exists());
+        assert!(!od.join("config.json").exists());
+        assert!(od.join(POINTER).exists(), "pointer stays in the default folder");
+        assert!(!oc.exists(), "old cache removed");
+        // and back again
+        move_between(&nd, &nd.join("cache"), &od, &oc).unwrap();
+        assert!(od.join("config.json").is_file());
+        assert!(oc.join("sprites/bw/abra.gif").is_file());
+        assert!(!nd.exists());
+        // refusals
+        assert!(move_between(&od, &oc, &od, &oc).is_err());
+        assert!(move_between(&od, &oc, &od.join("sub"), &oc).is_err());
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }
 
 impl Config {
