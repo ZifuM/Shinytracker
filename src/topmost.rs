@@ -1,0 +1,577 @@
+//! Keeps the overlay above the game, including borderless / "fullscreen"
+//! windowed games that push themselves to the top when they get focus.
+//!
+//! A background thread re-asserts HWND_TOPMOST every 100 ms, independent of
+//! the UI loop (which Windows pauses when the overlay is covered). It never
+//! activates our window, so the game keeps keyboard focus.
+//!
+//! Borderless fix: an NVIDIA/AMD OpenGL game that exactly fills its monitor
+//! gets drawn straight to the screen, hiding every other window. When Platinum
+//! Together does that on the overlay's monitor, we make its window 1 px taller,
+//! with the extra row off the screen edge so there's no gap and Windows still
+//! treats it as fullscreen (taskbar stays hidden)
+//! (window size only; the game's files and memory are never touched) so Windows
+//! keeps compositing it and the overlay stays visible.
+//!
+//! With SHINY_TRACKER_LOG=1 set it writes `topmost-log.txt` next to the .exe
+//! describing the game's window (fullscreen? topmost?) for diagnosing problems.
+
+#[cfg(windows)]
+mod imp {
+    use std::ffi::c_void;
+    use std::fmt::Write as _;
+    use std::io::Write as _;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    type Hwnd = *mut c_void;
+
+    #[repr(C)]
+    #[derive(Default, Clone, Copy, PartialEq)]
+    struct Rect {
+        l: i32,
+        t: i32,
+        r: i32,
+        b: i32,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct Point {
+        x: i32,
+        y: i32,
+    }
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct MonitorInfo {
+        cb: u32,
+        monitor: Rect,
+        work: Rect,
+        flags: u32,
+    }
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn SetWindowPos(h: Hwnd, after: Hwnd, x: i32, y: i32, cx: i32, cy: i32, flags: u32) -> i32;
+        fn IsWindow(h: Hwnd) -> i32;
+        fn IsWindowVisible(h: Hwnd) -> i32;
+        fn IsIconic(h: Hwnd) -> i32;
+        fn GetForegroundWindow() -> Hwnd;
+        fn GetWindowTextW(h: Hwnd, buf: *mut u16, len: i32) -> i32;
+        fn GetClassNameW(h: Hwnd, buf: *mut u16, len: i32) -> i32;
+        fn GetWindowLongPtrW(h: Hwnd, index: i32) -> isize;
+        fn GetWindowRect(h: Hwnd, r: *mut Rect) -> i32;
+        fn MonitorFromWindow(h: Hwnd, flags: u32) -> *mut c_void;
+        fn GetMonitorInfoW(m: *mut c_void, mi: *mut MonitorInfo) -> i32;
+        fn GetWindowThreadProcessId(h: Hwnd, pid: *mut u32) -> u32;
+        fn EnumWindows(cb: extern "system" fn(Hwnd, isize) -> i32, lparam: isize) -> i32;
+        fn MonitorFromPoint(pt: Point, flags: u32) -> *mut c_void;
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetLastError() -> u32;
+        fn GetCurrentProcessId() -> u32;
+    }
+
+    const HWND_TOPMOST: isize = -1;
+    const GWL_STYLE: i32 = -16;
+    const GWL_EXSTYLE: i32 = -20;
+    const WS_EX_TOPMOST: isize = 0x0008;
+    const WS_POPUP: isize = 0x8000_0000u32 as i32 as isize;
+    const WS_CAPTION: isize = 0x00C0_0000;
+    const SWP_NOSIZE: u32 = 0x0001;
+    const SWP_NOMOVE: u32 = 0x0002;
+    const SWP_NOZORDER: u32 = 0x0004;
+    const SWP_NOACTIVATE: u32 = 0x0010;
+    const SWP_NOOWNERZORDER: u32 = 0x0200;
+    const SWP_ASYNCWINDOWPOS: u32 = 0x4000;
+    const MONITOR_DEFAULTTONEAREST: u32 = 2;
+    const MONITOR_DEFAULTTONULL: u32 = 0;
+
+    fn text(h: Hwnd, class: bool) -> String {
+        let mut buf = [0u16; 256];
+        let n = unsafe {
+            if class {
+                GetClassNameW(h, buf.as_mut_ptr(), 256)
+            } else {
+                GetWindowTextW(h, buf.as_mut_ptr(), 256)
+            }
+        };
+        String::from_utf16_lossy(&buf[..n.max(0) as usize])
+    }
+
+    fn describe(h: Hwnd) -> String {
+        if h.is_null() {
+            return "none".into();
+        }
+        unsafe {
+            let ex = GetWindowLongPtrW(h, GWL_EXSTYLE);
+            let st = GetWindowLongPtrW(h, GWL_STYLE);
+            let mut r = Rect::default();
+            GetWindowRect(h, &mut r);
+            let mut mi = MonitorInfo {
+                cb: std::mem::size_of::<MonitorInfo>() as u32,
+                ..Default::default()
+            };
+            GetMonitorInfoW(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), &mut mi);
+            let covers = r.l <= mi.monitor.l
+                && r.t <= mi.monitor.t
+                && r.r >= mi.monitor.r
+                && r.b >= mi.monitor.b;
+            let mut s = String::new();
+            let _ = write!(
+                s,
+                "{:?} title={:?} class={:?} topmost={} popup={} caption={} covers_monitor={} rect=({},{})-({},{})",
+                h,
+                text(h, false),
+                text(h, true),
+                ex & WS_EX_TOPMOST != 0,
+                st & WS_POPUP != 0,
+                st & WS_CAPTION != 0,
+                covers,
+                r.l,
+                r.t,
+                r.r,
+                r.b
+            );
+            s
+        }
+    }
+
+    struct Log {
+        file: Option<std::fs::File>,
+        lines: u32,
+        start: Instant,
+    }
+
+    impl Log {
+        /// Logging is off unless the SHINY_TRACKER_LOG environment variable is set.
+        fn new() -> Self {
+            if std::env::var_os("SHINY_TRACKER_LOG").is_none() {
+                return Self {
+                    file: None,
+                    lines: 0,
+                    start: Instant::now(),
+                };
+            }
+            let file = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.join("topmost-log.txt")))
+                .and_then(|p| std::fs::File::create(p).ok());
+            Self {
+                file,
+                lines: 0,
+                start: Instant::now(),
+            }
+        }
+        fn line(&mut self, msg: &str) {
+            if self.lines > 400 {
+                return;
+            }
+            self.lines += 1;
+            if let Some(f) = &mut self.file {
+                let _ = writeln!(f, "[{:>6.1}s] {msg}", self.start.elapsed().as_secs_f32());
+                let _ = f.flush();
+            }
+        }
+    }
+
+    pub fn hwnd_of(frame: &eframe::Frame) -> Option<isize> {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        if let Ok(handle) = frame.window_handle() {
+            if let RawWindowHandle::Win32(w) = handle.as_raw() {
+                return Some(w.hwnd.get());
+            }
+        }
+        find_own_window()
+    }
+
+    /// Fallback: our process's visible top-level window titled "Shiny Tracker".
+    fn find_own_window() -> Option<isize> {
+        extern "system" fn cb(h: Hwnd, out: isize) -> i32 {
+            unsafe {
+                let mut pid = 0u32;
+                GetWindowThreadProcessId(h, &mut pid);
+                if pid == GetCurrentProcessId()
+                    && IsWindowVisible(h) != 0
+                    && text(h, false) == "Shiny Tracker"
+                {
+                    *(out as *mut isize) = h as isize;
+                    return 0;
+                }
+            }
+            1
+        }
+        let mut found: isize = 0;
+        unsafe {
+            EnumWindows(cb, &mut found as *mut isize as isize);
+        }
+        (found != 0).then_some(found)
+    }
+
+    fn monitor_of(h: Hwnd) -> (*mut c_void, Rect) {
+        unsafe {
+            let m = MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST);
+            let mut mi = MonitorInfo {
+                cb: std::mem::size_of::<MonitorInfo>() as u32,
+                ..Default::default()
+            };
+            GetMonitorInfoW(m, &mut mi);
+            (m, mi.monitor)
+        }
+    }
+
+    #[link(name = "dwmapi")]
+    extern "system" {
+        fn DwmSetWindowAttribute(h: Hwnd, attr: u32, value: *const c_void, size: u32) -> i32;
+    }
+
+    /// Ask Windows 11 to round the settings window's corners (it has no
+    /// title bar, and its corners would otherwise show as dark squares).
+    pub fn round_settings_corners(done: &mut bool) {
+        if *done {
+            return;
+        }
+        extern "system" fn cb(h: Hwnd, out: isize) -> i32 {
+            unsafe {
+                let mut pid = 0u32;
+                GetWindowThreadProcessId(h, &mut pid);
+                if pid == GetCurrentProcessId() && text(h, false).starts_with("Shiny Tracker — Settings") {
+                    *(out as *mut isize) = h as isize;
+                    return 0;
+                }
+            }
+            1
+        }
+        let mut found: isize = 0;
+        unsafe {
+            EnumWindows(cb, &mut found as *mut isize as isize);
+        }
+        if found == 0 {
+            return;
+        }
+        const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
+        const DWMWCP_ROUND: u32 = 2;
+        let pref = DWMWCP_ROUND;
+        unsafe {
+            DwmSetWindowAttribute(
+                found as Hwnd,
+                DWMWA_WINDOW_CORNER_PREFERENCE,
+                &pref as *const u32 as *const c_void,
+                4,
+            );
+        }
+        // Done either way (older Windows just ignores it).
+        *done = true;
+    }
+
+    /// Is the game open (its window exists)?
+    pub fn game_running() -> bool {
+        find_game().is_some()
+    }
+
+    /// The Platinum Together game window (SDL window titled "Platinum Together").
+    fn find_game() -> Option<Hwnd> {
+        extern "system" fn cb(h: Hwnd, out: isize) -> i32 {
+            unsafe {
+                let mut pid = 0u32;
+                GetWindowThreadProcessId(h, &mut pid);
+                if pid != GetCurrentProcessId()
+                    && IsWindowVisible(h) != 0
+                    && text(h, true) == "SDL_app"
+                    && text(h, false).contains("Platinum Together")
+                {
+                    *(out as *mut isize) = h as isize;
+                    return 0;
+                }
+            }
+            1
+        }
+        let mut found: isize = 0;
+        unsafe {
+            EnumWindows(cb, &mut found as *mut isize as isize);
+        }
+        (found != 0).then_some(found as Hwnd)
+    }
+
+    /// Keeps the borderless fix from fighting a game that resizes itself back.
+    struct FixState {
+        game: Option<Hwnd>,
+        last_search: Instant,
+        recent: std::collections::VecDeque<Instant>,
+        paused_until: Option<Instant>,
+    }
+
+    impl FixState {
+        fn new() -> Self {
+            Self {
+                game: None,
+                last_search: Instant::now()
+                    .checked_sub(Duration::from_secs(10))
+                    .unwrap_or_else(Instant::now),
+                recent: Default::default(),
+                paused_until: None,
+            }
+        }
+
+        fn tick(&mut self, ours: Hwnd, log: &mut Log) {
+            if self.paused_until.is_some_and(|t| Instant::now() < t) {
+                return;
+            }
+            let valid = self.game.is_some_and(|g| unsafe { IsWindow(g) != 0 });
+            if !valid {
+                if self.last_search.elapsed() < Duration::from_secs(2) {
+                    return;
+                }
+                self.last_search = Instant::now();
+                self.game = find_game();
+                if let Some(g) = self.game {
+                    log.line(&format!("game window found: {}", describe(g)));
+                }
+            }
+            let Some(game) = self.game else { return };
+            unsafe {
+                if IsIconic(game) != 0 {
+                    return;
+                }
+                let mut r = Rect::default();
+                GetWindowRect(game, &mut r);
+                let (gm, mon) = monitor_of(game);
+                let (om, _) = monitor_of(ours);
+                // Only when the game exactly fills the overlay's monitor (or is still
+                // 1 px short from the older version of this fix).
+                let left_short = Rect {
+                    b: mon.b - 1,
+                    ..mon
+                };
+                if gm != om || (r != mon && r != left_short) {
+                    return;
+                }
+                let r = mon;
+                // Back off if the game keeps snapping back (avoid a resize war).
+                let now = Instant::now();
+                while self
+                    .recent
+                    .front()
+                    .is_some_and(|t| now.duration_since(*t) > Duration::from_secs(10))
+                {
+                    self.recent.pop_front();
+                }
+                if self.recent.len() >= 8 {
+                    log.line("game keeps resizing back to full screen; pausing the borderless fix for 30 s");
+                    self.paused_until = Some(now + Duration::from_secs(30));
+                    self.recent.clear();
+                    return;
+                }
+                self.recent.push_back(now);
+                // Grow 1 px past the bottom edge, or past the top edge if another
+                // monitor sits directly below (so the extra row is never visible).
+                let below = Point { x: r.l + 1, y: r.b };
+                let grow_down = MonitorFromPoint(below, MONITOR_DEFAULTTONULL).is_null();
+                let top = if grow_down { r.t } else { r.t - 1 };
+                SetWindowPos(
+                    game,
+                    std::ptr::null_mut(),
+                    r.l,
+                    top,
+                    r.r - r.l,
+                    r.b - r.t + 1,
+                    SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_ASYNCWINDOWPOS,
+                );
+                log.line(&format!(
+                    "borderless fix: game window made 1 px taller, off the {} edge",
+                    if grow_down { "bottom" } else { "top" }
+                ));
+            }
+        }
+    }
+
+    /// Where to open the settings window: beside the overlay on whichever
+    /// side has more room, kept inside the overlay's monitor work area.
+    /// Inputs/outputs are in egui points; `ppp` = physical pixels per point.
+    pub fn settings_placement(
+        frame: &eframe::Frame,
+        want: [f32; 2],
+        min: [f32; 2],
+        ppp: f32,
+    ) -> Option<([f32; 2], [f32; 2])> {
+        let h = hwnd_of(frame)? as Hwnd;
+        unsafe {
+            let mut ov = Rect::default();
+            if GetWindowRect(h, &mut ov) == 0 {
+                return None;
+            }
+            let mut mi = MonitorInfo {
+                cb: std::mem::size_of::<MonitorInfo>() as u32,
+                ..Default::default()
+            };
+            if GetMonitorInfoW(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), &mut mi) == 0 {
+                return None;
+            }
+            let wa = mi.work;
+            let s = ppp.max(0.5);
+            let px = |v: f32| (v * s).round() as i32;
+            let (margin, gap, title) = (px(12.0), px(10.0), px(32.0));
+            let (area_w, area_h) = (wa.r - wa.l - 2 * margin, wa.b - wa.t - 2 * margin);
+            if area_w < 100 || area_h < 100 {
+                return None;
+            }
+            let space_left = ov.l - wa.l - gap - margin;
+            let space_right = wa.r - ov.r - gap - margin;
+            let right = space_right >= space_left;
+            let space = space_right.max(space_left);
+            // Prefer fitting beside the overlay (shrinking down to the minimum size).
+            let mut w = px(want[0]);
+            if w > space {
+                w = space.max(px(min[0]));
+            }
+            let w = w.min(area_w);
+            let hgt = (px(want[1]) + title)
+                .min(area_h)
+                .max(px(min[1]).min(area_h));
+            let x = if right { ov.r + gap } else { ov.l - gap - w };
+            let x = x.clamp(wa.l + margin, wa.r - margin - w);
+            let y = ov.t.clamp(wa.t + margin, wa.b - margin - hgt);
+            Some((
+                [x as f32 / s, y as f32 / s],
+                [w as f32 / s, (hgt - title) as f32 / s],
+            ))
+        }
+    }
+
+    /// Is this point (egui points; `ppp` = pixels per point) on any monitor?
+    /// Used to check a remembered window position is still visible.
+    pub fn point_on_screen(pos: [f32; 2], ppp: f32) -> bool {
+        let s = ppp.max(0.5);
+        let pt = Point { x: (pos[0] * s).round() as i32, y: (pos[1] * s).round() as i32 };
+        unsafe { !MonitorFromPoint(pt, MONITOR_DEFAULTTONULL).is_null() }
+    }
+
+    pub fn spawn_keeper(hwnd: isize, fix: Arc<AtomicBool>) {
+        let _ = std::thread::Builder::new()
+            .name("stay-on-top".into())
+            .spawn(move || {
+                let ours = hwnd as Hwnd;
+                let mut log = Log::new();
+                log.line(&format!("keeper started for {}", describe(ours)));
+                let mut last_fg: Hwnd = std::ptr::null_mut();
+                let mut last_report = Instant::now();
+                let mut failures = 0u32;
+                let mut fix_state = FixState::new();
+                loop {
+                    unsafe {
+                        if IsWindow(ours) == 0 {
+                            log.line("overlay window closed; keeper stopping");
+                            return;
+                        }
+                        let ok = SetWindowPos(
+                            ours,
+                            HWND_TOPMOST as Hwnd,
+                            0,
+                            0,
+                            0,
+                            0,
+                            SWP_NOSIZE
+                                | SWP_NOMOVE
+                                | SWP_NOACTIVATE
+                                | SWP_NOOWNERZORDER
+                                | SWP_ASYNCWINDOWPOS,
+                        );
+                        if ok == 0 {
+                            failures += 1;
+                            if failures <= 5 {
+                                log.line(&format!("SetWindowPos failed, error {}", GetLastError()));
+                            }
+                        }
+                        let fg = GetForegroundWindow();
+                        if fg != last_fg || last_report.elapsed() > Duration::from_secs(10) {
+                            last_fg = fg;
+                            last_report = Instant::now();
+                            let our_ex = GetWindowLongPtrW(ours, GWL_EXSTYLE);
+                            log.line(&format!(
+                                "foreground: {} | overlay topmost={} visible={} minimized={}",
+                                describe(fg),
+                                our_ex & WS_EX_TOPMOST != 0,
+                                IsWindowVisible(ours) != 0,
+                                IsIconic(ours) != 0
+                            ));
+                        }
+                    }
+                    if fix.load(Ordering::Relaxed) {
+                        fix_state.tick(ours, &mut log);
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            });
+    }
+}
+
+#[cfg(not(windows))]
+mod imp {
+    pub fn round_settings_corners(done: &mut bool) {
+        *done = true;
+    }
+    pub fn game_running() -> bool {
+        true
+    }
+    pub fn hwnd_of(_frame: &eframe::Frame) -> Option<isize> {
+        None
+    }
+    pub fn point_on_screen(_pos: [f32; 2], _ppp: f32) -> bool {
+        true
+    }
+    pub fn spawn_keeper(_hwnd: isize, _fix: std::sync::Arc<std::sync::atomic::AtomicBool>) {}
+    pub fn settings_placement(
+        _f: &eframe::Frame,
+        _w: [f32; 2],
+        _m: [f32; 2],
+        _p: f32,
+    ) -> Option<([f32; 2], [f32; 2])> {
+        None
+    }
+}
+
+/// Call every frame; starts the keeper thread once the window handle exists.
+/// `borderless_fix` can be flipped at any time from the settings.
+pub fn ensure_started(
+    started: &mut bool,
+    frame: &eframe::Frame,
+    borderless_fix: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    if *started {
+        return;
+    }
+    if let Some(h) = imp::hwnd_of(frame) {
+        imp::spawn_keeper(h, borderless_fix.clone());
+        *started = true;
+    }
+}
+
+/// Position and size (in points) for the settings window beside the overlay.
+pub fn settings_placement(
+    frame: &eframe::Frame,
+    want: [f32; 2],
+    min: [f32; 2],
+    ppp: f32,
+) -> Option<([f32; 2], [f32; 2])> {
+    imp::settings_placement(frame, want, min, ppp)
+}
+
+/// Whether a point (in egui points) is on a connected monitor, so a
+/// remembered window position isn't restored somewhere off-screen.
+pub fn point_on_screen(pos: [f32; 2], ppp: f32) -> bool {
+    imp::point_on_screen(pos, ppp)
+}
+
+/// Whether the Platinum Together game window is open.
+pub fn game_running() -> bool {
+    imp::game_running()
+}
+
+/// Round the settings window's corners (Windows 11). Call each frame while
+/// it's open; `done` stops repeat work.
+pub fn round_settings_corners(done: &mut bool) {
+    imp::round_settings_corners(done)
+}

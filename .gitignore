@@ -1,0 +1,9 @@
+/target
+# build output and local logs (the .exe goes on GitHub Releases instead)
+*.exe
+/share/
+build-log.txt
+build-status.txt
+topmost-log.txt
+/backup-classic-style/
+/Claude outputs/

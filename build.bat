@@ -1,0 +1,33 @@
+@echo off
+title Shiny Tracker build
+cd /d "%~dp0"
+del /q build-log.txt build-status.txt 2>nul
+taskkill /im "Shiny Tracker.exe" /f >nul 2>&1
+echo Building Shiny Tracker - the first build takes a few minutes...
+echo (full output goes to build-log.txt)
+rem Bundle the C runtime into the .exe so it runs on any Windows 10/11 PC.
+set RUSTFLAGS=-C target-feature=+crt-static
+rem Always rebuild the app itself (libraries stay cached, so this is quick).
+cargo clean --release -p shiny-tracker >nul 2>&1
+cargo build --release > build-log.txt 2>&1
+if errorlevel 1 (
+  echo FAILED> build-status.txt
+  echo.
+  echo BUILD FAILED - last lines of build-log.txt:
+  powershell -NoProfile -Command "Get-Content build-log.txt -Tail 40"
+  pause
+  exit /b 1
+)
+rem Close the app again in case it was reopened during the build, then replace it.
+taskkill /im "Shiny Tracker.exe" /f >nul 2>&1
+timeout /t 1 >nul
+copy /y "target\release\shiny-tracker.exe" "Shiny Tracker.exe" >nul
+rem Plain copy for sharing with friends.
+if not exist share mkdir share
+copy /y "target\release\shiny-tracker.exe" "share\Shiny Tracker.exe" >nul
+rem ...and a fresh zip of it, ready to send.
+powershell -NoProfile -Command "Compress-Archive -Path 'share\Shiny Tracker.exe' -DestinationPath 'share\Shiny Tracker.zip' -Force" >nul 2>&1
+echo OK> build-status.txt
+echo BUILD OK - starting Shiny Tracker...
+start "" "Shiny Tracker.exe"
+timeout /t 3 >nul
