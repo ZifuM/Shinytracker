@@ -31,7 +31,7 @@ pub struct HuntRecord {
 
 /// How the shiny is being hunted; decides the odds. Rates are for
 /// Platinum Together: modern 1 in 4,096 base rate, and Sweet Scent on rare
-/// (sparkling) grass doubles it (patch notes + the game's log: 4 in 8192).
+/// grass doubles it (patch notes + the game's log: 4 in 8192).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum HuntMethod {
     FullOdds,
@@ -63,7 +63,7 @@ impl HuntMethod {
             HuntMethod::FullOdds => "Full odds (walking / random encounters)",
             HuntMethod::SoftReset => "Soft resets (starter, legendary, gift)",
             HuntMethod::SweetScent => "Sweet Scent (normal grass)",
-            HuntMethod::RareGrassSweetScent => "Sweet Scent on rare (sparkling) grass",
+            HuntMethod::RareGrassSweetScent => "Sweet Scent on rare grass",
             HuntMethod::PokeRadar => "Poké Radar chaining",
             HuntMethod::Masuda => "Masuda Method (breeding)",
             HuntMethod::FromGameLog => "Exact odds from the game log",
@@ -77,7 +77,7 @@ impl HuntMethod {
             HuntMethod::SoftReset => "1 in 4,096 per reset (the base rate; not separately confirmed).",
             HuntMethod::SweetScent => "1 in 4,096. Only rare grass gets the double chance.",
             HuntMethod::RareGrassSweetScent => {
-                "1 in 2,048. Double chance on sparkling grass (patch notes, and confirmed by the game's log)."
+                "1 in 2,048. Double chance on rare grass (patch notes, and confirmed by the game's log)."
             }
             HuntMethod::PokeRadar => {
                 "Gen 4 chain curve, never worse than the base rate: about 1 in 200 at chain 40. Not confirmed for this mod."

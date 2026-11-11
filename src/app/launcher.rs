@@ -158,7 +158,7 @@ impl App {
                         ui,
                         "🗺",
                         "Map",
-                        "Sinnoh from your game's own map: every area, who lives there, and today's sparkly grass.",
+                        "Sinnoh from your game's own map: every area, who lives there, and today's rare grass.",
                         true,
                     ),
                     }
@@ -248,7 +248,7 @@ impl App {
             }
         }
 
-        kit::section(ui, "Sparkly grass today");
+        kit::section(ui, "Rare grass today");
         self.rare_home(ui);
     }
 

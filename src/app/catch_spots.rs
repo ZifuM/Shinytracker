@@ -1,6 +1,6 @@
 //! Pokédex "Where to find": cut-outs of the map around each place's grass
 //! (or water, or cave floor) with the tiles you can meet the Pokémon on
-//! outlined, and today's sparkly-grass sightings of it.
+//! outlined, and today's rare-grass sightings of it.
 
 use super::map::tile_edges;
 use super::pokedex::card_title;
@@ -54,7 +54,12 @@ fn spot_set(map: &GameMap, place: &str, spots: Spots) -> Option<SpotSet> {
         Some((x0, y0, x1, y1)) => (x0.saturating_sub(PAD).max(zx0), y0.saturating_sub(PAD).max(zy0), (x1 + PAD).min(zx1), (y1 + PAD).min(zy1)),
         None => (zx0, zy0, zx1, zy1),
     };
-    Some(SpotSet { matrix, tiles, rect, exact: link.exact })
+    Some(SpotSet {
+        matrix,
+        tiles,
+        rect,
+        exact: link.exact,
+    })
 }
 
 impl App {
@@ -90,7 +95,8 @@ impl App {
         if items.is_empty() {
             return;
         }
-        let rare = self.rare_tiles_of(&map, &m.id);
+        // (catch-spot previews are of outdoor places)
+        let rare: Vec<(usize, usize)> = self.rare_tiles_of(&map, &m.id).into_iter().filter(|t| t.0 == 0).map(|t| (t.1, t.2)).collect();
         let show_all = self.setup.pokedex.all_spots;
         let total = items.len();
         let shown: Vec<(String, Spots)> = if show_all { items } else { items.into_iter().take(FIRST).collect() };
@@ -113,7 +119,11 @@ impl App {
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = 12.0;
                     for (place, spots) in row {
-                        let title = format!("{}  ·  {}", w.place(place).map(|p| p.name.clone()).unwrap_or_else(|| place.replace('_', " ")), spots.label());
+                        let title = format!(
+                            "{}  ·  {}",
+                            w.place(place).map(|p| p.name.clone()).unwrap_or_else(|| place.replace('_', " ")),
+                            spots.label()
+                        );
                         ui.allocate_ui_with_layout(Vec2::new(card_w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                             ui.set_width(card_w);
                             if self.spot_preview(ui, &map, place, *spots, &title, &rare, card_w) {
@@ -143,16 +153,7 @@ impl App {
 
     /// One cut-out with its tiles outlined. True when clicked.
     #[allow(clippy::too_many_arguments)]
-    fn spot_preview(
-        &mut self,
-        ui: &mut egui::Ui,
-        map: &GameMap,
-        place: &str,
-        spots: Spots,
-        title: &str,
-        rare: &[(usize, usize)],
-        width: f32,
-    ) -> bool {
+    fn spot_preview(&mut self, ui: &mut egui::Ui, map: &GameMap, place: &str, spots: Spots, title: &str, rare: &[(usize, usize)], width: f32) -> bool {
         let key = format!("{place}|{spots:?}");
         if !self.mapui.spot_sets.contains_key(&key) {
             let set = spot_set(map, place, spots);
@@ -204,7 +205,7 @@ impl App {
                 p.line_segment([at(a), at(b)], stroke);
             }
         }
-        // today's sparkly grass sightings of it
+        // today's rare grass sightings of it
         for (x, y) in rare {
             if (x0..x1).contains(x) && (y0..y1).contains(y) {
                 let c = at(Pos2::new(*x as f32 + 0.5, *y as f32 + 0.5));
@@ -222,19 +223,19 @@ impl App {
         resp.on_hover_text("Open on the Map").on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
     }
 
-    /// Today's sparkly-grass tiles where this Pokémon was met.
-    fn rare_tiles_of(&mut self, map: &GameMap, id: &str) -> Vec<(usize, usize)> {
+    /// Today's rare-grass tiles where this Pokémon was met.
+    fn rare_tiles_of(&mut self, map: &GameMap, id: &str) -> Vec<(u16, usize, usize)> {
         self.mapui.refresh_rare();
         let rare = self.mapui.rare.clone();
         rare.iter()
             .filter_map(|r| {
                 let sp = r.species?;
-                (self.rare_wiki_id(map, sp).as_deref() == Some(id)).then_some((r.x, r.y))
+                (self.rare_wiki_id(map, sp).as_deref() == Some(id)).then_some((r.matrix, r.x, r.y))
             })
             .collect()
     }
 
-    /// "Sparkly grass today": where it turned up on sparkly grass since the
+    /// "Rare grass today": where it turned up on rare grass since the
     /// daily reset, from the game log.
     pub(super) fn rare_spots(&mut self, ui: &mut egui::Ui, _w: &Arc<Wiki>, m: &Mon) {
         let Some(map) = self.map_ready() else { return };
@@ -243,19 +244,23 @@ impl App {
             return;
         }
         // group sightings that are close together
-        let mut groups: Vec<Vec<(usize, usize)>> = Vec::new();
-        for t in tiles {
-            match groups.iter_mut().find(|g| g.iter().any(|o| o.0.abs_diff(t.0) <= 10 && o.1.abs_diff(t.1) <= 10)) {
-                Some(g) => g.push(t),
-                None => groups.push(vec![t]),
+        // (each group is on one map)
+        let mut groups: Vec<(u16, Vec<(usize, usize)>)> = Vec::new();
+        for (m, x, y) in tiles {
+            match groups
+                .iter_mut()
+                .find(|(gm, g)| *gm == m && g.iter().any(|o| o.0.abs_diff(x) <= 10 && o.1.abs_diff(y) <= 10))
+            {
+                Some((_, g)) => g.push((x, y)),
+                None => groups.push((m, vec![(x, y)])),
             }
         }
-        let mut go: Option<(usize, usize)> = None;
+        let mut go: Option<(u16, usize, usize)> = None;
         let avail = ui.available_width();
         kit::card(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                card_title(ui, "Sparkly grass today");
+                card_title(ui, "Rare grass today");
                 ui.label(RichText::new("From your game log since the daily reset.").size(kit::fs(11.0)).color(MUTED()));
             });
             let cols = if avail > 760.0 { 2 } else { 1 };
@@ -263,21 +268,27 @@ impl App {
             for row in groups.chunks(cols) {
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = 12.0;
-                    for g in row {
+                    for (gm, g) in row {
+                        let gm = *gm;
                         let (bx0, by0, bx1, by1) = bbox(g).unwrap_or((0, 0, 1, 1));
                         let rect = (bx0.saturating_sub(8), by0.saturating_sub(8), bx1 + 8, by1 + 8);
-                        let zone = map.world_zone_at(g[0].0, g[0].1).map(|z| self.zone_label(&map, z)).unwrap_or_else(|| "Outdoors".into());
+                        let zone = map.rare_zone(gm, g[0].0, g[0].1).map(|z| self.zone_label(&map, z)).unwrap_or_else(|| "Outdoors".into());
                         ui.allocate_ui_with_layout(Vec2::new(card_w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                             ui.set_width(card_w);
-                            ui.label(RichText::new(format!("{zone}  ·  {} spot{}", g.len(), if g.len() == 1 { "" } else { "s" })).size(kit::fs(12.5)).strong().color(TEXT()));
+                            ui.label(
+                                RichText::new(format!("{zone}  ·  {} spot{}", g.len(), if g.len() == 1 { "" } else { "s" }))
+                                    .size(kit::fs(12.5))
+                                    .strong()
+                                    .color(TEXT()),
+                            );
                             let (x0, y0, x1, y1) = rect;
                             let scale = (card_w / ((x1 - x0) * PX) as f32).min(200.0 / ((y1 - y0) * PX) as f32).min(3.0);
                             let size = Vec2::new(((x1 - x0) * PX) as f32 * scale, ((y1 - y0) * PX) as f32 * scale);
                             let (r, resp) = ui.allocate_exact_size(size, Sense::click());
                             let p = ui.painter_at(r);
                             p.rect_filled(r, kit::r(8.0), CARD_HOVER());
-                            let key = format!("0:{x0},{y0},{x1},{y1}");
-                            let tex = self.mapui.crop(&key, 0, rect).map(|c| c.tex.id());
+                            let key = format!("{gm}:{x0},{y0},{x1},{y1}");
+                            let tex = self.mapui.crop(&key, gm as usize, rect).map(|c| c.tex.id());
                             if let Some(id) = tex {
                                 p.image(id, r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
                             } else {
@@ -291,21 +302,18 @@ impl App {
                             }
                             p.rect_stroke(r, kit::r(8.0), Stroke::new(1.0f32, if resp.hovered() { theme::LINK() } else { LINE() }));
                             if resp.on_hover_text("Open on the Map").clicked() {
-                                go = Some(g[0]);
+                                go = Some((gm, g[0].0, g[0].1));
                             }
                         });
                     }
                 });
                 ui.add_space(10.0);
             }
-            ui.label(RichText::new("Sparkly grass moves every day; these are today's.").size(kit::fs(11.0)).color(MUTED()));
+            ui.label(RichText::new("Rare grass moves every day; these are today's.").size(kit::fs(11.0)).color(MUTED()));
         });
         ui.add_space(10.0);
-        if let Some((x, y)) = go {
-            if let Some(z) = map.world_zone_at(x, y) {
-                self.mapui.show_rare = true;
-                self.show_zone_on_map(&map, z, format!("{} on sparkly grass", m.name));
-            }
+        if let Some((gm, x, y)) = go {
+            self.show_rare_spot(&map, gm, x, y, format!("{} on rare grass", m.name));
         }
     }
 }

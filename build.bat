@@ -31,6 +31,9 @@ copy /y "target\release\shiny-tracker.exe" "share\Shiny Tracker.exe" >nul
 rem ...and a fresh zip of it, ready to send.
 powershell -NoProfile -Command "Compress-Archive -Path 'share\Shiny Tracker.exe' -DestinationPath 'share\Shiny Tracker.zip' -Force" >nul 2>&1
 echo OK> build-status.txt
-echo BUILD OK - starting Shiny Tracker...
+rem Say which version was built (the app shows the same number) and note it
+rem next to the files to attach, so a release always gets the right build.
+powershell -NoProfile -Command "$v = (Select-String -Path 'Cargo.toml' -Pattern '^version = .(.+).$' | Select-Object -First 1).Matches[0].Groups[1].Value; Set-Content 'share\version.txt' $v; Write-Host ''; Write-Host ('BUILD OK - Poke Together Companion v' + $v); Write-Host ('Attach share\Shiny Tracker.exe and .zip to the GitHub release v' + $v)"
+echo Starting Shiny Tracker...
 start "" "Shiny Tracker.exe"
-timeout /t 3 >nul
+timeout /t 6 >nul

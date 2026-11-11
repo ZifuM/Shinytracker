@@ -14,7 +14,7 @@
 
 use eframe::egui::{Color32, ColorImage};
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
@@ -55,6 +55,65 @@ struct ZoneFile {
     game_species: HashMap<String, String>,
     #[serde(default)]
     overlays: Vec<Overlay>,
+    /// Doors of the caves and side areas:
+    /// [map, x, y, x2, y2, to area, to map, to x, to y].
+    #[serde(default)]
+    doors: Vec<[u16; 9]>,
+    #[serde(default)]
+    layers: HashMap<String, LayerPlan>,
+    /// Items on the ground and hidden: map, x, y, hidden (0/1), name, note.
+    #[serde(default)]
+    items: Vec<(u16, u16, u16, u8, String, String)>,
+}
+
+/// An item ball or hidden item, where it lies (a tile of its map), as the
+/// Platinum Together Wiki names it.
+#[derive(Debug, Clone)]
+pub struct MapItem {
+    pub matrix: u16,
+    pub x: u16,
+    pub y: u16,
+    pub hidden: bool,
+    pub name: String,
+    /// What it takes to reach it ("Needs Surf"), if anything.
+    pub note: String,
+}
+
+/// A layer laid out ahead of time (so the lines between doors never cross):
+/// where each part goes, the places' boxes and the lines' corners.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct LayerPlan {
+    /// map, area, x, y on the layer of the part's tile (cx, cy), then the
+    /// part (cx, cy, w, h) in tiles of its own map.
+    pub parts: Vec<(u16, u16, i32, i32, i32, i32, i32, i32)>,
+    /// name, box (x0, y0, x1, y1), and whether its doors are joined by lines
+    /// (false where they couldn't be drawn without crossing).
+    pub places: Vec<(String, i32, i32, i32, i32, bool)>,
+    /// Each line: x0, y0, x1, y1, … (tile corners, through the tile's middle).
+    pub links: Vec<Vec<i32>>,
+}
+
+/// A door, stairs or exit of a cave or side area: the tiles you step on
+/// (x..=x2, y..=y2 on its map) and where it takes you (a tile of another
+/// map, or the outdoors when `to_matrix` is 0).
+#[derive(Debug, Clone, Copy)]
+pub struct Door {
+    pub matrix: u16,
+    pub x: u16,
+    pub y: u16,
+    pub x2: u16,
+    pub y2: u16,
+    pub to_zone: u16,
+    pub to_matrix: u16,
+    pub tx: u16,
+    pub ty: u16,
+}
+
+impl Door {
+    /// The door's tiles (in tiles of its own map).
+    pub fn tiles(&self) -> (f32, f32, f32, f32) {
+        (self.x as f32, self.y as f32, (self.x2 + 1) as f32, (self.y2 + 1) as f32)
+    }
 }
 
 /// A part of a cave, ruin or side area (one of its maps) for the Map's
@@ -259,6 +318,12 @@ pub struct GameMap {
     pub overview: Option<ColorImage>,
     /// Caves and side areas with their place on the Sinnoh map.
     pub overlays: Vec<Overlay>,
+    /// Their doors and exits.
+    pub doors: Vec<Door>,
+    /// Layouts of the layers ("cave", "ruins", "side").
+    pub layers: HashMap<String, LayerPlan>,
+    /// Item balls and hidden items.
+    pub items: Vec<MapItem>,
 }
 
 impl GameMap {
@@ -271,7 +336,53 @@ impl GameMap {
         if tw == 0 || th == 0 || tw * th > 512 * 512 {
             return None;
         }
-        let open: Vec<bool> = (0..tw * th).map(|i| self.ground(matrix, i % tw, i / tw) != Ground::Blocked).collect();
+        let free: Vec<bool> = (0..tw * th).map(|i| self.ground(matrix, i % tw, i / tw) != Ground::Blocked).collect();
+        // Only what you can walk to from its doors (the rest of a map is
+        // often unused floor around the real room).
+        let mut seeds: Vec<(usize, usize)> = Vec::new();
+        for d in &self.doors {
+            if d.matrix as usize == matrix {
+                for y in d.y..=d.y2 {
+                    for x in d.x..=d.x2 {
+                        seeds.push((x as usize, y as usize));
+                    }
+                }
+            }
+            if d.to_matrix as usize == matrix {
+                seeds.push((d.tx as usize, d.ty as usize));
+            }
+        }
+        seeds.retain(|&(x, y)| x < tw && y < th);
+        let open = if seeds.is_empty() {
+            free
+        } else {
+            let mut open = vec![false; tw * th];
+            for &(x, y) in &seeds {
+                open[y * tw + x] = true;
+            }
+            while let Some((x, y)) = seeds.pop() {
+                let mut next = |nx: usize, ny: usize| {
+                    let i = ny * tw + nx;
+                    if free[i] && !open[i] {
+                        open[i] = true;
+                        seeds.push((nx, ny));
+                    }
+                };
+                if x + 1 < tw {
+                    next(x + 1, y);
+                }
+                if x > 0 {
+                    next(x - 1, y);
+                }
+                if y + 1 < th {
+                    next(x, y + 1);
+                }
+                if y > 0 {
+                    next(x, y - 1);
+                }
+            }
+            open
+        };
         // Bounds of the walkable part, with a tile of wall around it.
         let (mut x0, mut y0, mut x1, mut y1) = (usize::MAX, usize::MAX, 0usize, 0usize);
         for ty in 0..th {
@@ -320,7 +431,10 @@ impl GameMap {
                 }
             }
         }
-        Some(OverlayPic { img: ColorImage { size: [w, h], pixels: px }, rect: [x0 as f32, y0 as f32, cw as f32, ch as f32] })
+        Some(OverlayPic {
+            img: ColorImage { size: [w, h], pixels: px },
+            rect: [x0 as f32, y0 as f32, cw as f32, ch as f32],
+        })
     }
 
     pub fn zone(&self, id: u16) -> Option<&Zone> {
@@ -535,7 +649,13 @@ impl GameMap {
                 }
             }
         }
-        Some(Crop { image: ColorImage { size: [w, h], pixels: px }, x0, y0, tiles_w: tw, tiles_h: th })
+        Some(Crop {
+            image: ColorImage { size: [w, h], pixels: px },
+            x0,
+            y0,
+            tiles_w: tw,
+            tiles_h: th,
+        })
     }
 }
 
@@ -607,6 +727,34 @@ pub fn load(dir: &Path, with_overview: bool) -> Result<GameMap, LoadError> {
         perms,
         overview: None,
         overlays: zf.overlays,
+        layers: zf.layers,
+        items: zf
+            .items
+            .into_iter()
+            .map(|(matrix, x, y, h, name, note)| MapItem {
+                matrix,
+                x,
+                y,
+                hidden: h != 0,
+                name,
+                note,
+            })
+            .collect(),
+        doors: zf
+            .doors
+            .iter()
+            .map(|d| Door {
+                matrix: d[0],
+                x: d[1],
+                y: d[2],
+                x2: d[3],
+                y2: d[4],
+                to_zone: d[5],
+                to_matrix: d[6],
+                tx: d[7],
+                ty: d[8],
+            })
+            .collect(),
     };
     if with_overview {
         map.overview = build_overview(&map);
@@ -810,16 +958,20 @@ pub fn start() -> Receiver<Result<Arc<GameMap>, LoadError>> {
     rx
 }
 
-// ───────────────────────────── sparkly grass ─────────────────────────────
+// ───────────────────────────── rare grass ─────────────────────────────
 
-/// A sparkly ("rare") grass record from today's game logs.
+/// A rare grass record from today's game logs.
 #[derive(Debug, Clone)]
 pub struct Rare {
+    /// The map it's on: 0 outdoors, otherwise a side area's (a lake,
+    /// Eterna Forest…). The game's log only gives the tile, so the map is
+    /// worked out from which one has grass there.
+    pub matrix: u16,
     pub x: usize,
     pub y: usize,
     /// Game species number (None for a "patch found here" scan).
     pub species: Option<u32>,
-    /// How many sparkly tiles a scan found around here.
+    /// How many rare grass tiles a scan found around here.
     #[allow(dead_code)]
     pub tiles: u32,
 }
@@ -891,7 +1043,7 @@ fn unix(t: std::time::SystemTime) -> Option<i64> {
     t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs() as i64)
 }
 
-/// Sparkly grass seen since the last daily reset, from the game's logs.
+/// Rare grass seen since the last daily reset, from the game's logs.
 /// Only spots outdoors (in the outdoor map) are returned.
 pub fn read_rare_today(dir: &Path, map: &GameMap) -> Vec<Rare> {
     let logs = dir.join("logs");
@@ -943,29 +1095,102 @@ pub fn read_rare_today(dir: &Path, map: &GameMap) -> Vec<Rare> {
             if when < reset {
                 continue;
             }
-            let rec = parse_rare(line);
-            if let Some(r) = rec {
-                // Outdoors only: the tile must be on a real outdoor map square.
-                if map.world().land_at(r.x / CHUNK, r.y / CHUNK).is_some() {
-                    out.push(r);
-                }
+            if let Some(r) = parse_rare(line) {
+                out.push(r);
             }
         }
     }
     // Today's spots shared by the dev (bundled with the app, or the newer
     // copy on GitHub), so nobody has to find every patch themselves.
     for (x, y, sp) in shared_rare(reset) {
-        if map.world().land_at(x / CHUNK, y / CHUNK).is_some() {
-            out.push(Rare { x, y, species: Some(sp), tiles: 0 });
-        }
+        out.push(Rare {
+            matrix: 0,
+            x,
+            y,
+            species: Some(sp),
+            tiles: 0,
+        });
     }
+    let out = map.place_rare(out);
     // Only spots where a Pokémon was actually met count: the "N rare grass
-    // tiles around x,y" scan lines also fire where there's no sparkly grass.
+    // tiles around x,y" scan lines also fire where there's no rare grass.
     let mut seen = std::collections::HashSet::new();
-    out.into_iter().filter(|r| r.species.is_some() && seen.insert((r.x, r.y, r.species))).collect()
+    out.into_iter().filter(|r| r.species.is_some() && seen.insert((r.matrix, r.x, r.y, r.species))).collect()
 }
 
-/// Sparkly grass shipped with this version (for the day it was made).
+impl GameMap {
+    /// The area a rare grass spot is in.
+    pub fn rare_zone(&self, matrix: u16, x: usize, y: usize) -> Option<u16> {
+        if matrix == 0 {
+            self.world_zone_at(x, y)
+        } else {
+            let m = self.matrices.get(matrix as usize)?;
+            m.header_at(x / CHUNK, y / CHUNK)
+                .filter(|h| self.overlays.iter().any(|o| o.zone == *h))
+                .or_else(|| self.overlays.iter().find(|o| o.matrix == matrix).map(|o| o.zone))
+        }
+    }
+
+    /// Tall grass (or snowy grass) at a tile of a map.
+    fn grassy(&self, matrix: usize, x: usize, y: usize) -> bool {
+        matches!(self.ground(matrix, x, y), Ground::Grass | Ground::Snow)
+    }
+
+    /// Work out which map each rare grass spot is on: outdoors when
+    /// there's grass there, else the side area (lake, forest…) that has
+    /// grass on that tile, preferring places other spots are already on.
+    /// Spots on no map at all are dropped.
+    fn place_rare(&self, spots: Vec<Rare>) -> Vec<Rare> {
+        let mut out: Vec<Rare> = Vec::new();
+        let mut open: Vec<(Rare, Vec<u16>)> = Vec::new();
+        for mut r in spots {
+            let land = self.world().land_at(r.x / CHUNK, r.y / CHUNK).is_some();
+            if r.species.is_none() || (land && self.grassy(0, r.x, r.y)) {
+                if land {
+                    r.matrix = 0;
+                    out.push(r);
+                }
+                continue;
+            }
+            let mut seen = HashSet::new();
+            let cands: Vec<u16> = self
+                .overlays
+                .iter()
+                .filter(|o| seen.insert(o.matrix) && self.grassy(o.matrix as usize, r.x, r.y))
+                .map(|o| o.matrix)
+                .collect();
+            match cands.len() {
+                0 if land => out.push(r),
+                0 => {}
+                1 => {
+                    r.matrix = cands[0];
+                    out.push(r);
+                }
+                _ => open.push((r, cands)),
+            }
+        }
+        // Several maps fit: take the one whose place has the most other spots.
+        let group = |m: u16| self.overlays.iter().find(|o| o.matrix == m).map(|o| o.group.clone()).unwrap_or_default();
+        let mut count: HashMap<String, usize> = HashMap::new();
+        for r in &out {
+            if r.matrix != 0 {
+                *count.entry(group(r.matrix)).or_default() += 1;
+            }
+        }
+        for (mut r, cands) in open {
+            let best = cands
+                .iter()
+                .copied()
+                .max_by_key(|m| (count.get(&group(*m)).copied().unwrap_or(0), std::cmp::Reverse(*m)))
+                .unwrap_or(cands[0]);
+            r.matrix = best;
+            out.push(r);
+        }
+        out
+    }
+}
+
+/// Rare grass shipped with this version (for the day it was made).
 const SHARED_RARE: &str = include_str!("rare_today.json");
 /// The latest shared list, updated on GitHub without a new release.
 const SHARED_RARE_URL: &str = "https://raw.githubusercontent.com/ZifuM/Shinytracker/main/data/rare-today.json";
@@ -976,7 +1201,7 @@ struct SharedRare {
     spots: Vec<(usize, usize, u32)>,
 }
 
-/// Shared sparkly grass for the day that started at `reset` (empty when the
+/// Shared rare grass for the day that started at `reset` (empty when the
 /// shared lists are for another day). GitHub is asked at most every 20 minutes.
 fn shared_rare(reset: i64) -> Vec<(usize, usize, u32)> {
     use std::sync::Mutex;
@@ -1023,14 +1248,26 @@ fn parse_rare(line: &str) -> Option<Rare> {
         let n = *head.last()? as u32;
         let rest = &line[i + 24..];
         let xy = nums(rest.split(" on ").next()?);
-        return Some(Rare { x: *xy.first()? as usize, y: *xy.get(1)? as usize, species: None, tiles: n });
+        return Some(Rare {
+            matrix: 0,
+            x: *xy.first()? as usize,
+            y: *xy.get(1)? as usize,
+            species: None,
+            tiles: n,
+        });
     }
     if let Some(i) = line.find("rare grass at ") {
         let rest = &line[i + 14..];
         let (xy, sp) = rest.split_once(": species ")?;
         let xy = nums(xy);
         let species = *nums(sp).first()? as u32;
-        return Some(Rare { x: *xy.first()? as usize, y: *xy.get(1)? as usize, species: Some(species), tiles: 1 });
+        return Some(Rare {
+            matrix: 0,
+            x: *xy.first()? as usize,
+            y: *xy.get(1)? as usize,
+            species: Some(species),
+            tiles: 1,
+        });
     }
     None
 }

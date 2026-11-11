@@ -1,21 +1,23 @@
-//! Today's sparkly ("rare") grass: the list beside the Map and on Home,
-//! "Hunt on sparkly grass" in the Pokédex, and the offer when a target
-//! that's on sparkly grass today is picked.
+//! Today's rare grass: the list beside the Map and on Home,
+//! "Hunt on rare grass" in the Pokédex, and the offer when a target
+//! that's on rare grass today is picked.
 
 use super::ui_kit::{self as kit, CARD_HOVER, LINE, MUTED, TEXT};
 use super::{App, Tab};
 use crate::config::HuntMethod;
 use crate::gamemap::GameMap;
 use crate::theme::{self, GOLD};
-use eframe::egui::{self, Align2, Pos2, RichText, Sense, Stroke, Vec2};
+use eframe::egui::{self, Align2, Color32, Pos2, Rect, RichText, Sense, Stroke, Vec2};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// A Pokémon met on sparkly grass today, and where.
+/// A Pokémon met on rare grass today, and where.
 #[derive(Clone)]
 pub(super) struct RareSpot {
     pub species: crate::species::Species,
     pub wiki_id: Option<String>,
+    /// The map it's on (0 outdoors, else a side area's).
+    pub matrix: u16,
     /// The first tile it was met on.
     pub x: usize,
     pub y: usize,
@@ -25,7 +27,7 @@ pub(super) struct RareSpot {
     pub tiles: usize,
 }
 
-/// "Do you want to hunt it on sparkly grass?" after picking a target.
+/// "Do you want to hunt it on rare grass?" after picking a target.
 pub(super) struct RareOffer {
     pub slug: String,
     pub name: String,
@@ -37,7 +39,7 @@ impl App {
         self.gamemap.as_ref()?.as_ref().ok().cloned()
     }
 
-    /// Everything met on sparkly grass today, one entry per Pokémon and area.
+    /// Everything met on rare grass today, one entry per Pokémon and area.
     pub(super) fn rare_spots_today(&mut self) -> Vec<RareSpot> {
         let Some(map) = self.game_map() else { return Vec::new() };
         self.mapui.refresh_rare();
@@ -46,32 +48,36 @@ impl App {
         for r in &rare {
             let Some(sp) = r.species else { continue };
             let Some(species) = self.rare_species(&map, sp) else { continue };
-            let zone = map.world_zone_at(r.x, r.y);
+            let zone = map.rare_zone(r.matrix, r.x, r.y);
             if let Some(o) = out.iter_mut().find(|o| o.species.slug == species.slug && o.zone == zone) {
                 o.tiles += 1;
                 continue;
             }
             let place = zone.map(|z| self.zone_label(&map, z)).unwrap_or_else(|| "Outdoors".into());
-            out.push(RareSpot { wiki_id: self.rare_wiki_id(&map, sp), species, x: r.x, y: r.y, zone, place, tiles: 1 });
+            out.push(RareSpot {
+                wiki_id: self.rare_wiki_id(&map, sp),
+                species,
+                matrix: r.matrix,
+                x: r.x,
+                y: r.y,
+                zone,
+                place,
+                tiles: 1,
+            });
         }
         out.sort_by(|a, b| a.species.dex.cmp(&b.species.dex).then(a.place.cmp(&b.place)));
         out
     }
 
-    /// Where a Pokémon (by species slug) is on sparkly grass today.
+    /// Where a Pokémon (by species slug) is on rare grass today.
     pub(super) fn rare_spots_for(&mut self, slug: &str) -> Vec<RareSpot> {
         self.rare_spots_today().into_iter().filter(|s| s.species.slug == slug).collect()
     }
 
-    /// Open the Map at a sparkly-grass spot, flashing its area.
+    /// Open the Map at a rare-grass spot, a ring pinging on it.
     pub(super) fn go_to_rare(&mut self, spot: &RareSpot) {
         let Some(map) = self.game_map() else { return };
-        self.mapui.show_rare = true;
-        match spot.zone {
-            Some(z) => self.show_zone_on_map(&map, z, format!("{} on sparkly grass", spot.species.name)),
-            None => self.setup.tab = Tab::Map,
-        }
-        self.mapui.zoom_to_tile(spot.x, spot.y, 6.0);
+        self.show_rare_spot(&map, spot.matrix, spot.x, spot.y, format!("{} on rare grass", spot.species.name));
     }
 
     /// Open a Pokémon's Pokédex entry.
@@ -81,7 +87,7 @@ impl App {
         self.setup.pokedex.tab = super::pokedex::EntryTab::Overview;
     }
 
-    /// Make this the target and hunt it with Sweet Scent on sparkly grass.
+    /// Make this the target and hunt it with Sweet Scent on rare grass.
     pub(super) fn hunt_on_rare_grass(&mut self, slug: &str, name: &str, spots: &[RareSpot]) {
         self.set_target(slug.to_string());
         self.cfg.hunt_method = HuntMethod::RareGrassSweetScent;
@@ -93,8 +99,8 @@ impl App {
         self.notify(super::notices::Notice {
             id: "rare-hunt",
             icon: "✨",
-            title: format!("Hunting {name} on sparkly grass"),
-            body: format!("It's on sparkly grass today at {wher}. Use Sweet Scent there."),
+            title: format!("Hunting {name} on rare grass"),
+            body: format!("It's on rare grass today at {wher}. Use Sweet Scent there."),
             progress: None,
             action: None,
             expires: Some(Instant::now() + Duration::from_secs(12)),
@@ -102,7 +108,7 @@ impl App {
         });
     }
 
-    /// After a new target is picked: if it's on sparkly grass today, offer
+    /// After a new target is picked: if it's on rare grass today, offer
     /// to hunt it there.
     pub(super) fn check_rare_offer(&mut self, slug: &str) {
         let spots = self.rare_spots_for(slug);
@@ -110,7 +116,11 @@ impl App {
             return;
         }
         let name = spots[0].species.name.to_string();
-        self.setup.rare_offer = Some(RareOffer { slug: slug.to_string(), name, spots });
+        self.setup.rare_offer = Some(RareOffer {
+            slug: slug.to_string(),
+            name,
+            spots,
+        });
     }
 
     /// The offer, as a small window over the launcher.
@@ -121,23 +131,23 @@ impl App {
         let mut close = false;
         let mut hunt = false;
         let mut show: Option<RareSpot> = None;
-        egui::Window::new("✨ On sparkly grass today")
+        egui::Window::new("✨ On rare grass today")
             .collapsible(false)
             .resizable(false)
             .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
             .default_width(380.0)
             .show(ctx, |ui| {
                 ui.label(
-                    RichText::new(format!("{name} turned up on sparkly grass today at {}.", places_text(&spots)))
+                    RichText::new(format!("{name} turned up on rare grass today at {}.", places_text(&spots)))
                         .size(kit::fs(13.0))
                         .color(TEXT()),
                 );
                 ui.add_space(4.0);
                 ui.label(
                     RichText::new(if already {
-                        "You're already hunting on sparkly grass. Head there and use Sweet Scent."
+                        "You're already hunting on rare grass. Head there and use Sweet Scent."
                     } else {
-                        "Do you want to hunt it on the sparkly grass? Sweet Scent there brings it out much more often."
+                        "Do you want to hunt it on the rare grass? Sweet Scent there brings it out much more often."
                     })
                     .size(kit::fs(12.0))
                     .color(MUTED()),
@@ -145,7 +155,7 @@ impl App {
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     if !already {
-                        let b = egui::Button::new(RichText::new("Hunt on sparkly grass").strong().color(theme::button_ink()));
+                        let b = egui::Button::new(RichText::new("Hunt on rare grass").strong().color(theme::button_ink()));
                         if kit::accent_button(ui, b, 6.0).clicked() {
                             hunt = true;
                         }
@@ -168,55 +178,60 @@ impl App {
         }
     }
 
-    /// The list of today's sparkly-grass Pokémon. `height` caps the list
+    /// The list of today's rare-grass Pokémon. `height` caps the list
     /// (it scrolls past that).
     pub(super) fn rare_list(&mut self, ui: &mut egui::Ui, spots: &[RareSpot], height: f32) {
         let mut go: Option<RareSpot> = None;
         let mut open: Option<String> = None;
-        egui::ScrollArea::vertical().id_salt(("rare-list", ui.id())).max_height(height).auto_shrink([false, true]).show(ui, |ui| {
-            for s in spots {
-                let row_w = ui.available_width();
-                ui.horizontal(|ui| {
-                    ui.set_width(row_w);
-                    // sprite, clickable to the Pokédex
-                    let (r, resp) = ui.allocate_exact_size(Vec2::splat(44.0), Sense::click());
-                    let p = ui.painter_at(r);
-                    p.rect_filled(r, kit::r(8.0), if resp.hovered() { CARD_HOVER() } else { CARD_HOVER().gamma_multiply(0.7) });
-                    p.rect_stroke(r, kit::r(8.0), Stroke::new(1.0f32, if resp.hovered() { GOLD } else { LINE() }));
-                    let sp = s.species.clone();
-                    self.draw_sprite(&p, &sp, false, r.center_bottom() - Vec2::new(0.0, 3.0), Vec2::splat(40.0));
-                    if resp.on_hover_text("Open in the Pokédex").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                        open = s.wiki_id.clone();
-                    }
-                    ui.vertical(|ui| {
-                        // Keep the text clear of the button: anything too long
-                        // is cut with "…" (hover shows it in full).
-                        ui.set_max_width((row_w - 44.0 - 124.0).max(60.0));
-                        if ui
-                            .add(
-                                egui::Label::new(RichText::new(s.species.name).size(kit::fs(12.5)).strong().color(TEXT()))
-                                    .truncate()
-                                    .sense(Sense::click()),
-                            )
-                            .on_hover_text("Open in the Pokédex")
-                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .clicked()
-                        {
+        egui::ScrollArea::vertical()
+            .id_salt(("rare-list", ui.id()))
+            .max_height(height)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                for s in spots {
+                    let row_w = ui.available_width();
+                    ui.horizontal(|ui| {
+                        ui.set_width(row_w);
+                        // sprite, clickable to the Pokédex
+                        let (r, resp) = ui.allocate_exact_size(Vec2::splat(44.0), Sense::click());
+                        let p = ui.painter_at(r);
+                        p.rect_filled(r, kit::r(8.0), if resp.hovered() { CARD_HOVER() } else { CARD_HOVER().gamma_multiply(0.7) });
+                        p.rect_stroke(r, kit::r(8.0), Stroke::new(1.0f32, if resp.hovered() { GOLD } else { LINE() }));
+                        let sp = s.species.clone();
+                        self.draw_sprite(&p, &sp, false, r.center_bottom() - Vec2::new(0.0, 3.0), Vec2::splat(40.0));
+                        if resp.on_hover_text("Open in the Pokédex").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                             open = s.wiki_id.clone();
                         }
-                        let tiles = if s.tiles > 1 { format!("  ·  {} spots", s.tiles) } else { String::new() };
-                        let place = format!("{}{tiles}", s.place);
-                        ui.add(egui::Label::new(RichText::new(&place).size(kit::fs(11.0)).color(MUTED())).truncate()).on_hover_text(&place);
+                        ui.vertical(|ui| {
+                            // Keep the text clear of the button: anything too long
+                            // is cut with "…" (hover shows it in full).
+                            ui.set_max_width((row_w - 44.0 - 124.0).max(60.0));
+                            if ui
+                                .add(
+                                    egui::Label::new(RichText::new(s.species.name).size(kit::fs(12.5)).strong().color(TEXT()))
+                                        .truncate()
+                                        .sense(Sense::click()),
+                                )
+                                .on_hover_text("Open in the Pokédex")
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .clicked()
+                            {
+                                open = s.wiki_id.clone();
+                            }
+                            let tiles = if s.tiles > 1 { format!("  ·  {} spots", s.tiles) } else { String::new() };
+                            let place = format!("{}{tiles}", s.place);
+                            ui.add(egui::Label::new(RichText::new(&place).size(kit::fs(11.0)).color(MUTED())).truncate())
+                                .on_hover_text(&place);
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button("Show on map").on_hover_text("Open the Map zoomed in on this spot").clicked() {
+                                go = Some(s.clone());
+                            }
+                        });
                     });
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Show on map").on_hover_text("Open the Map zoomed in on this spot").clicked() {
-                            go = Some(s.clone());
-                        }
-                    });
-                });
-                ui.add_space(4.0);
-            }
-        });
+                    ui.add_space(4.0);
+                }
+            });
         if let Some(id) = open {
             self.open_dex_entry(&id);
         }
@@ -233,28 +248,91 @@ impl App {
             ui.set_width(ui.available_width());
             if !ready {
                 ui.label(
-                    RichText::new("Today's sparkly grass shows here once the Map has read your game's map files.")
+                    RichText::new("Today's rare grass shows here once the Map has read your game's map files.")
                         .size(kit::fs(12.5))
                         .color(MUTED()),
                 );
             } else if spots.is_empty() {
                 ui.label(
-                    RichText::new("Nothing met on sparkly grass yet today. Use Sweet Scent on a sparkly patch and it shows up here.")
+                    RichText::new("Nothing met on rare grass yet today. Use Sweet Scent on a rare grass patch and it shows up here.")
                         .size(kit::fs(12.5))
                         .color(MUTED()),
                 );
             } else {
-                // A short list that grows with the page (no scroll box inside
-                // the page's own scrolling); the Map has the full list.
-                let shown = spots.len().min(6);
-                self.rare_list(ui, &spots[..shown], f32::INFINITY);
+                // A grid of tiles, as many rows as fit three; the Map has the rest.
+                const GAP: f32 = 10.0;
+                const TILE_H: f32 = 74.0;
+                let avail = ui.available_width();
+                let cols = ((avail + GAP) / (230.0 + GAP)).floor().max(1.0) as usize;
+                let tile_w = ((avail - GAP * (cols as f32 - 1.0)) / cols as f32).floor();
+                let shown = spots.len().min(cols * 3);
+                let mut go: Option<RareSpot> = None;
+                let mut open: Option<String> = None;
+                for row in spots[..shown].chunks(cols) {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = GAP;
+                        for s in row {
+                            let (r, resp) = ui.allocate_exact_size(Vec2::new(tile_w, TILE_H), Sense::click());
+                            let p = ui.painter_at(r);
+                            let hot = resp.hovered();
+                            p.rect_filled(r, kit::r(10.0), if hot { CARD_HOVER() } else { CARD_HOVER().gamma_multiply(0.6) });
+                            p.rect_stroke(r, kit::r(10.0), Stroke::new(1.0f32, if hot { GOLD } else { LINE() }));
+                            // the Pokémon (click: its Pokédex entry)
+                            let sr = Rect::from_min_size(r.min + Vec2::new(8.0, (TILE_H - 58.0) / 2.0), Vec2::splat(58.0));
+                            let sp_resp = ui.interact(sr, ui.id().with(("rare-tile-sprite", s.species.slug.as_str(), s.place.as_str())), Sense::click());
+                            p.circle_filled(sr.center(), 26.0, Color32::from_black_alpha(if sp_resp.hovered() { 90 } else { 50 }));
+                            self.draw_sprite(&p, &s.species, false, sr.center_bottom() - Vec2::new(0.0, 4.0), Vec2::splat(54.0));
+                            let tx = sr.right() + 8.0;
+                            let maxw = r.right() - tx - 8.0;
+                            let clip = |t: &str, size: f32, bold: bool, col: Color32| {
+                                let font = if bold {
+                                    kit::font_bold(kit::fs(size))
+                                } else {
+                                    egui::FontId::proportional(kit::fs(size))
+                                };
+                                let mut t = t.to_string();
+                                loop {
+                                    let g = p.layout_no_wrap(t.clone(), font.clone(), col);
+                                    if g.size().x <= maxw || t.chars().count() <= 2 {
+                                        return g;
+                                    }
+                                    t = t.trim_end_matches('…').to_string();
+                                    t.pop();
+                                    t.push('…');
+                                }
+                            };
+                            let g1 = clip(s.species.name, 13.0, true, TEXT());
+                            let g2 = clip(&s.place, 11.5, false, MUTED());
+                            let spots_t = if s.tiles > 1 { format!("{} spots", s.tiles) } else { "1 spot".to_string() };
+                            let g3 = clip(&spots_t, 11.0, false, GOLD);
+                            let y0 = r.center().y - (g1.size().y + g2.size().y + g3.size().y + 4.0) / 2.0;
+                            let h1 = g1.size().y;
+                            let h2 = g2.size().y;
+                            p.galley(Pos2::new(tx, y0), g1, TEXT());
+                            p.galley(Pos2::new(tx, y0 + h1 + 2.0), g2, MUTED());
+                            p.galley(Pos2::new(tx, y0 + h1 + h2 + 4.0), g3, GOLD);
+                            if sp_resp.on_hover_text("Open in the Pokédex").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                open = s.wiki_id.clone();
+                            } else if resp
+                                .on_hover_text(format!("Show {} on the Map", s.place))
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .clicked()
+                            {
+                                go = Some(s.clone());
+                            }
+                        }
+                    });
+                    ui.add_space(GAP - ui.spacing().item_spacing.y);
+                }
+                if let Some(id) = open {
+                    self.open_dex_entry(&id);
+                } else if let Some(s) = go {
+                    self.go_to_rare(&s);
+                }
                 if spots.len() > shown {
                     ui.add_space(4.0);
                     if ui
-                        .add(
-                            egui::Button::new(RichText::new(format!("See all {} on the Map", spots.len())).size(kit::fs(12.5)))
-                                .fill(kit::btn_fill()),
-                        )
+                        .add(egui::Button::new(RichText::new(format!("See all {} on the Map", spots.len())).size(kit::fs(12.5))).fill(kit::btn_fill()))
                         .clicked()
                     {
                         self.setup.tab = Tab::Map;
@@ -278,12 +356,5 @@ pub(super) fn places_text(spots: &[RareSpot]) -> String {
         0 => "an outdoor spot".into(),
         1 => places[0].to_string(),
         _ => format!("{} and {}", places[..places.len() - 1].join(", "), places[places.len() - 1]),
-    }
-}
-
-impl super::map::MapState {
-    /// Centre on a tile, zoomed in.
-    pub(super) fn zoom_to_tile(&mut self, x: usize, y: usize, zoom: f32) {
-        self.fly_to(Pos2::new(x as f32 + 0.5, y as f32 + 0.5), zoom);
     }
 }

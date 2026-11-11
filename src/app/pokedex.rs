@@ -644,22 +644,22 @@ impl App {
                             open_wiki = true;
                         }
                     });
-                    // On sparkly grass today: hunt it there.
+                    // On rare grass today: hunt it there.
                     if !rare_spots.is_empty() {
                         ui.add_space(8.0);
                         ui.horizontal_wrapped(|ui| {
                             ui.label(
-                                RichText::new(format!("✨ On sparkly grass today: {}", super::rare::places_text(&rare_spots)))
+                                RichText::new(format!("✨ On rare grass today: {}", super::rare::places_text(&rare_spots)))
                                     .size(kit::fs(12.5))
                                     .strong()
                                     .color(GOLD),
                             );
-                            let b = egui::Button::new(RichText::new("Hunt on sparkly grass").strong().color(Color32::from_rgb(40, 30, 6)))
+                            let b = egui::Button::new(RichText::new("Hunt on rare grass").strong().color(Color32::from_rgb(40, 30, 6)))
                                 .fill(GOLD)
                                 .rounding(kit::btn_round(6.0));
                             if ui
                                 .add(b)
-                                .on_hover_text("Make it your target and hunt it with Sweet Scent on today's sparkly grass")
+                                .on_hover_text("Make it your target and hunt it with Sweet Scent on today's rare grass")
                                 .clicked()
                             {
                                 rare_hunt = true;

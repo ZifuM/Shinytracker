@@ -136,7 +136,23 @@ impl App {
                 let v = i.viewport();
                 (v.maximized.unwrap_or(false), v.minimized.unwrap_or(false), v.outer_rect, v.inner_rect)
             });
-            self.remember_settings_geometry(maxed, minimized, outer, inner);
+            // First frame: put the window back where it was (in this
+            // screen's own scale, and fully on screen), then start noting
+            // where it goes once it has settled.
+            if !self.launcher_placed {
+                self.launcher_placed = true;
+                if !maxed {
+                    if let Some(pos) = self.cfg.settings_pos {
+                        let size = self.cfg.settings_size.unwrap_or([1100.0, 740.0]);
+                        let size = [size[0].max(720.0), size[1].max(600.0)];
+                        let to = crate::topmost::fit_on_screen(Some(pos), size, ctx.pixels_per_point(), false);
+                        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(size[0], size[1])));
+                        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(to[0], to[1])));
+                    }
+                }
+            } else if self.started.elapsed() > std::time::Duration::from_millis(1500) {
+                self.remember_settings_geometry(maxed, minimized, outer, inner);
+            }
             // Match Windows 11's own rounded window corners (8px); square when maximized.
             let r = if maxed { 0.0 } else { 8.0 };
             crate::topmost::round_settings_corners(&mut self.settings_rounded);

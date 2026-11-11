@@ -116,7 +116,7 @@ struct Setup {
     overlay_tab: settings::OverlayTab,
     hunt_tab: settings::HuntTab,
     pokedex: pokedex::DexState,
-    /// "Hunt it on sparkly grass?" after picking a target that's there today.
+    /// "Hunt it on rare grass?" after picking a target that's there today.
     rare_offer: Option<rare::RareOffer>,
     /// Apps in the sidebar whose pages are folded away.
     nav_collapsed: Vec<Tab>,
@@ -264,6 +264,8 @@ pub struct App {
     ov_geom: Option<([f32; 2], [f32; 2])>,
     /// The overlay layout the window was last placed for.
     ov_layout: Option<&'static str>,
+    /// The Companion window has been put back where it was last time.
+    launcher_placed: bool,
     /// When the overlay window last opened.
     ov_opened: Option<Instant>,
     /// The overlay window the stay-on-top keeper is looking after.
@@ -385,6 +387,7 @@ impl App {
             mapui: Default::default(),
             ov_geom: None,
             ov_layout: None,
+            launcher_placed: false,
             ov_opened: None,
             overlay_keeper: None,
             applied_bg_pause: None,
@@ -1839,7 +1842,7 @@ impl App {
                 self.start_fresh(Some(slug));
             }
         }
-        // On sparkly grass today? Offer to hunt it there.
+        // On rare grass today? Offer to hunt it there.
         self.check_rare_offer(&picked);
     }
 
@@ -2570,6 +2573,12 @@ impl eframe::App for App {
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         [0.0; 4] // transparent window corners
+    }
+
+    /// Closed some other way (taskbar, Alt+F4, Windows shutting down): still
+    /// save everything, window spot and size included.
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.cfg.save();
     }
 }
 
