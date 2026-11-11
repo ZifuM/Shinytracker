@@ -342,6 +342,19 @@ pub fn page_header(ui: &mut Ui, title: &str, subtitle: &str) {
     ui.add_space(14.0);
 }
 
+/// "Experimental" notice under the header of an app that's still being built.
+pub fn experimental(ui: &mut Ui, what: &str) {
+    ui.horizontal_wrapped(|ui| {
+        pill(ui, "⚗ Experimental", PillKind::Warn);
+        ui.label(
+            RichText::new(format!("{what} is still being built: some things may be missing or wrong. Tell the dev if you spot something."))
+                .size(fs(11.5))
+                .color(MUTED()),
+        );
+    });
+    ui.add_space(10.0);
+}
+
 /// Small grey label above a group of controls.
 pub fn section(ui: &mut Ui, text: &str) {
     if clean() {

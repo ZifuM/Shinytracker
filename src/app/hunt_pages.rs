@@ -1151,12 +1151,23 @@ impl App {
     // ───────────────────────────── appearance ─────────────────────────────
 
     pub(super) fn page_appearance(&mut self, ui: &mut egui::Ui) {
-        kit::page_header(ui, "APPEARANCE", "Light or dark, and your own colours. Changes the overlay and this window.");
+        kit::page_header(
+            ui,
+            "APPEARANCE",
+            "Light or dark, and your own colours. Changes the overlay and this window.",
+        );
         let before = self.cfg.appearance.clone();
 
-        kit::section(ui, "Style");
-        kit::card(ui, |ui| {
-            ui.horizontal(|ui| {
+        let mut tab = self.setup.appear_tab;
+        if kit::tab_bar(ui, &mut tab, &[(AppearTab::Theme, "Theme"), (AppearTab::Colours, "Colours")]) {
+            self.setup.appear_tab = tab;
+        }
+        ui.add_space(6.0);
+        match self.setup.appear_tab {
+            AppearTab::Theme => {
+                kit::section(ui, "Style");
+                kit::card(ui, |ui| {
+                    ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     ui.label(RichText::new("Settings window style").size(kit::fs(13.0)).color(TEXT()));
                     ui.label(
@@ -1171,62 +1182,75 @@ impl App {
                     self.cfg.appearance.clean_settings = clean;
                 });
             });
-        });
+                });
 
-        kit::section(ui, "Mode");
-        let w3 = ((ui.available_width() - 16.0) / 3.0).floor();
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
-            for (mode, label) in [(UiMode::Light, "Light"), (UiMode::SemiDark, "Semi-dark"), (UiMode::Dark, "Dark")] {
-                if mode_tile(ui, w3, mode, label, &self.cfg.appearance).clicked() {
-                    self.cfg.appearance.mode = mode;
-                }
+                kit::section(ui, "Mode");
+                let w3 = ((ui.available_width() - 16.0) / 3.0).floor();
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    for (mode, label) in [(UiMode::Light, "Light"), (UiMode::SemiDark, "Semi-dark"), (UiMode::Dark, "Dark")] {
+                        if mode_tile(ui, w3, mode, label, &self.cfg.appearance).clicked() {
+                            self.cfg.appearance.mode = mode;
+                        }
+                    }
+                });
+                ui.add_space(14.0);
             }
-        });
-        ui.add_space(14.0);
-
-        kit::section(ui, "Colour");
-        kit::card(ui, |ui| {
-            let a = &mut self.cfg.appearance;
-            swatch_row(ui, &mut a.accent, "accent");
-            ui.add_space(10.0);
-            ui.separator();
-            ui.add_space(8.0);
-            kit::toggle_row(ui, "Gradient", "Blend the header bar from your colour into a second one.", &mut a.gradient);
-            if a.gradient {
-                ui.add_space(8.0);
-                ui.label(RichText::new("Second colour").size(kit::fs(12.0)).color(MUTED()));
-                ui.add_space(4.0);
-                swatch_row(ui, &mut a.accent2, "accent2");
-            }
-        });
-
-        kit::section(ui, "Buttons");
-        kit::card(ui, |ui| {
-            let a = &mut self.cfg.appearance;
-            let mut same = !a.separate_buttons;
-            kit::toggle_row(
-                ui,
-                "Same colour as the header",
-                "Turn off to give buttons (Caught!, Share, Copy, selected options…) their own colour or gradient.",
-                &mut same,
-            );
-            a.separate_buttons = !same;
-            if a.separate_buttons {
-                ui.add_space(10.0);
-                ui.separator();
-                ui.add_space(8.0);
-                swatch_row(ui, &mut a.button, "button");
-                ui.add_space(10.0);
-                kit::toggle_row(ui, "Gradient", "Blend each button from this colour into a second one.", &mut a.button_gradient);
-                if a.button_gradient {
+            AppearTab::Colours => {
+                kit::section(ui, "Colour");
+                kit::card(ui, |ui| {
+                    let a = &mut self.cfg.appearance;
+                    swatch_row(ui, &mut a.accent, "accent");
+                    ui.add_space(10.0);
+                    ui.separator();
                     ui.add_space(8.0);
-                    ui.label(RichText::new("Second colour").size(kit::fs(12.0)).color(MUTED()));
-                    ui.add_space(4.0);
-                    swatch_row(ui, &mut a.button2, "button2");
-                }
+                    kit::toggle_row(
+                        ui,
+                        "Gradient",
+                        "Blend the header bar from your colour into a second one.",
+                        &mut a.gradient,
+                    );
+                    if a.gradient {
+                        ui.add_space(8.0);
+                        ui.label(RichText::new("Second colour").size(kit::fs(12.0)).color(MUTED()));
+                        ui.add_space(4.0);
+                        swatch_row(ui, &mut a.accent2, "accent2");
+                    }
+                });
+
+                kit::section(ui, "Buttons");
+                kit::card(ui, |ui| {
+                    let a = &mut self.cfg.appearance;
+                    let mut same = !a.separate_buttons;
+                    kit::toggle_row(
+                        ui,
+                        "Same colour as the header",
+                        "Turn off to give buttons (Caught!, Share, Copy, selected options…) their own colour or gradient.",
+                        &mut same,
+                    );
+                    a.separate_buttons = !same;
+                    if a.separate_buttons {
+                        ui.add_space(10.0);
+                        ui.separator();
+                        ui.add_space(8.0);
+                        swatch_row(ui, &mut a.button, "button");
+                        ui.add_space(10.0);
+                        kit::toggle_row(
+                            ui,
+                            "Gradient",
+                            "Blend each button from this colour into a second one.",
+                            &mut a.button_gradient,
+                        );
+                        if a.button_gradient {
+                            ui.add_space(8.0);
+                            ui.label(RichText::new("Second colour").size(kit::fs(12.0)).color(MUTED()));
+                            ui.add_space(4.0);
+                            swatch_row(ui, &mut a.button2, "button2");
+                        }
+                    }
+                });
             }
-        });
+        }
 
         kit::section(ui, "Preview");
         kit::card(ui, |ui| {
@@ -1235,7 +1259,12 @@ impl App {
             let win = Rect::from_min_size(r.min + egui::vec2(4.0, 4.0), egui::vec2(260.0, 110.0));
             p.rect_filled(
                 Rect::from_min_max(egui::pos2(win.min.x, win.min.y + 29.0), win.max),
-                egui::Rounding { nw: 0.0, ne: 0.0, sw: 10.0, se: 10.0 },
+                egui::Rounding {
+                    nw: 0.0,
+                    ne: 0.0,
+                    sw: 10.0,
+                    se: 10.0,
+                },
                 theme::BG(),
             );
             theme::header_bar(&p, Rect::from_min_size(win.min, egui::vec2(win.width(), 30.0)), 10.0);
@@ -1245,23 +1274,62 @@ impl App {
                 Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                 Color32::WHITE,
             );
-            theme::outlined_text(&p, win.min + egui::vec2(30.0, 16.0), egui::Align2::LEFT_CENTER, "SHINY HUNT", 9.0, Color32::WHITE);
-            theme::outlined_text(&p, egui::pos2(win.center().x, win.min.y + 62.0), egui::Align2::CENTER_CENTER, "1,234", 18.0, Color32::WHITE);
-            p.text(egui::pos2(win.center().x, win.min.y + 86.0), egui::Align2::CENTER_CENTER, "ENCOUNTERS", kit::font_small(9.0), MUTED());
+            theme::outlined_text(
+                &p,
+                win.min + egui::vec2(30.0, 16.0),
+                egui::Align2::LEFT_CENTER,
+                "SHINY HUNT",
+                9.0,
+                Color32::WHITE,
+            );
+            theme::outlined_text(
+                &p,
+                egui::pos2(win.center().x, win.min.y + 62.0),
+                egui::Align2::CENTER_CENTER,
+                "1,234",
+                18.0,
+                Color32::WHITE,
+            );
+            p.text(
+                egui::pos2(win.center().x, win.min.y + 86.0),
+                egui::Align2::CENTER_CENTER,
+                "ENCOUNTERS",
+                kit::font_small(9.0),
+                MUTED(),
+            );
             p.rect_stroke(win, 10.0, Stroke::new(1.5f32, theme::OUTLINE));
             let btn = Rect::from_min_size(egui::pos2(win.max.x + 24.0, win.min.y + 20.0), egui::vec2(110.0, 32.0));
             p.add(theme::button_shape(btn, if kit::clean() { btn.height() / 2.0 } else { 8.0 }, false));
-            p.text(btn.center(), egui::Align2::CENTER_CENTER, "Caught!", kit::font(13.0), theme::button_ink());
+            p.text(
+                btn.center(),
+                egui::Align2::CENTER_CENTER,
+                "Caught!",
+                kit::font(13.0),
+                theme::button_ink(),
+            );
             let sel = Rect::from_min_size(egui::pos2(win.max.x + 24.0, win.min.y + 62.0), egui::vec2(160.0, 32.0));
             if kit::clean() {
                 p.rect_filled(sel, 6.0, kit::SELECTED_BG());
             } else {
                 p.rect_filled(sel, 8.0, kit::SELECTED_BG());
-                p.rect_filled(Rect::from_min_size(sel.min + egui::vec2(0.0, 6.0), egui::vec2(3.0, 20.0)), 2.0, RED());
+                p.rect_filled(
+                    Rect::from_min_size(sel.min + egui::vec2(0.0, 6.0), egui::vec2(3.0, 20.0)),
+                    2.0,
+                    RED(),
+                );
             }
-            p.text(sel.left_center() + egui::vec2(14.0, 0.0), egui::Align2::LEFT_CENTER, "Selected item", kit::font(13.0), TEXT());
+            p.text(
+                sel.left_center() + egui::vec2(14.0, 0.0),
+                egui::Align2::LEFT_CENTER,
+                "Selected item",
+                kit::font(13.0),
+                TEXT(),
+            );
         });
-        if ui.add(egui::Button::new(RichText::new("Reset to default").size(kit::fs(11.5)).color(MUTED())).frame(false)).clicked() {
+        if ui
+            .add(egui::Button::new(RichText::new("Reset to default").size(kit::fs(11.5)).color(MUTED())).frame(false))
+            .clicked()
+        {
             self.cfg.appearance = Appearance::default();
         }
         if self.cfg.appearance != before {
@@ -1532,4 +1600,12 @@ fn bar_chart(ui: &mut egui::Ui, bars: &[Bar], empty: &str) {
     if bars.iter().all(|b| b.count == 0) {
         p.text(chart.center(), egui::Align2::CENTER_CENTER, empty, kit::font(12.0), MUTED());
     }
+}
+
+/// Tabs on the Appearance settings page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum AppearTab {
+    #[default]
+    Theme,
+    Colours,
 }

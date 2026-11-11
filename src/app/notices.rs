@@ -45,6 +45,40 @@ impl App {
         }
     }
 
+    /// Switch the hunting style when the game log makes it clear (Rare
+    /// grass / Soft resets), with a short notice saying so.
+    pub(super) fn apply_method_hint(&mut self, h: crate::gamelog::MethodHint) {
+        use crate::config::HuntMethod;
+        use crate::gamelog::MethodHint;
+        if !self.cfg.auto_method {
+            return;
+        }
+        let (m, why) = match h {
+            MethodHint::RareGrass => (HuntMethod::RareGrassSweetScent, "Sweet Scent on rare grass spotted."),
+            MethodHint::Starter => (HuntMethod::SoftReset, "You picked a starter."),
+            MethodHint::StaticAfterReset => (HuntMethod::SoftReset, "A reset, then a single Pokémon."),
+        };
+        if self.cfg.hunt_method == m {
+            return;
+        }
+        self.cfg.hunt_method = m;
+        self.dirty = true;
+        let name = match m {
+            HuntMethod::RareGrassSweetScent => "Rare grass",
+            _ => "Soft resets",
+        };
+        self.notify(Notice {
+            id: "auto-method",
+            icon: "🔁",
+            title: format!("Switched to {name}"),
+            body: format!("{why} Turn this off in Settings > Hunt."),
+            progress: None,
+            action: None,
+            expires: Some(Instant::now() + Duration::from_secs(8)),
+            accent: theme::GREEN,
+        });
+    }
+
     pub(super) fn clear_notice(&mut self, id: &str) {
         self.notices.retain(|n| n.id != id);
     }

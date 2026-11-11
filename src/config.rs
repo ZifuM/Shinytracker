@@ -372,6 +372,9 @@ pub struct SavedRun {
     /// Second target of a two-target hunt.
     #[serde(default)]
     pub target2: Option<String>,
+    /// Third target onwards.
+    #[serde(default)]
+    pub more_targets: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -452,11 +455,19 @@ pub struct Config {
     pub interval_ms: u64,
     pub shiny_star_alert: bool,
     pub star_threshold: u32,
+    /// Switch between Rare grass and Soft resets by what the game log shows.
+    pub auto_method: bool,
+    /// Open the Shiny Hunter overlay as soon as the Companion starts.
+    pub overlay_autostart: bool,
+    /// Keep counting encounters while the overlay is stopped.
+    pub count_in_background: bool,
 
     // Overlay window
     pub window_pos: Option<[f32; 2]>,
     /// Optional second target (two-target hunts, e.g. Scyther and Scizor).
     pub target2: Option<String>,
+    /// Third target onwards (several Pokémon hunted on one route).
+    pub more_targets: Vec<String>,
     /// Gentle nudge to take a break after this long hunting in one session.
     pub break_reminder: bool,
     pub break_minutes: u32,
@@ -540,9 +551,13 @@ impl Default for Config {
             rearm_reads: 3,
             interval_ms: 200,
             shiny_star_alert: true,
+            auto_method: true,
+            overlay_autostart: false,
+            count_in_background: true,
             star_threshold: 60,
             window_pos: None,
             target2: None,
+            more_targets: Vec::new(),
             break_reminder: false,
             break_minutes: 90,
             session_goal: 0,

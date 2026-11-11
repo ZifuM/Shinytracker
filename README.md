@@ -1,6 +1,6 @@
-# ✨ Shiny Tracker
+# ✨ Shiny Tracker (Poke Together Companion)
 
-An always-on-top shiny hunting counter for **Pokémon Platinum Together**.
+An always-on-top shiny hunting counter for **Pokémon Platinum Together**, now part of a small companion app with a Pokédex and a map.
 
 <p>
   <img src="docs/overlay.png" alt="Shiny Tracker overlay" height="360">
@@ -19,7 +19,9 @@ Windows 10/11, nothing else to install. It updates itself when a new version com
 - **Odds and luck**: how many hunters would have found it by now, and your chances from here
 - **Stats**: time of day, sessions, week vs week, what you're running into
 - **Shiny Dex, trophies, achievements and levels**, and share images for Discord
-- **Two-target hunts**, break reminders, backup and restore
+- **Multi-target hunts**, break reminders, backup and restore
+- **Pokédex** *(experimental)*: every Pokémon in Platinum Together from the Platinum Together Wiki (plus stats from pokemondb.net), with evolutions, moves and where to catch them, including cut-outs of the map with the exact grass tiles marked
+- **Map** *(experimental)*: Sinnoh drawn from your own game's map files, zoomable, every area outlined, and today's sparkly grass Pokémon from your game log
 
 ## Build it yourself
 
@@ -27,4 +29,4 @@ Install [Rust](https://rustup.rs), then run `build.bat`. It builds the app and m
 
 ---
 
-Fan-made and not affiliated with Nintendo, Game Freak or The Pokémon Company. It never touches the game's files or memory.
+Fan-made and not affiliated with Nintendo, Game Freak or The Pokémon Company. It only reads the game's log and map files; it never changes them or the game's memory.

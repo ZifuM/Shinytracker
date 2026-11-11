@@ -35,7 +35,7 @@ impl HotAction {
             HotAction::Pause => "Pause / resume auto count",
             HotAction::Caught => "Caught! (asks to confirm)",
             HotAction::Undo => "Undo last encounter",
-            HotAction::ClickThrough => "Click-through on / off (modular overlay)",
+            HotAction::ClickThrough => "Click-through on / off",
         }
     }
 }

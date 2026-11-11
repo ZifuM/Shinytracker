@@ -105,29 +105,37 @@ impl App {
             s.phases = self.phases_of(self.cfg.run_id).len();
         }
         if m.daily_goal || m.best {
-            let today = local_day(now_unix());
-            let mut days: BTreeMap<i64, u64> = BTreeMap::new();
-            let mut add = |st: &crate::stats::RunStats| {
-                for d in &st.days {
-                    *days.entry(d.day).or_default() += d.encounters;
-                }
-            };
-            add(&self.cfg.run_stats);
-            for r in &self.cfg.saved_runs {
-                if r.id != self.cfg.run_id {
-                    add(&r.stats);
-                }
-            }
-            for h in &self.cfg.history {
-                if let Some(st) = &h.stats {
-                    add(st);
-                }
-            }
-            s.today = days.get(&today).copied().unwrap_or(0);
-            s.best_day = days.iter().filter(|(d, _)| **d != today).map(|(_, n)| *n).max().unwrap_or(0);
+            let (today, best) = self.day_totals();
+            s.today = today;
+            s.best_day = best;
         }
         self.ov_cache = Some((Instant::now(), s.clone()));
         s
+    }
+
+    /// Encounters today across every run, and the best single day before today.
+    pub(super) fn day_totals(&self) -> (u64, u64) {
+        let today = local_day(now_unix());
+        let mut days: BTreeMap<i64, u64> = BTreeMap::new();
+        let mut add = |st: &crate::stats::RunStats| {
+            for d in &st.days {
+                *days.entry(d.day).or_default() += d.encounters;
+            }
+        };
+        add(&self.cfg.run_stats);
+        for r in &self.cfg.saved_runs {
+            if r.id != self.cfg.run_id {
+                add(&r.stats);
+            }
+        }
+        for h in &self.cfg.history {
+            if let Some(st) = &h.stats {
+                add(st);
+            }
+        }
+        let t = days.get(&today).copied().unwrap_or(0);
+        let best = days.iter().filter(|(d, _)| **d != today).map(|(_, n)| *n).max().unwrap_or(0);
+        (t, best)
     }
 
     fn ov_odds(&self) -> Odds {
@@ -346,7 +354,7 @@ impl App {
         let xs = Stroke::new(1.8f32, Color32::WHITE);
         p.line_segment([cc - egui::vec2(3.5, 3.5), cc + egui::vec2(3.5, 3.5)], xs);
         p.line_segment([cc + egui::vec2(-3.5, 3.5), cc + egui::vec2(3.5, -3.5)], xs);
-        if close.on_hover_text("Save and close Shiny Tracker").clicked() {
+        if close.on_hover_text("Close the overlay (the Companion keeps running)").clicked() {
             self.save_and_quit(ctx);
         }
     }
@@ -430,17 +438,28 @@ impl App {
             }
             ctx.request_repaint_after(Duration::from_millis(250));
         } else if self.confirm_caught {
-            let two = self.target2_idx().map(|i| self.species[i].name.to_string());
-            let (phase_a, phase_b, x_a) = if two.is_some() { (0.76, 0.90, 0.92) } else { (0.64, 0.86, 0.88) };
+            let many = self.all_target_idx().len() >= 3;
+                    let two = if many { None } else { self.target2_idx().map(|i| self.species[i].name.to_string()) };
+            let (phase_a, phase_b, x_a) = if two.is_some() || many { (0.76, 0.90, 0.92) } else { (0.64, 0.86, 0.88) };
             body_text(
                 p,
                 egui::pos2(row.min.x, row.center().y),
                 Align2::LEFT_CENTER,
-                if two.is_some() { "Which?" } else { "Shiny! Was it…" },
+                if two.is_some() || many { "Which?" } else { "Shiny! Was it…" },
                 11.5,
                 theme::pal().text,
             );
-            if let Some(name2) = two {
+            if many {
+                        // Three or more targets: pick in the Companion.
+                        if ui
+                            .put(at(0.22, 0.74), egui::Button::new(RichText::new("Choose…").strong().color(Color32::WHITE)).fill(theme::GREEN.gamma_multiply(0.7)))
+                            .on_hover_text("Pick which of your targets it was")
+                            .clicked()
+                        {
+                            self.setup.caught_pick = true;
+                            self.show_setup = true;
+                        }
+                    } else if let Some(name2) = two {
                 let short = |n: &str| if n.chars().count() > 8 { format!("{}…", n.chars().take(7).collect::<String>()) } else { n.to_string() };
                 let name1 = self.target_idx().map(|i| self.species[i].name.to_string()).unwrap_or_default();
                 if ui
@@ -609,6 +628,43 @@ impl App {
         chips
     }
 
+    /// The overlay as its own always-on-top window (while it's started).
+    pub(super) fn overlay_viewport(&mut self, ctx: &egui::Context) {
+        let want = self.overlay_size();
+        if self.ov_geom.is_none() {
+            let pos = self.cfg.window_pos.unwrap_or([24.0, 120.0]);
+            self.ov_geom = Some((pos, want));
+            self.applied_size = Some(want);
+            self.applied_passthrough = None;
+            self.ov_opened = Some(Instant::now());
+        }
+        let Some((pos, size)) = self.ov_geom else { return };
+        let builder = egui::ViewportBuilder::default()
+            .with_title(crate::topmost::OVERLAY_TITLE)
+            .with_decorations(false)
+            .with_transparent(true)
+            .with_always_on_top()
+            .with_resizable(false)
+            .with_taskbar(false)
+            // Fixed for this open session (size changes go through commands),
+            // so egui never fights the window being dragged.
+            .with_position(pos)
+            .with_inner_size(size);
+        ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("shiny-overlay"), builder, |ctx, _class| {
+            if ctx.input(|i| i.viewport().close_requested()) {
+                self.overlay_on = false;
+            }
+            self.sync_window(ctx);
+            if self.cfg.mini {
+                self.mini_ui(ctx);
+            } else if self.cfg.overlay.legacy() {
+                self.full_ui(ctx);
+            } else {
+                self.modular_ui(ctx);
+            }
+        });
+    }
+
     // ───────────────────────────── full / compact ─────────────────────────────
 
     pub(super) fn modular_ui(&mut self, ctx: &egui::Context) {
@@ -667,7 +723,9 @@ impl App {
             let mut shown_any = false;
 
             let target = self.target_idx().map(|i| self.species[i].clone());
-            let target2 = self.target2_idx().map(|i| self.species[i].clone());
+            // Every target (main first); two or more = a multi-target hunt.
+            let all: Vec<crate::species::Species> = self.all_target_idx().into_iter().map(|i| self.species[i].clone()).collect();
+            let multi = all.len() > 1;
 
             // ── Target plate
             if m.target {
@@ -676,9 +734,10 @@ impl App {
                 theme::plate(&p, plate, theme::PLATE());
                 match &target {
                     Some(sp) => {
-                        let (name, size) = match &target2 {
-                            Some(t2) => (format!("{} + {}", sp.name.to_uppercase(), t2.name.to_uppercase()), 7.5),
-                            None => (sp.name.to_uppercase(), 10.0),
+                        let (name, size) = if multi {
+                            (self.targets_title().unwrap_or_default().to_uppercase(), 7.5)
+                        } else {
+                            (sp.name.to_uppercase(), 10.0)
                         };
                         outlined_text(&p, plate.left_center() + egui::vec2(16.0, 1.0), Align2::LEFT_CENTER, &name, size, Color32::WHITE);
                         if target_flash && blink {
@@ -719,18 +778,18 @@ impl App {
                 }
                 let area = Rect::from_min_max(egui::pos2(x0, y), egui::pos2(x1, y + box_h));
                 if m.sprites {
-                    let boxes: Vec<(Rect, Vec<(Option<crate::species::Species>, bool)>)> = if m.single_sprite {
-                        let who = match &target2 {
-                            Some(t2) => vec![(target.clone(), true), (Some(t2.clone()), true)],
-                            None => vec![(target.clone(), true)],
-                        };
+                    // One target: normal + shiny. Several: their shinies, a box
+                    // each for up to three, all in one box beyond that (or when
+                    // "shiny only" is on).
+                    let shinies: Vec<(Option<crate::species::Species>, bool)> = all.iter().map(|sp| (Some(sp.clone()), true)).collect();
+                    let boxes: Vec<(Rect, Vec<(Option<crate::species::Species>, bool)>)> = if m.single_sprite || all.len() > 3 {
+                        let who = if multi { shinies } else { vec![(target.clone(), true)] };
                         vec![(area, who)]
                     } else {
-                        let box_w = (area.width() - 8.0) / 2.0;
-                        let shows: [(Option<crate::species::Species>, bool); 2] = match &target2 {
-                            Some(t2) => [(target.clone(), true), (Some(t2.clone()), true)],
-                            None => [(target.clone(), false), (target.clone(), true)],
-                        };
+                        let shows: Vec<(Option<crate::species::Species>, bool)> =
+                            if multi { shinies } else { vec![(target.clone(), false), (target.clone(), true)] };
+                        let n = shows.len() as f32;
+                        let box_w = (area.width() - 8.0 * (n - 1.0)) / n;
                         shows
                             .into_iter()
                             .enumerate()
@@ -1063,11 +1122,7 @@ impl App {
             } else if m.target || m.counter {
                 let mut w: f32 = 0.0;
                 if m.target {
-                    let name = match (self.target_idx(), self.target2_idx()) {
-                        (Some(a), Some(b)) => format!("{} + {}", self.species[a].name.to_uppercase(), self.species[b].name.to_uppercase()),
-                        (Some(a), None) => self.species[a].name.to_uppercase(),
-                        _ => "PICK A TARGET".to_string(),
-                    };
+                    let name = self.targets_title().map(|t| t.to_uppercase()).unwrap_or_else(|| "PICK A TARGET".to_string());
                     let col = if target_flash && blink { GOLD } else if self.target_idx().is_some() { Color32::WHITE } else { MUTED() };
                     let y = if m.counter { top + 15.0 } else { mid };
                     w = w.max(outlined_text(&p, egui::pos2(x, y), Align2::LEFT_CENTER, &name, 7.5, col).width());
@@ -1153,23 +1208,33 @@ impl App {
                     ctx.request_repaint_after(Duration::from_millis(250));
                 } else if self.confirm_caught {
                     divider(&p, &mut x);
-                    let targets: Vec<(Option<String>, String)> = match self.target2_idx() {
-                        Some(i2) => vec![
-                            (self.cfg.target.clone(), self.target_idx().map(|i| self.species[i].name.to_string()).unwrap_or_default()),
-                            (self.cfg.target2.clone(), self.species[i2].name.to_string()),
-                        ],
-                        None => vec![(self.cfg.target.clone(), "Target".to_string())],
-                    };
-                    for (slug, name) in targets {
-                        let short = if name.chars().count() > 8 { format!("{}…", name.chars().take(7).collect::<String>()) } else { name.clone() };
-                        if ui.put(btn_at(x, 66.0), egui::Button::new(RichText::new(short).strong().color(Color32::WHITE)).fill(theme::GREEN.gamma_multiply(0.7)))
-                            .on_hover_text(format!("Shiny {name}! Logs this hunt and starts fresh"))
+                    let all = self.all_target_idx();
+                    if all.len() > 3 {
+                        if ui.put(btn_at(x, 76.0), egui::Button::new(RichText::new("Choose…").strong().color(Color32::WHITE)).fill(theme::GREEN.gamma_multiply(0.7)))
+                            .on_hover_text("Pick which of your targets it was")
                             .clicked()
                         {
-                            self.log_hunt_as(slug);
-                            self.confirm_caught = false;
+                            self.setup.caught_pick = true;
+                            self.show_setup = true;
                         }
-                        x += 70.0;
+                        x += 80.0;
+                    } else {
+                        let targets: Vec<(Option<String>, String)> = if all.len() <= 1 {
+                            vec![(self.cfg.target.clone(), "Target".to_string())]
+                        } else {
+                            all.iter().map(|&i| (Some(self.species[i].slug.clone()), self.species[i].name.to_string())).collect()
+                        };
+                        for (slug, name) in targets {
+                            let short = if name.chars().count() > 8 { format!("{}…", name.chars().take(7).collect::<String>()) } else { name.clone() };
+                            if ui.put(btn_at(x, 66.0), egui::Button::new(RichText::new(short).strong().color(Color32::WHITE)).fill(theme::GREEN.gamma_multiply(0.7)))
+                                .on_hover_text(format!("Shiny {name}! Logs this hunt and starts fresh"))
+                                .clicked()
+                            {
+                                self.log_hunt_as(slug);
+                                self.confirm_caught = false;
+                            }
+                            x += 70.0;
+                        }
                     }
                     if ui.put(btn_at(x, 54.0), egui::Button::new(RichText::new("Phase").strong().color(Color32::WHITE)).fill(GOLD.gamma_multiply(0.55)))
                         .on_hover_text("A shiny of a different Pokémon: pick which, and this hunt keeps going")

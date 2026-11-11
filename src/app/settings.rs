@@ -8,11 +8,6 @@ use crate::theme::{self, GOLD, RED};
 use eframe::egui::{self, Color32, Rect, RichText, Sense};
 use std::time::{Duration, Instant};
 
-const COMMON_METHODS: [HuntMethod; 3] = [
-    HuntMethod::RareGrassSweetScent,
-    HuntMethod::SweetScent,
-    HuntMethod::PokeRadar,
-];
 
 fn method_icon(m: HuntMethod) -> &'static str {
     match m {
@@ -38,6 +33,35 @@ fn method_short(m: HuntMethod) -> (&'static str, &'static str) {
         HuntMethod::FromGameLog => ("From the game", "Exact log odds"),
         HuntMethod::Custom => ("Custom", "Enter odds"),
     }
+}
+
+/// Tabs on the Hunt settings page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum HuntTab {
+    #[default]
+    Target,
+    Method,
+    Session,
+}
+
+/// Tabs on the Advanced settings page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum AdvTab {
+    #[default]
+    Updates,
+    Data,
+    Counter,
+    Reading,
+}
+
+/// Tabs on the Overlay settings page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum OverlayTab {
+    #[default]
+    Layout,
+    Sections,
+    Behaviour,
+    Sounds,
 }
 
 /// Methods on offer. "From the game" and "Custom" are no longer offered
@@ -104,22 +128,9 @@ pub(super) fn odds_state(cfg: &Config, count: u64) -> Option<(String, Color32)> 
 impl App {
     // ─────────────────────────── window ───────────────────────────
 
-    pub(super) fn setup_viewport(&mut self, ctx: &egui::Context) {
-        let id = egui::ViewportId::from_hash_of("shiny-tracker-setup");
-        let mut builder = egui::ViewportBuilder::default()
-            .with_title("Shiny Tracker — Settings")
-            .with_decorations(false)
-            .with_transparent(true)
-            .with_min_inner_size([640.0, 460.0])
-            .with_resizable(true)
-            // Fixed for this open session, so egui never fights the user's own
-            // maximize / restore.
-            .with_maximized(self.setup_max);
-        builder = match self.setup_geom {
-            Some((pos, size)) => builder.with_position(pos).with_inner_size(size),
-            None => builder.with_inner_size([980.0, 700.0]),
-        };
-        ctx.show_viewport_immediate(id, builder, |ctx, _class| {
+    /// The launcher: the main window, with the sidebar and every page.
+    pub(super) fn launcher_ui(&mut self, ctx: &egui::Context) {
+        {
             let screen = ctx.screen_rect();
             let (maxed, minimized, outer, inner) = ctx.input(|i| {
                 let v = i.viewport();
@@ -184,20 +195,29 @@ impl App {
                             bar_outer_margin: 0.0,
                             ..egui::style::ScrollStyle::solid()
                         };
+                        // The Pokédex grid keeps its own scroll spot while an entry is open.
+                        let scroll_key = if self.setup.tab == Tab::Pokedex {
+                            (self.setup.pokedex.open.clone(), self.setup.pokedex.grid_gen)
+                        } else {
+                            (None, 0)
+                        };
                         egui::ScrollArea::vertical()
-                            .id_salt("settings-page")
+                            .id_salt(("settings-page", scroll_key))
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
                                 // Cap the page width, but never wider than the window
                                 // (set_max_width can also widen, which cut the right side off).
                                 // Gallery pages (dex, achievements, trophies, runs) fill the window.
                                 let wide = self.setup.phase_pick
+                                    || self.setup.caught_pick
                                     || (self.setup.profile_card.is_none()
                                         && self.setup.share.is_none()
-                                        && matches!(self.setup.tab, Tab::Profile | Tab::Dex | Tab::Trophies | Tab::Runs));
+                                        && matches!(self.setup.tab, Tab::Home | Tab::Profile | Tab::Dex | Tab::Trophies | Tab::Runs | Tab::Pokedex | Tab::Map));
                                 let w = if wide { ui.available_width() } else { ui.available_width().min(900.0) };
                                 ui.set_max_width(w);
-                                if self.setup.phase_pick {
+                                if self.setup.caught_pick {
+                                    self.page_caught_pick(ui);
+                                } else if self.setup.phase_pick {
                                     self.page_phase(ui);
                                 } else if self.setup.profile_card.is_some() {
                                     self.page_profile_card(ui);
@@ -206,7 +226,15 @@ impl App {
                                 } else if let (Tab::Runs, Some(run)) = (self.setup.tab, self.setup.view_run) {
                                     self.page_run_stats(ui, run);
                                 } else {
+                                    // Shiny Hunter pages carry the Start / Stop strip.
+                                    if super::launcher::is_shiny_tab(self.setup.tab) && self.setup.tab != Tab::Shiny {
+                                        self.overlay_strip(ui);
+                                    }
                                     match self.setup.tab {
+                                        Tab::Home => self.page_home(ui),
+                                        Tab::Shiny => self.page_shiny(ui),
+                                        Tab::Pokedex => self.page_pokedex(ui),
+                                        Tab::Map => self.page_map(ui),
                                         Tab::Profile => self.page_profile(ui),
                                         Tab::Dex => self.page_dex(ui),
                                         Tab::Hunt => self.page_hunt(ui),
@@ -250,10 +278,7 @@ impl App {
                     ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(egui::viewport::ResizeDirection::SouthEast));
                 }
             }
-            if ctx.input(|i| i.viewport().close_requested()) {
-                self.show_setup = false;
-            }
-        });
+        }
     }
 
     /// The accent header bar across the top of the settings window.
@@ -275,7 +300,7 @@ impl App {
             &p,
             rect.left_center() + egui::vec2(36.0, 1.0),
             egui::Align2::LEFT_CENTER,
-            "SETTINGS",
+            "POKE TOGETHER COMPANION",
             10.0,
             Color32::WHITE,
         );
@@ -322,8 +347,8 @@ impl App {
             } else {
                 p.line_segment([c - egui::vec2(5.5, 5.5), c + egui::vec2(5.5, 5.5)], s);
                 p.line_segment([c + egui::vec2(-5.5, 5.5), c + egui::vec2(5.5, -5.5)], s);
-                if resp.on_hover_text("Close settings").clicked() {
-                    self.show_setup = false;
+                if resp.on_hover_text("Close the Companion (saves everything)").clicked() {
+                    self.quit_app(ctx);
                 }
             }
         }
@@ -357,61 +382,87 @@ impl App {
         }
     }
 
-    /// Hunt page: the optional second target of a two-target hunt.
+    /// Hunt page: extra targets hunted alongside the main one (two Pokémon on
+    /// the same route, or more).
     fn second_target_row(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            match self.target2_idx() {
-                Some(i) => {
-                    let sp = self.species[i].clone();
-                    let (r, _) = ui.allocate_exact_size(egui::vec2(44.0, 44.0), Sense::hover());
+        const MAX_ALSO: usize = 5;
+        let also = self.also_slugs();
+        if also.is_empty() {
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("Also hunting (optional)").size(kit::fs(13.0)).color(TEXT()));
+                    ui.label(
+                        RichText::new("Hunting more than one Pokémon on the same route? They all count as sightings, and Caught! asks which one.")
+                            .size(kit::fs(11.5))
+                            .color(MUTED()),
+                    );
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let label = if self.setup.picking_also.is_some() { "Done" } else { "Add" };
+                    if ui.add(egui::Button::new(RichText::new(label).size(kit::fs(12.5))).fill(kit::btn_fill())).clicked() {
+                        self.setup.picking_also = if self.setup.picking_also.is_some() { None } else { Some(0) };
+                        self.setup.picking_target = false;
+                    }
+                });
+            });
+        } else {
+            ui.label(RichText::new("Also hunting").size(kit::fs(11.0)).color(MUTED()));
+            ui.add_space(4.0);
+            let mut remove: Option<usize> = None;
+            for (k, slug) in also.iter().enumerate() {
+                let Some(i) = self.species.iter().position(|s| &s.slug == slug) else { continue };
+                let sp = self.species[i].clone();
+                ui.horizontal(|ui| {
+                    let (r, _) = ui.allocate_exact_size(egui::vec2(40.0, 40.0), Sense::hover());
                     let p = ui.painter_at(r);
-                    p.rect_filled(r, 22.0, CARD_HOVER());
-                    self.draw_sprite(&p, &sp, false, r.center_bottom() - egui::vec2(0.0, 3.0), egui::vec2(40.0, 40.0));
-                    ui.vertical(|ui| {
-                        ui.label(RichText::new("Also hunting").size(kit::fs(11.0)).color(MUTED()));
-                        ui.label(RichText::new(sp.name).size(kit::fs(14.0)).strong().color(TEXT()));
+                    p.rect_filled(r, 20.0, CARD_HOVER());
+                    self.draw_sprite(&p, &sp, false, r.center_bottom() - egui::vec2(0.0, 3.0), egui::vec2(36.0, 36.0));
+                    ui.label(RichText::new(format!("{}  #{:04}", sp.name, sp.dex)).size(kit::fs(14.0)).strong().color(TEXT()));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.add(egui::Button::new(RichText::new("Remove").size(kit::fs(12.5))).fill(kit::btn_fill())).clicked() {
+                            remove = Some(k);
+                        }
+                        let picking = self.setup.picking_also == Some(k);
+                        let label = if picking { "Done" } else { "Change" };
+                        if ui.add(egui::Button::new(RichText::new(label).size(kit::fs(12.5))).fill(kit::btn_fill())).clicked() {
+                            self.setup.picking_also = if picking { None } else { Some(k) };
+                            self.setup.picking_target = false;
+                        }
                     });
-                }
-                None => {
-                    ui.vertical(|ui| {
-                        ui.label(RichText::new("Second target (optional)").size(kit::fs(13.0)).color(TEXT()));
-                        ui.label(
-                            RichText::new("Hunting two Pokémon on the same route? Both count as sightings, and Caught! asks which one.")
-                                .size(kit::fs(11.5))
-                                .color(MUTED()),
-                        );
-                    });
-                }
+                });
+                ui.add_space(4.0);
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if self.cfg.target2.is_some()
-                    && ui.add(egui::Button::new(RichText::new("Remove").size(kit::fs(12.5))).fill(kit::btn_fill())).clicked()
-                {
-                    self.cfg.target2 = None;
-                    self.setup.picking_target2 = false;
-                    self.dirty = true;
-                }
-                let label = if self.setup.picking_target2 {
-                    "Done"
-                } else if self.cfg.target2.is_some() {
-                    "Change"
-                } else {
-                    "Add"
-                };
+            if let Some(k) = remove {
+                let mut list = also.clone();
+                list.remove(k);
+                self.set_also(list);
+                self.setup.picking_also = None;
+            }
+            if also.len() < MAX_ALSO {
+                ui.add_space(2.0);
+                let adding = self.setup.picking_also == Some(also.len());
+                let label = if adding { "Done" } else { "+ Add another Pokémon" };
                 if ui.add(egui::Button::new(RichText::new(label).size(kit::fs(12.5))).fill(kit::btn_fill())).clicked() {
-                    self.setup.picking_target2 = !self.setup.picking_target2;
+                    self.setup.picking_also = if adding { None } else { Some(also.len()) };
                     self.setup.picking_target = false;
                 }
-            });
-        });
-        if self.setup.picking_target2 {
+            } else {
+                ui.label(RichText::new(format!("Up to {} Pokémon at once.", MAX_ALSO + 1)).size(kit::fs(11.5)).color(MUTED()));
+            }
+        }
+        if let Some(k) = self.setup.picking_also {
             ui.add_space(8.0);
             if let Some(slug) = self.target_picker(ui, 260.0) {
-                if self.cfg.target.as_deref() != Some(slug.as_str()) {
-                    self.cfg.target2 = Some(slug);
-                    self.dirty = true;
+                let mut list = self.also_slugs();
+                if self.cfg.target.as_deref() != Some(slug.as_str()) && !list.contains(&slug) {
+                    if k < list.len() {
+                        list[k] = slug;
+                    } else {
+                        list.push(slug);
+                    }
+                    self.set_also(list);
                 }
-                self.setup.picking_target2 = false;
+                self.setup.picking_also = None;
             }
         }
     }
@@ -652,28 +703,72 @@ impl App {
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
         ui.add_space(2.0);
-        for (tab, icon, label) in [
-            (Tab::Profile, "🏅", "Profile"),
-            (Tab::Dex, "✨", "Shiny Dex"),
-            (Tab::Hunt, "🎯", "Hunt"),
-            (Tab::Counting, "👁", "Counting"),
-            (Tab::Runs, "📜", "Runs"),
-            (Tab::Overlay, "🖵", "Overlay"),
-            (Tab::Appearance, "🎨", "Appearance"),
-            (Tab::Hotkeys, "⌨", "Hotkeys"),
-            (Tab::Advanced, "⚙", "Advanced"),
-        ] {
-            match tab {
-                Tab::Profile => kit::nav_group(ui, "TRACKER"),
-                Tab::Overlay => kit::nav_group(ui, "APP"),
-                _ => {}
+        // (group heading, tab, icon, label, parent: the app a page belongs to)
+        let items: [(Option<&str>, Tab, &str, &str, Option<Tab>); 13] = [
+            (None, Tab::Home, "🏠", "Home", None),
+            (None, Tab::Profile, "🏅", "Profile", None),
+            (Some("APPS"), Tab::Shiny, "✨", "Shiny Hunter", None),
+            (None, Tab::Hunt, "🎯", "Hunt", Some(Tab::Shiny)),
+            (None, Tab::Counting, "👁", "Counting", Some(Tab::Shiny)),
+            (None, Tab::Runs, "📜", "Runs", Some(Tab::Shiny)),
+            (None, Tab::Dex, "⭐", "Shiny Dex", Some(Tab::Shiny)),
+            (None, Tab::Overlay, "🖵", "Overlay", Some(Tab::Shiny)),
+            (None, Tab::Pokedex, "📖", "Pokédex", None),
+            (None, Tab::Map, "🗺", "Map", None),
+            (Some("SETTINGS"), Tab::Appearance, "🎨", "Appearance", None),
+            (None, Tab::Hotkeys, "⌨", "Hotkeys", None),
+            (None, Tab::Advanced, "⚙", "Advanced", None),
+        ];
+        let parent_of = |t: Tab| items.iter().find(|i| i.1 == t).and_then(|i| i.4);
+        let has_children = |t: Tab| items.iter().any(|i| i.4 == Some(t));
+        let current = self.setup.tab;
+        for (group, tab, icon, label, parent) in items {
+            if let Some(g) = group {
+                kit::nav_group(ui, g);
             }
-            if kit::nav_item(ui, icon, label, self.setup.tab == tab) {
+            // Sub-pages only show while their app is expanded.
+            if let Some(p) = parent {
+                if self.setup.nav_collapsed.contains(&p) {
+                    continue;
+                }
+            }
+            let expandable = has_children(tab);
+            let collapsed = self.setup.nav_collapsed.contains(&tab);
+            // A collapsed app stays highlighted while one of its pages is open.
+            let selected = current == tab || (collapsed && parent_of(current) == Some(tab));
+            let clicked = if parent.is_some() {
+                ui.horizontal(|ui| {
+                    ui.add_space(14.0);
+                    ui.vertical(|ui| kit::nav_item(ui, icon, label, selected)).inner
+                })
+                .inner
+            } else {
+                let r = kit::nav_item(ui, icon, label, selected);
+                let rect = ui.min_rect();
+                let y = ui.cursor().min.y - 18.0;
+                let right = rect.max.x - 12.0;
+                // A green light beside Shiny Hunter while the overlay runs.
+                if tab == Tab::Shiny && self.overlay_on {
+                    ui.painter().circle_filled(egui::pos2(right - 2.0, y), 4.0, theme::GREEN);
+                }
+                r
+            };
+            if clicked {
+                if expandable {
+                    // Each click on an app opens or folds its list of pages.
+                    if collapsed {
+                        self.setup.nav_collapsed.retain(|t| *t != tab);
+                    } else {
+                        self.setup.nav_collapsed.push(tab);
+                    }
+                }
                 self.setup.tab = tab;
                 self.setup.picking_target = false;
                 self.setup.view_run = None;
                 self.setup.share = None;
                 self.setup.profile_card = None;
+                self.setup.phase_pick = false;
+                self.setup.caught_pick = false;
             }
             ui.add_space(2.0);
         }
@@ -800,14 +895,12 @@ impl App {
 
     /// Method tiles + method-specific controls.
     fn method_picker(&mut self, ui: &mut egui::Ui) {
-        let methods: Vec<HuntMethod> = if self.setup.show_all_methods {
-            HuntMethod::ALL
-                .into_iter()
-                .filter(|&m| method_offered(m) || m == self.cfg.hunt_method)
-                .collect()
-        } else {
-            COMMON_METHODS.to_vec()
-        };
+        // Every method on offer, always shown (plus a retired one if it's
+        // still selected).
+        let methods: Vec<HuntMethod> = HuntMethod::ALL
+            .into_iter()
+            .filter(|&m| method_offered(m) || m == self.cfg.hunt_method)
+            .collect();
         let w = ((ui.available_width() - 16.0) / 3.0).floor();
         for chunk in methods.chunks(3) {
             ui.horizontal(|ui| {
@@ -841,30 +934,13 @@ impl App {
             });
             ui.add_space(8.0);
         }
-        // Keep a less common selection visible even when collapsed.
-        let hidden_selected =
-            !self.setup.show_all_methods && !COMMON_METHODS.contains(&self.cfg.hunt_method);
-        let more: Vec<&str> = HuntMethod::ALL
-            .iter()
-            .filter(|m| !COMMON_METHODS.contains(m) && method_offered(**m))
-            .map(|m| method_short(*m).0)
-            .collect();
-        let (label, detail) = if self.setup.show_all_methods {
-            ("Show fewer methods".to_string(), String::new())
-        } else {
-            (format!("Show {} more methods", more.len()), more.join(" · "))
-        };
-        if kit::expander(ui, &label, &detail, self.setup.show_all_methods).clicked() {
-            self.setup.show_all_methods = !self.setup.show_all_methods;
-        }
-        if hidden_selected {
-            ui.add_space(4.0);
-            kit::pill(
-                ui,
-                &format!("Selected: {}", method_short(self.cfg.hunt_method).0),
-                PillKind::Info,
-            );
-        }
+        ui.add_space(4.0);
+        self.dirty |= kit::toggle_row(
+            ui,
+            "Switch automatically",
+            "Changes to Rare grass when the game log shows Sweet Scent on rare grass, and to Soft resets when you pick a starter or reset into a static Pokémon. A short pop-up says when it switches. Your count isn't touched.",
+            &mut self.cfg.auto_method,
+        );
         ui.add_space(4.0);
         ui.label(
             RichText::new(self.cfg.hunt_method.note())
@@ -1000,176 +1076,111 @@ impl App {
     // ─────────────────────────── pages ───────────────────────────
 
     fn page_hunt(&mut self, ui: &mut egui::Ui) {
-        kit::page_header(
+        kit::page_header(ui, "HUNT", "What you're hunting and how. The odds update as you change things.");
+        let mut tab = self.setup.hunt_tab;
+        if kit::tab_bar(
             ui,
-            "HUNT",
-            "What you're hunting and how. The odds update as you change things.",
-        );
-
-        // Target card
-        kit::card(ui, |ui| {
-            ui.horizontal(|ui| {
-                let (r, _) = ui.allocate_exact_size(egui::vec2(64.0, 64.0), Sense::hover());
-                let p = ui.painter_at(r);
-                p.rect_filled(r, 32.0, CARD_HOVER());
-                match self.target_idx() {
-                    Some(i) => {
-                        let sp = self.species[i].clone();
-                        self.draw_sprite(
-                            &p,
-                            &sp,
-                            false,
-                            r.center_bottom() - egui::vec2(0.0, 4.0),
-                            egui::vec2(60.0, 58.0),
-                        );
-                        ui.vertical(|ui| {
-                            ui.label(RichText::new("Target").size(kit::fs(11.0)).color(MUTED()));
-                            ui.label(
-                                RichText::new(format!("{}  #{:04}", sp.name, i + 1))
-                                    .size(kit::fs(16.5))
-                                    .strong()
-                                    .color(TEXT()),
-                            );
-                        });
-                    }
-                    None => {
-                        ui.vertical(|ui| {
-                            ui.label(RichText::new("Target").size(kit::fs(11.0)).color(MUTED()));
-                            ui.label(
-                                RichText::new("Pick the Pokémon you're hunting")
-                                    .size(kit::fs(14.5))
-                                    .color(TEXT()),
-                            );
-                        });
-                    }
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let label = if self.setup.picking_target {
-                        "Done"
-                    } else {
-                        "Change"
-                    };
-                    if ui
-                        .add(
-                            egui::Button::new(RichText::new(label).size(kit::fs(13.0)))
-                                .fill(kit::btn_fill())
-                                .min_size(egui::vec2(80.0, 30.0)),
-                        )
-                        .clicked()
-                    {
-                        self.setup.picking_target = !self.setup.picking_target;
-                    }
-                });
-            });
-            if self.setup.picking_target || self.cfg.target.is_none() {
-                ui.add_space(10.0);
-                if let Some(slug) = self.target_picker(ui, 330.0) {
-                    self.set_target(slug);
-                    self.setup.picking_target = false;
-                }
-                ui.add_space(4.0);
-                ui.label(
-                    RichText::new(
-                        "Switching target saves your current run. Find it again under Runs.",
-                    )
-                    .size(kit::fs(11.0))
-                    .color(MUTED()),
-                );
-            }
-            // Optional second target (two Pokémon on the same route).
-            if self.cfg.target.is_some() {
-                ui.add_space(10.0);
-                ui.separator();
-                ui.add_space(8.0);
-                self.second_target_row(ui);
-            }
-        });
-
-        kit::section(ui, "Session");
-        kit::card(ui, |ui| {
-            self.dirty |= kit::toggle_row(
-                ui,
-                "Break reminder",
-                "A gentle nudge on the overlay after a long stretch of hunting in one session.",
-                &mut self.cfg.break_reminder,
-            );
-            if self.cfg.break_reminder {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Remind me after").size(kit::fs(12.5)).color(TEXT()));
-                    self.dirty |= ui
-                        .add(egui::DragValue::new(&mut self.cfg.break_minutes).range(15..=600).speed(5.0))
-                        .changed();
-                    ui.label(RichText::new("minutes of hunting").size(kit::fs(12.5)).color(TEXT()));
-                });
-            }
-            ui.add_space(6.0);
-            ui.separator();
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Session goal").size(kit::fs(13.0)).color(TEXT()));
-                kit::info(ui, "A pat on the back when a session reaches this many encounters. 0 = off.");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(RichText::new("encounters").size(kit::fs(12.5)).color(MUTED()));
-                    self.dirty |= ui
-                        .add(egui::DragValue::new(&mut self.cfg.session_goal).range(0..=100_000).speed(10.0))
-                        .changed();
-                });
-            });
-        });
-
-        kit::section(ui, "How are you hunting?");
-        self.method_picker(ui);
-        ui.add_space(14.0);
-
-        kit::section(ui, "Singles or doubles?");
-        if self.battle_type_picker(ui) {
-            self.push_settings(true);
+            &mut tab,
+            &[
+                (HuntTab::Target, "Target"),
+                (HuntTab::Method, "Method & odds"),
+                (HuntTab::Session, "Session"),
+            ],
+        ) {
+            self.setup.hunt_tab = tab;
         }
-        ui.add_space(14.0);
-
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("Shiny Charms in your Bag")
-                    .size(kit::fs(13.0))
-                    .color(TEXT()),
-            );
-            kit::info(
-                ui,
-                "Each Shiny Charm gives wild Pokémon one more chance to be shiny.",
-            );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                self.dirty |= kit::stepper(ui, &mut self.cfg.shiny_charms, 0, 20);
-            });
-        });
-        ui.add_space(14.0);
-        self.odds_tiles(ui);
-        ui.add_space(10.0);
-        kit::card(ui, |ui| {
-            self.dirty |= kit::toggle_row(
-                ui,
-                "Pause the timer when you stop",
-                "Hunt time stops when no encounter comes for a while (a break, a menu, the phone) and carries on with the next one. The wait isn't counted. Your hunt and counting keep going.",
-                &mut self.cfg.idle_pause,
-            );
-            if self.cfg.idle_pause {
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Pause after").size(kit::fs(13.0)).color(TEXT()));
-                    let mut m = self.cfg.idle_minutes;
-                    kit::segmented(ui, &mut m, &[(2, " 2 min "), (3, " 3 min "), (5, " 5 min "), (10, " 10 min "), (15, " 15 min ")]);
-                    if m != self.cfg.idle_minutes {
-                        self.cfg.idle_minutes = m;
-                        self.dirty = true;
+        ui.add_space(6.0);
+        match self.setup.hunt_tab {
+            HuntTab::Target => {
+                // Target card
+                kit::card(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let (r, _) = ui.allocate_exact_size(egui::vec2(64.0, 64.0), Sense::hover());
+                        let p = ui.painter_at(r);
+                        p.rect_filled(r, 32.0, CARD_HOVER());
+                        match self.target_idx() {
+                            Some(i) => {
+                                let sp = self.species[i].clone();
+                                self.draw_sprite(&p, &sp, false, r.center_bottom() - egui::vec2(0.0, 4.0), egui::vec2(60.0, 58.0));
+                                ui.vertical(|ui| {
+                                    ui.label(RichText::new("Target").size(kit::fs(11.0)).color(MUTED()));
+                                    ui.label(
+                                        RichText::new(format!("{}  #{:04}", sp.name, i + 1))
+                                            .size(kit::fs(16.5))
+                                            .strong()
+                                            .color(TEXT()),
+                                    );
+                                });
+                            }
+                            None => {
+                                ui.vertical(|ui| {
+                                    ui.label(RichText::new("Target").size(kit::fs(11.0)).color(MUTED()));
+                                    ui.label(RichText::new("Pick the Pokémon you're hunting").size(kit::fs(14.5)).color(TEXT()));
+                                });
+                            }
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let label = if self.setup.picking_target { "Done" } else { "Change" };
+                            if ui
+                                .add(
+                                    egui::Button::new(RichText::new(label).size(kit::fs(13.0)))
+                                        .fill(kit::btn_fill())
+                                        .min_size(egui::vec2(80.0, 30.0)),
+                                )
+                                .clicked()
+                            {
+                                self.setup.picking_target = !self.setup.picking_target;
+                            }
+                        });
+                    });
+                    if self.setup.picking_target || self.cfg.target.is_none() {
+                        ui.add_space(10.0);
+                        if let Some(slug) = self.target_picker(ui, 330.0) {
+                            self.set_target(slug);
+                            self.setup.picking_target = false;
+                        }
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new("Switching target saves your current run. Find it again under Runs.")
+                                .size(kit::fs(11.0))
+                                .color(MUTED()),
+                        );
                     }
-                    ui.label(RichText::new("with no encounter").size(kit::fs(13.0)).color(MUTED()));
+                    // Optional second target (two Pokémon on the same route).
+                    if self.cfg.target.is_some() {
+                        ui.add_space(10.0);
+                        ui.separator();
+                        ui.add_space(8.0);
+                        self.second_target_row(ui);
+                    }
                 });
             }
-        });
-        if self.cfg.hunt_method.is_wild_battles() {
-            ui.add_space(10.0);
-            kit::card(ui, |ui| {
-                let name = self.target_name(self.cfg.target.as_deref());
-                self.dirty |= kit::toggle_row(
+            HuntTab::Method => {
+                kit::section(ui, "How are you hunting?");
+                self.method_picker(ui);
+                ui.add_space(14.0);
+
+                kit::section(ui, "Singles or doubles?");
+                if self.battle_type_picker(ui) {
+                    self.push_settings(true);
+                }
+                ui.add_space(14.0);
+
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Shiny Charms in your Bag").size(kit::fs(13.0)).color(TEXT()));
+                    kit::info(ui, "Each Shiny Charm gives wild Pokémon one more chance to be shiny.");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        self.dirty |= kit::stepper(ui, &mut self.cfg.shiny_charms, 0, 20);
+                    });
+                });
+                ui.add_space(14.0);
+                self.odds_tiles(ui);
+                ui.add_space(10.0);
+                if self.cfg.hunt_method.is_wild_battles() {
+                    ui.add_space(10.0);
+                    kit::card(ui, |ui| {
+                        let name = self.target_name(self.cfg.target.as_deref());
+                        self.dirty |= kit::toggle_row(
                     ui,
                     &format!("Odds bar counts only {name}"),
                     &format!(
@@ -1178,7 +1189,69 @@ impl App {
                     ),
                     &mut self.cfg.odds_target_only,
                 );
-            });
+                    });
+                }
+            }
+            HuntTab::Session => {
+                kit::section(ui, "Breaks and goals");
+                kit::card(ui, |ui| {
+                    self.dirty |= kit::toggle_row(
+                        ui,
+                        "Break reminder",
+                        "A gentle nudge on the overlay after a long stretch of hunting in one session.",
+                        &mut self.cfg.break_reminder,
+                    );
+                    if self.cfg.break_reminder {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Remind me after").size(kit::fs(12.5)).color(TEXT()));
+                            self.dirty |= ui
+                                .add(egui::DragValue::new(&mut self.cfg.break_minutes).range(15..=600).speed(5.0))
+                                .changed();
+                            ui.label(RichText::new("minutes of hunting").size(kit::fs(12.5)).color(TEXT()));
+                        });
+                    }
+                    ui.add_space(6.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Session goal").size(kit::fs(13.0)).color(TEXT()));
+                        kit::info(ui, "A pat on the back when a session reaches this many encounters. 0 = off.");
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(RichText::new("encounters").size(kit::fs(12.5)).color(MUTED()));
+                            self.dirty |= ui
+                                .add(egui::DragValue::new(&mut self.cfg.session_goal).range(0..=100_000).speed(10.0))
+                                .changed();
+                        });
+                    });
+                });
+
+                kit::section(ui, "Hunt timer");
+                kit::card(ui, |ui| {
+                    self.dirty |= kit::toggle_row(
+                ui,
+                "Pause the timer when you stop",
+                "Hunt time stops when no encounter comes for a while (a break, a menu, the phone) and carries on with the next one. The wait isn't counted. Your hunt and counting keep going.",
+                &mut self.cfg.idle_pause,
+            );
+                    if self.cfg.idle_pause {
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Pause after").size(kit::fs(13.0)).color(TEXT()));
+                            let mut m = self.cfg.idle_minutes;
+                            kit::segmented(
+                                ui,
+                                &mut m,
+                                &[(2, " 2 min "), (3, " 3 min "), (5, " 5 min "), (10, " 10 min "), (15, " 15 min ")],
+                            );
+                            if m != self.cfg.idle_minutes {
+                                self.cfg.idle_minutes = m;
+                                self.dirty = true;
+                            }
+                            ui.label(RichText::new("with no encounter").size(kit::fs(13.0)).color(MUTED()));
+                        });
+                    }
+                });
+            }
         }
     }
 
@@ -1535,7 +1608,11 @@ impl App {
                 ui.label(RichText::new("Overlay style").size(kit::fs(13.0)).color(TEXT()));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let mut style = self.cfg.overlay.style;
-                    if kit::segmented(ui, &mut style, &[(OverlayStyle::Legacy, "Legacy"), (OverlayStyle::Modular, "Modular")]) {
+                    if kit::segmented(
+                        ui,
+                        &mut style,
+                        &[(OverlayStyle::Legacy, "Legacy"), (OverlayStyle::Modular, "Modular")],
+                    ) {
                         self.cfg.overlay.style = style;
                         self.dirty = true;
                     }
@@ -1550,224 +1627,368 @@ impl App {
             ui.label(RichText::new(about).size(kit::fs(12.0)).color(MUTED()));
         });
 
-        if !self.cfg.overlay.legacy() {
-            kit::section(ui, "Size");
-            kit::card(ui, |ui| {
+        // Tabs keep the page short. Sections only exist for the modular one.
+        let legacy = self.cfg.overlay.legacy();
+        if legacy && self.setup.overlay_tab == OverlayTab::Sections {
+            self.setup.overlay_tab = OverlayTab::Layout;
+        }
+        ui.add_space(6.0);
+        let mut tab = self.setup.overlay_tab;
+        let tabs: Vec<(OverlayTab, &str)> = if legacy {
+            vec![
+                (OverlayTab::Layout, "Look"),
+                (OverlayTab::Behaviour, "Behaviour"),
+                (OverlayTab::Sounds, "Sounds"),
+            ]
+        } else {
+            vec![
+                (OverlayTab::Layout, "Layout"),
+                (OverlayTab::Sections, "Sections"),
+                (OverlayTab::Behaviour, "Behaviour"),
+                (OverlayTab::Sounds, "Sounds"),
+            ]
+        };
+        if kit::tab_bar(ui, &mut tab, &tabs) {
+            self.setup.overlay_tab = tab;
+        }
+        ui.add_space(6.0);
+
+        match self.setup.overlay_tab {
+            OverlayTab::Layout => {
+                if !legacy {
+                    kit::section(ui, "Size");
+                    kit::card(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Size").size(kit::fs(13.0)).color(TEXT()));
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let mut size = self.cfg.overlay.size;
+                                if kit::segmented(
+                                    ui,
+                                    &mut size,
+                                    &[
+                                        (OverlaySize::Bar, "Bar"),
+                                        (OverlaySize::Compact, "Compact"),
+                                        (OverlaySize::Full, "Full"),
+                                    ],
+                                ) {
+                                    self.cfg.overlay.size = size;
+                                    self.dirty = true;
+                                }
+                            });
+                        });
+                        ui.add_space(4.0);
+                        let about = match self.cfg.overlay.size {
+                        OverlaySize::Full => "The usual size. The window grows and shrinks to fit the sections you turn on.",
+                        OverlaySize::Compact => "Small and narrow: just the sprites and the counter. The other sections are left out (Caught! and alerts still pop up when needed).",
+                        OverlaySize::Bar => "One slim line with your target, count and odds. Luck, next milestone, session, pace, streak and buttons join it if they're on; the rest are left out.",
+                    };
+                        ui.label(RichText::new(about).size(kit::fs(12.0)).color(MUTED()));
+                    });
+                    kit::section(ui, "Look");
+                }
+                kit::card(ui, |ui| {
+                    ui.label(RichText::new("Background opacity").size(kit::fs(13.0)).color(TEXT()));
+                    if !self.cfg.overlay.legacy() {
+                        ui.label(
+                            RichText::new("Fade the panel so the game shows through.")
+                                .size(kit::fs(12.0))
+                                .color(MUTED()),
+                        );
+                    }
+                    ui.add_space(4.0);
+                    ui.spacing_mut().slider_width = ui.available_width() - 70.0;
+                    let lowest = if self.cfg.overlay.legacy() { 0.4 } else { 0.1 };
+                    self.dirty |= ui
+                        .add(egui::Slider::new(&mut self.cfg.opacity, lowest..=1.0).show_value(true))
+                        .changed();
+                });
+            }
+            OverlayTab::Sections => {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Size").size(kit::fs(13.0)).color(TEXT()));
+                    ui.label(
+                        RichText::new("Turn parts of the overlay on or off.")
+                            .size(kit::fs(12.0))
+                            .color(MUTED()),
+                    );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let mut size = self.cfg.overlay.size;
-                        if kit::segmented(ui, &mut size, &[(OverlaySize::Bar, "Bar"), (OverlaySize::Compact, "Compact"), (OverlaySize::Full, "Full")]) {
-                            self.cfg.overlay.size = size;
+                        if ui
+                            .add(egui::Button::new(RichText::new("Reset to default").size(kit::fs(12.0))).fill(kit::btn_fill()))
+                            .clicked()
+                        {
+                            let keep = self.cfg.overlay.clone();
+                            self.cfg.overlay = OverlayModules {
+                                style: keep.style,
+                                size: keep.size,
+                                click_through: keep.click_through,
+                                ..OverlayModules::default()
+                            };
+                            self.cfg.level_on_overlay = true;
+                            self.cfg.show_session_timer = true;
+                            self.dirty = true;
+                        }
+                        if ui
+                            .add(egui::Button::new(RichText::new("Turn all on").size(kit::fs(12.0))).fill(kit::btn_fill()))
+                            .clicked()
+                        {
+                            let o = &mut self.cfg.overlay;
+                            for f in [
+                                &mut o.status_dot,
+                                &mut o.target,
+                                &mut o.sprites,
+                                &mut o.counter,
+                                &mut o.buttons,
+                                &mut o.odds_bar,
+                                &mut o.method_line,
+                                &mut o.luck,
+                                &mut o.milestone,
+                                &mut o.session,
+                                &mut o.sparkline,
+                                &mut o.last_seen,
+                                &mut o.phases,
+                                &mut o.xp,
+                                &mut o.daily_goal,
+                                &mut o.streak,
+                                &mut o.best,
+                            ] {
+                                *f = true;
+                            }
+                            self.cfg.level_on_overlay = true;
+                            self.cfg.show_session_timer = true;
                             self.dirty = true;
                         }
                     });
                 });
-                ui.add_space(4.0);
-                let about = match self.cfg.overlay.size {
-                    OverlaySize::Full => "The usual size. The window grows and shrinks to fit the sections you turn on.",
-                    OverlaySize::Compact => "Small and narrow: just the sprites and the counter. The other sections below are left out (Caught! and alerts still pop up when needed).",
-                    OverlaySize::Bar => "One slim line with your target, count and odds. Luck, next milestone, session, pace, streak and buttons join it if they're on; the rest are left out.",
+
+                let sep = |ui: &mut egui::Ui| {
+                    ui.add_space(6.0);
+                    ui.separator();
+                    ui.add_space(6.0);
                 };
-                ui.label(RichText::new(about).size(kit::fs(12.0)).color(MUTED()));
-            });
-
-            ui.horizontal(|ui| {
-                kit::section(ui, "Sections");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.add(egui::Button::new(RichText::new("Reset to default").size(kit::fs(12.0))).fill(kit::btn_fill())).clicked() {
-                        let keep = self.cfg.overlay.clone();
-                        self.cfg.overlay = OverlayModules {
-                            style: keep.style,
-                            size: keep.size,
-                            click_through: keep.click_through,
-                            ..OverlayModules::default()
-                        };
-                        self.cfg.level_on_overlay = true;
-                        self.cfg.show_session_timer = true;
-                        self.dirty = true;
-                    }
-                    if ui.add(egui::Button::new(RichText::new("Turn all on").size(kit::fs(12.0))).fill(kit::btn_fill())).clicked() {
-                        let o = &mut self.cfg.overlay;
-                        for f in [
-                            &mut o.status_dot, &mut o.target, &mut o.sprites, &mut o.counter, &mut o.buttons,
-                            &mut o.odds_bar, &mut o.method_line, &mut o.luck, &mut o.milestone,
-                            &mut o.session, &mut o.sparkline, &mut o.last_seen, &mut o.phases,
-                            &mut o.xp, &mut o.daily_goal, &mut o.streak, &mut o.best,
-                        ] {
-                            *f = true;
-                        }
-                        self.cfg.level_on_overlay = true;
-                        self.cfg.show_session_timer = true;
-                        self.dirty = true;
-                    }
-                });
-            });
-
-            let sep = |ui: &mut egui::Ui| {
-                ui.add_space(6.0);
-                ui.separator();
-                ui.add_space(6.0);
-            };
-            // A setting that only matters when its parent is on.
-            let sub = |ui: &mut egui::Ui, enabled: bool, label: &str, help: &str, on: &mut bool| -> bool {
-                let mut changed = false;
-                ui.horizontal(|ui| {
-                    ui.add_space(22.0);
-                    ui.add_enabled_ui(enabled, |ui| {
-                        ui.vertical(|ui| changed = kit::toggle_row(ui, label, help, on));
+                // A setting that only matters when its parent is on.
+                let sub = |ui: &mut egui::Ui, enabled: bool, label: &str, help: &str, on: &mut bool| -> bool {
+                    let mut changed = false;
+                    ui.horizontal(|ui| {
+                        ui.add_space(22.0);
+                        ui.add_enabled_ui(enabled, |ui| {
+                            ui.vertical(|ui| changed = kit::toggle_row(ui, label, help, on));
+                        });
                     });
-                });
-                changed
-            };
-
-            kit::section(ui, "Hunt");
-            kit::card(ui, |ui| {
-                let o = &mut self.cfg.overlay;
-                let mut d = kit::toggle_row(ui, "Target name", "The name plate, with how often your target turns up (\"SEEN 12\").", &mut o.target);
-                sep(ui);
-                d |= kit::toggle_row(ui, "Sprites", "Your target, normal and shiny, animated.", &mut o.sprites);
-                let on = o.sprites;
-                d |= sub(ui, on, "Shiny only", "One big shiny sprite instead of normal + shiny side by side.", &mut o.single_sprite);
-                sep(ui);
-                d |= kit::toggle_row(ui, "Encounter counter", "The big number, with ENCOUNTERS / PAUSED under it.", &mut o.counter);
-                let on = o.counter;
-                d |= sub(ui, on, "Today's hunting time", "A small timer next to the counter: how long you've hunted today, across all runs.", &mut self.cfg.show_session_timer);
-                sep(ui);
-                let o = &mut self.cfg.overlay;
-                d |= kit::toggle_row(ui, "Buttons", "−1, +1, pause and Caught!. Hotkeys still work when they're hidden, and the Caught! question always shows.", &mut o.buttons);
-                self.dirty |= d;
-            });
-
-            kit::section(ui, "Header");
-            kit::card(ui, |ui| {
-                let mut d = kit::toggle_row(ui, "Level badge", "Your trainer level next to the title.", &mut self.cfg.level_on_overlay);
-                sep(ui);
-                d |= kit::toggle_row(ui, "Status light", "Green watching, gold in battle, grey paused, red if something needs fixing.", &mut self.cfg.overlay.status_dot);
-                self.dirty |= d;
-            });
-
-            kit::section(ui, "Odds & luck");
-            kit::card(ui, |ui| {
-                let o = &mut self.cfg.overlay;
-                let mut d = kit::toggle_row(ui, "Odds bar", "Under / at / over the odds, filling up as you go.", &mut o.odds_bar);
-                sep(ui);
-                d |= kit::toggle_row(ui, "Method line", "What the odds are based on, e.g. \"Rare grass · Doubles · 1/4,096 each\".", &mut o.method_line);
-                sep(ui);
-                d |= kit::toggle_row(ui, "Luck", "How many hunters would have found their shiny by now. Under 50% is fine; over 80% is unlucky.", &mut o.luck);
-                sep(ui);
-                d |= kit::toggle_row(ui, "Next milestone", "The nearer of the next thousand and the next 1×, 2×… the odds, with how many to go.", &mut o.milestone);
-                self.dirty |= d;
-            });
-
-            kit::section(ui, "Session");
-            kit::card(ui, |ui| {
-                let o = &mut self.cfg.overlay;
-                let mut d = kit::toggle_row(ui, "Session strip", "This session's encounters, time and pace per hour.", &mut o.session);
-                sep(ui);
-                d |= kit::toggle_row(ui, "Pace graph", "A tiny bar graph of encounters each minute for the last 20 minutes.", &mut o.sparkline);
-                sep(ui);
-                d |= kit::toggle_row(ui, "Last encounter", "Which Pokémon were in the last battle, and how long ago.", &mut o.last_seen);
-                sep(ui);
-                d |= kit::toggle_row(ui, "Phase count", "Shinies of other Pokémon found during this hunt.", &mut o.phases);
-                self.dirty |= d;
-            });
-
-            kit::section(ui, "Progress");
-            kit::card(ui, |ui| {
-                let o = &mut self.cfg.overlay;
-                let mut d = kit::toggle_row(ui, "Trainer XP bar", "Your level and how close the next one is.", &mut o.xp);
-                sep(ui);
-                d |= kit::toggle_row(ui, "Daily goal bar", "Today's encounters towards your daily goal (set it in Profile > Goals).", &mut o.daily_goal);
-                sep(ui);
-                d |= kit::toggle_row(ui, "Streak flame", "Days in a row you've hit your daily goal.", &mut o.streak);
-                sep(ui);
-                d |= kit::toggle_row(ui, "Personal best", "Your best single day, turning gold when today beats it.", &mut o.best);
-                self.dirty |= d;
-            });
-        }
-
-        kit::section(ui, "Behaviour");
-        kit::card(ui, |ui| {
-            self.dirty |= kit::toggle_row(
-                ui,
-                "Stay visible over the game",
-                "Keeps the overlay visible in Borderless and Full screen by making the game window 1 pixel taller (off-screen, so you won't see it). Only the window size changes, nothing in the game.",
-                &mut self.cfg.borderless_fix,
-            );
-            ui.add_space(8.0);
-            ui.separator();
-            ui.add_space(8.0);
-            self.dirty |= kit::toggle_row(
-                ui,
-                "Pin in place",
-                "Stops the overlay being dragged by accident.",
-                &mut self.cfg.pinned,
-            );
-            ui.add_space(8.0);
-            ui.separator();
-            ui.add_space(8.0);
-            self.dirty |= kit::toggle_row(
-                ui,
-                "Shrink to badge",
-                "Shows just a small badge with your target and count.",
-                &mut self.cfg.mini,
-            );
-            if !self.cfg.overlay.legacy() {
-                ui.add_space(8.0);
-                ui.separator();
-                ui.add_space(8.0);
-                let key = self.cfg.keybinds.get(HotAction::ClickThrough).map(|b| b.text());
-                let help = match &key {
-                    Some(k) => format!("Clicks go straight through the overlay to the game. Press {k} to turn it off again (Settings > Hotkeys). It turns itself off while a shiny or the Caught! question needs a click."),
-                    None => "Clicks go straight through the overlay to the game. Set a hotkey for it in Settings > Hotkeys first, so you can turn it off again.".to_string(),
+                    changed
                 };
-                ui.add_enabled_ui(key.is_some() || self.cfg.overlay.click_through, |ui| {
-                    self.dirty |= kit::toggle_row(ui, "Click-through", &help, &mut self.cfg.overlay.click_through);
+
+                kit::section(ui, "Hunt");
+                kit::card(ui, |ui| {
+                    let o = &mut self.cfg.overlay;
+                    let mut d = kit::toggle_row(
+                        ui,
+                        "Target name",
+                        "The name plate, with how often your target turns up (\"SEEN 12\").",
+                        &mut o.target,
+                    );
+                    sep(ui);
+                    d |= kit::toggle_row(ui, "Sprites", "Your target, normal and shiny, animated.", &mut o.sprites);
+                    let on = o.sprites;
+                    d |= sub(
+                        ui,
+                        on,
+                        "Shiny only",
+                        "One big shiny sprite instead of normal + shiny side by side.",
+                        &mut o.single_sprite,
+                    );
+                    sep(ui);
+                    d |= kit::toggle_row(
+                        ui,
+                        "Encounter counter",
+                        "The big number, with ENCOUNTERS / PAUSED under it.",
+                        &mut o.counter,
+                    );
+                    let on = o.counter;
+                    d |= sub(
+                        ui,
+                        on,
+                        "Today's hunting time",
+                        "A small timer next to the counter: how long you've hunted today, across all runs.",
+                        &mut self.cfg.show_session_timer,
+                    );
+                    sep(ui);
+                    let o = &mut self.cfg.overlay;
+                    d |= kit::toggle_row(
+                        ui,
+                        "Buttons",
+                        "−1, +1, pause and Caught!. Hotkeys still work when they're hidden, and the Caught! question always shows.",
+                        &mut o.buttons,
+                    );
+                    self.dirty |= d;
+                });
+
+                kit::section(ui, "Header");
+                kit::card(ui, |ui| {
+                    let mut d = kit::toggle_row(
+                        ui,
+                        "Level badge",
+                        "Your trainer level next to the title.",
+                        &mut self.cfg.level_on_overlay,
+                    );
+                    sep(ui);
+                    d |= kit::toggle_row(
+                        ui,
+                        "Status light",
+                        "Green watching, gold in battle, grey paused, red if something needs fixing.",
+                        &mut self.cfg.overlay.status_dot,
+                    );
+                    self.dirty |= d;
+                });
+
+                kit::section(ui, "Odds & luck");
+                kit::card(ui, |ui| {
+                    let o = &mut self.cfg.overlay;
+                    let mut d = kit::toggle_row(ui, "Odds bar", "Under / at / over the odds, filling up as you go.", &mut o.odds_bar);
+                    sep(ui);
+                    d |= kit::toggle_row(
+                        ui,
+                        "Method line",
+                        "What the odds are based on, e.g. \"Rare grass · Doubles · 1/4,096 each\".",
+                        &mut o.method_line,
+                    );
+                    sep(ui);
+                    d |= kit::toggle_row(
+                        ui,
+                        "Luck",
+                        "How many hunters would have found their shiny by now. Under 50% is fine; over 80% is unlucky.",
+                        &mut o.luck,
+                    );
+                    sep(ui);
+                    d |= kit::toggle_row(
+                        ui,
+                        "Next milestone",
+                        "The nearer of the next thousand and the next 1×, 2×… the odds, with how many to go.",
+                        &mut o.milestone,
+                    );
+                    self.dirty |= d;
+                });
+
+                kit::section(ui, "Session");
+                kit::card(ui, |ui| {
+                    let o = &mut self.cfg.overlay;
+                    let mut d = kit::toggle_row(
+                        ui,
+                        "Session strip",
+                        "This session's encounters, time and pace per hour.",
+                        &mut o.session,
+                    );
+                    sep(ui);
+                    d |= kit::toggle_row(
+                        ui,
+                        "Pace graph",
+                        "A tiny bar graph of encounters each minute for the last 20 minutes.",
+                        &mut o.sparkline,
+                    );
+                    sep(ui);
+                    d |= kit::toggle_row(
+                        ui,
+                        "Last encounter",
+                        "Which Pokémon were in the last battle, and how long ago.",
+                        &mut o.last_seen,
+                    );
+                    sep(ui);
+                    d |= kit::toggle_row(ui, "Phase count", "Shinies of other Pokémon found during this hunt.", &mut o.phases);
+                    self.dirty |= d;
+                });
+
+                kit::section(ui, "Progress");
+                kit::card(ui, |ui| {
+                    let o = &mut self.cfg.overlay;
+                    let mut d = kit::toggle_row(ui, "Trainer XP bar", "Your level and how close the next one is.", &mut o.xp);
+                    sep(ui);
+                    d |= kit::toggle_row(
+                        ui,
+                        "Daily goal bar",
+                        "Today's encounters towards your daily goal (set it in Profile > Goals).",
+                        &mut o.daily_goal,
+                    );
+                    sep(ui);
+                    d |= kit::toggle_row(ui, "Streak flame", "Days in a row you've hit your daily goal.", &mut o.streak);
+                    sep(ui);
+                    d |= kit::toggle_row(
+                        ui,
+                        "Personal best",
+                        "Your best single day, turning gold when today beats it.",
+                        &mut o.best,
+                    );
+                    self.dirty |= d;
                 });
             }
-            ui.add_space(8.0);
-            ui.separator();
-            ui.add_space(8.0);
-            self.dirty |= kit::toggle_row(
-                ui,
-                "Milestone celebrations",
-                "A little confetti moment on the overlay every 1,000 encounters and when you reach 1×, 2×, 3×… the odds.",
-                &mut self.cfg.celebrate_milestones,
-            );
-            if ui
-                .add(egui::Button::new(RichText::new("Preview celebration").size(kit::fs(12.0))).fill(kit::btn_fill()))
-                .clicked()
-            {
-                self.celebrate = Some((Instant::now(), "1,000 ENCOUNTERS!".to_string()));
-                self.cfg.mini = false;
-                self.play(crate::sound::Sfx::Milestone);
+            OverlayTab::Behaviour => {
+                kit::card(ui, |ui| {
+                    self.dirty |= kit::toggle_row(
+                        ui,
+                        "Stay visible over the game",
+                        "Keeps the overlay visible in Borderless and Full screen by making the game window 1 pixel taller (off-screen, so you won't see it). Only the window size changes, nothing in the game.",
+                        &mut self.cfg.borderless_fix,
+                    );
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+                    self.dirty |= kit::toggle_row(
+                        ui,
+                        "Pin in place",
+                        "Stops the overlay being dragged by accident.",
+                        &mut self.cfg.pinned,
+                    );
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+                    self.dirty |= kit::toggle_row(
+                        ui,
+                        "Shrink to badge",
+                        "Shows just a small badge with your target and count.",
+                        &mut self.cfg.mini,
+                    );
+                    if !self.cfg.overlay.legacy() {
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(8.0);
+                        let key = self.cfg.keybinds.get(HotAction::ClickThrough).map(|b| b.text());
+                        let help = match &key {
+                            Some(k) => format!("Clicks go straight through the overlay to the game. Press {k} to turn it off again (Settings > Hotkeys). It turns itself off while a shiny or the Caught! question needs a click."),
+                            None => "Clicks go straight through the overlay to the game. Set a hotkey for it in Settings > Hotkeys first, so you can turn it off again.".to_string(),
+                        };
+                        ui.add_enabled_ui(key.is_some() || self.cfg.overlay.click_through, |ui| {
+                            self.dirty |= kit::toggle_row(ui, "Click-through", &help, &mut self.cfg.overlay.click_through);
+                        });
+                    }
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+                    self.dirty |= kit::toggle_row(
+                        ui,
+                        "Milestone celebrations",
+                        "A little confetti moment on the overlay every 1,000 encounters and when you reach 1×, 2×, 3×… the odds.",
+                        &mut self.cfg.celebrate_milestones,
+                    );
+                    if ui
+                        .add(egui::Button::new(RichText::new("Preview celebration").size(kit::fs(12.0))).fill(kit::btn_fill()))
+                        .clicked()
+                    {
+                        self.celebrate = Some((Instant::now(), "1,000 ENCOUNTERS!".to_string()));
+                        self.cfg.mini = false;
+                        self.play(crate::sound::Sfx::Milestone);
+                    }
+                    if self.cfg.overlay.legacy() {
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(8.0);
+                        self.dirty |= kit::toggle_row(
+                            ui,
+                            "Today's hunting time",
+                            "A small timer on the overlay showing how long you've hunted today, across all runs.",
+                            &mut self.cfg.show_session_timer,
+                        );
+                    }
+                });
             }
-            if self.cfg.overlay.legacy() {
-                ui.add_space(8.0);
-                ui.separator();
-                ui.add_space(8.0);
-                self.dirty |= kit::toggle_row(
-                    ui,
-                    "Today's hunting time",
-                    "A small timer on the overlay showing how long you've hunted today, across all runs.",
-                    &mut self.cfg.show_session_timer,
-                );
-            }
-        });
-        kit::card(ui, |ui| {
-            ui.label(RichText::new("Background opacity").size(kit::fs(13.0)).color(TEXT()));
-            if !self.cfg.overlay.legacy() {
-                ui.label(RichText::new("Fade the panel so the game shows through.").size(kit::fs(12.0)).color(MUTED()));
-            }
-            ui.add_space(4.0);
-            ui.spacing_mut().slider_width = ui.available_width() - 70.0;
-            let lowest = if self.cfg.overlay.legacy() { 0.4 } else { 0.1 };
-            self.dirty |= ui
-                .add(egui::Slider::new(&mut self.cfg.opacity, lowest..=1.0).show_value(true))
-                .changed();
-        });
-        self.sounds_card(ui);
+            OverlayTab::Sounds => self.sounds_card(ui),
+        }
     }
 
     fn page_hotkeys(&mut self, ui: &mut egui::Ui) {
@@ -1918,109 +2139,98 @@ impl App {
     }
 
     fn page_advanced(&mut self, ui: &mut egui::Ui) {
-        kit::page_header(
+        kit::page_header(ui, "ADVANCED", "Fine-tuning. You shouldn't normally need these.");
+        let mut tab = self.setup.adv_tab;
+        if kit::tab_bar(
             ui,
-            "ADVANCED",
-            "Fine-tuning. You shouldn't normally need these.",
-        );
-
-        self.updates_card(ui);
-        self.backup_card(ui);
-        self.data_folder_card(ui);
-
-        kit::section(ui, "Counter");
-        kit::card(ui, |ui| {
-            egui::Grid::new("counter-grid")
-                .num_columns(2)
-                .spacing([24.0, 10.0])
-                .show(ui, |ui| {
-                    for (label, v) in [
-                        ("Encounters", &mut self.cfg.count),
-                        ("Battles", &mut self.cfg.battles),
-                        ("Target seen", &mut self.cfg.target_seen),
-                    ] {
-                        ui.label(RichText::new(label).size(kit::fs(13.0)).color(TEXT()));
-                        self.dirty |= ui.add(egui::DragValue::new(v)).changed();
-                        ui.end_row();
-                    }
-                });
-            ui.add_space(8.0);
-            if self.setup.confirm_reset {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new("Reset this run to 0? This can't be undone.")
-                            .color(theme::HP_RED),
-                    );
-                    if ui
-                        .add(
-                            egui::Button::new(RichText::new("Reset").color(Color32::WHITE))
-                                .fill(theme::RED_DARK()),
-                        )
-                        .clicked()
-                    {
-                        self.cfg.count = 0;
-                        self.cfg.battles = 0;
-                        self.cfg.target_seen = 0;
-                        self.dirty = true;
-                        self.setup.confirm_reset = false;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        self.setup.confirm_reset = false;
-                    }
-                });
-            } else if ui
-                .add(egui::Button::new("Reset counter…").fill(kit::btn_fill()))
-                .clicked()
-            {
-                self.setup.confirm_reset = true;
+            &mut tab,
+            &[
+                (AdvTab::Updates, "Updates"),
+                (AdvTab::Data, "Backup & data"),
+                (AdvTab::Counter, "Counter"),
+                (AdvTab::Reading, "Screen reading"),
+            ],
+        ) {
+            self.setup.adv_tab = tab;
+        }
+        ui.add_space(6.0);
+        match self.setup.adv_tab {
+            AdvTab::Updates => self.updates_card(ui),
+            AdvTab::Data => {
+                self.backup_card(ui);
+                self.data_folder_card(ui);
             }
-        });
+            AdvTab::Counter => {
+                kit::section(ui, "Edit the counter");
+                kit::card(ui, |ui| {
+                    egui::Grid::new("counter-grid").num_columns(2).spacing([24.0, 10.0]).show(ui, |ui| {
+                        for (label, v) in [
+                            ("Encounters", &mut self.cfg.count),
+                            ("Battles", &mut self.cfg.battles),
+                            ("Target seen", &mut self.cfg.target_seen),
+                        ] {
+                            ui.label(RichText::new(label).size(kit::fs(13.0)).color(TEXT()));
+                            self.dirty |= ui.add(egui::DragValue::new(v)).changed();
+                            ui.end_row();
+                        }
+                    });
+                    ui.add_space(8.0);
+                    if self.setup.confirm_reset {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Reset this run to 0? This can't be undone.").color(theme::HP_RED));
+                            if ui
+                                .add(egui::Button::new(RichText::new("Reset").color(Color32::WHITE)).fill(theme::RED_DARK()))
+                                .clicked()
+                            {
+                                self.cfg.count = 0;
+                                self.cfg.battles = 0;
+                                self.cfg.target_seen = 0;
+                                self.dirty = true;
+                                self.setup.confirm_reset = false;
+                            }
+                            if ui.button("Cancel").clicked() {
+                                self.setup.confirm_reset = false;
+                            }
+                        });
+                    } else if ui.add(egui::Button::new("Reset counter…").fill(kit::btn_fill())).clicked() {
+                        self.setup.confirm_reset = true;
+                    }
+                });
+            }
+            AdvTab::Reading => {
+                kit::section(ui, "Screen reading");
+                let mut changed = false;
+                kit::card(ui, |ui| {
+                    ui.spacing_mut().slider_width = 220.0;
+                    changed |= ui
+                        .add(egui::Slider::new(&mut self.cfg.stable_reads, 1..=5).text("matching reads before counting"))
+                        .changed();
+                    changed |= ui
+                        .add(egui::Slider::new(&mut self.cfg.rearm_reads, 1..=10).text("empty reads before a battle ends"))
+                        .changed();
+                    changed |= ui
+                        .add(egui::Slider::new(&mut self.cfg.interval_ms, 100..=1000).text("ms between scans"))
+                        .changed();
+                });
 
-        kit::section(ui, "Screen reading");
-        let mut changed = false;
-        kit::card(ui, |ui| {
-            ui.spacing_mut().slider_width = 220.0;
-            changed |= ui
-                .add(
-                    egui::Slider::new(&mut self.cfg.stable_reads, 1..=5)
-                        .text("matching reads before counting"),
-                )
-                .changed();
-            changed |= ui
-                .add(
-                    egui::Slider::new(&mut self.cfg.rearm_reads, 1..=10)
-                        .text("empty reads before a battle ends"),
-                )
-                .changed();
-            changed |= ui
-                .add(
-                    egui::Slider::new(&mut self.cfg.interval_ms, 100..=1000)
-                        .text("ms between scans"),
-                )
-                .changed();
-        });
-
-        kit::section(ui, "Shiny star alert (experimental)");
-        kit::card(ui, |ui| {
-            ui.spacing_mut().slider_width = 220.0;
-            changed |= ui
-                .add(
-                    egui::Slider::new(&mut self.cfg.star_threshold, 48..=400)
-                        .text("star size needed"),
-                )
-                .changed();
-            ui.label(
+                kit::section(ui, "Shiny star alert (experimental)");
+                kit::card(ui, |ui| {
+                    ui.spacing_mut().slider_width = 220.0;
+                    changed |= ui
+                        .add(egui::Slider::new(&mut self.cfg.star_threshold, 48..=400).text("star size needed"))
+                        .changed();
+                    ui.label(
                 RichText::new("It looks for the ★ shape next to the name, and only alerts when it stays put for a moment. Lower this if your game window is small and real stars are missed.")
                     .size(kit::fs(11.5))
                     .color(MUTED()),
             );
-        });
-        if changed {
-            self.push_settings(false);
+                });
+                if changed {
+                    self.push_settings(false);
+                }
+            }
         }
     }
-
-    // ─────────────────────────── welcome ───────────────────────────
 
     fn welcome(&mut self, ctx: &egui::Context) {
         const STEPS: usize = 3;

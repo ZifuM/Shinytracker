@@ -78,6 +78,27 @@ pub fn parse_gift(line: &str) -> Option<GiftLine> {
     (species > 0).then_some(GiftLine { species, shiny })
 }
 
+/// What the log says about how you're hunting (used to switch the hunting
+/// style automatically).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MethodHint {
+    /// An encounter tagged "(sweet scent on rare grass)".
+    RareGrass,
+    /// A starter taken from the briefcase.
+    Starter,
+    /// Went back to the last save, then met a single Pokémon soon after.
+    StaticAfterReset,
+}
+
+/// "07:01:03 INFO  RESET    going back to the last save" (the first of the
+/// pair the game writes for each reset).
+pub fn is_reset(line: &str) -> bool {
+    line.contains(" RESET ") && line.trim_end().ends_with("going back to the last save")
+}
+
+/// A reset only counts towards "static" if the encounter comes this soon.
+const STATIC_AFTER_RESET: Duration = Duration::from_secs(120);
+
 pub fn is_battle_start(line: &str) -> bool {
     line.contains(" BATTLE ") && line.contains("encounter effect")
 }
@@ -147,6 +168,8 @@ pub struct LogTail {
     first_pick: bool,
     grouper: Grouper,
     gifts: Vec<GiftLine>,
+    hints: Vec<MethodHint>,
+    last_reset: Option<Instant>,
 }
 
 impl LogTail {
@@ -160,6 +183,8 @@ impl LogTail {
             first_pick: true,
             grouper: Grouper::default(),
             gifts: Vec::new(),
+            hints: Vec::new(),
+            last_reset: None,
         }
     }
 
@@ -186,6 +211,23 @@ impl LogTail {
             self.file = Some(newest);
         }
         Ok(())
+    }
+
+    /// What a battle says about the hunting style.
+    fn note_battle(&mut self, group: &[WildLine], now: Instant) {
+        if group.iter().any(|w| w.method.contains("rare grass")) {
+            self.hints.push(MethodHint::RareGrass);
+        } else if group.len() == 1
+            && self.last_reset.is_some_and(|t| now.duration_since(t) <= STATIC_AFTER_RESET)
+        {
+            self.hints.push(MethodHint::StaticAfterReset);
+        }
+        self.last_reset = None;
+    }
+
+    /// Hunting-style hints since the last call.
+    pub fn take_hints(&mut self) -> Vec<MethodHint> {
+        std::mem::take(&mut self.hints)
     }
 
     /// Starters (gifts) handed over since the last call.
@@ -226,13 +268,20 @@ impl LogTail {
                 let line: String = self.partial.drain(..=nl).collect();
                 if let Some(g) = parse_gift(line.trim_end()) {
                     self.gifts.push(g);
+                    self.hints.push(MethodHint::Starter);
+                    self.last_reset = None;
+                }
+                if is_reset(&line) {
+                    self.last_reset = Some(now);
                 }
                 if let Some(group) = self.grouper.push(line.trim_end(), now) {
+                    self.note_battle(&group, now);
                     out.push(group);
                 }
             }
         }
         if let Some(group) = self.grouper.flush_stale(now, Duration::from_millis(1500)) {
+            self.note_battle(&group, now);
             out.push(group);
         }
         Ok(out)
@@ -255,6 +304,35 @@ mod tests {
 07:07:31 INFO  WILD     shiny chance 4 in 8192 for species 447 at level 24 (sweet scent on rare grass)
 07:07:31 INFO  BATTLE   encounter effect took 175 ms
 ";
+
+    #[test]
+    fn spots_resets() {
+        assert!(is_reset("07:01:03 INFO  RESET    going back to the last save"));
+        assert!(is_reset("07:01:03 INFO  RESET    going back to the last save\r\n"));
+        assert!(!is_reset("07:01:04 INFO  RESET    going back to the last save without a restart"));
+        assert!(!is_reset("07:01:09 WARN  RESET    back to the last save not done: something stayed open"));
+    }
+
+    #[test]
+    fn hints_from_battles() {
+        let mut t = LogTail::new(std::env::temp_dir());
+        let now = Instant::now();
+        let rare = parse_wild("07:07:16 INFO  WILD     shiny chance 4 in 8192 for species 448 at level 24 (sweet scent on rare grass)").unwrap();
+        let plain = parse_wild("16:54:24 INFO  WILD     shiny chance 2 in 8192 for species 399 at level 4").unwrap();
+        t.note_battle(&[rare.clone(), rare], now);
+        assert_eq!(t.take_hints(), vec![MethodHint::RareGrass]);
+        // A plain single encounter is only "static" right after a reset.
+        t.note_battle(&[plain.clone()], now);
+        assert!(t.take_hints().is_empty());
+        t.last_reset = Some(now);
+        t.note_battle(&[plain.clone()], now + Duration::from_secs(30));
+        assert_eq!(t.take_hints(), vec![MethodHint::StaticAfterReset]);
+        // ...and only once per reset; doubles don't count.
+        t.note_battle(&[plain.clone()], now + Duration::from_secs(40));
+        t.last_reset = Some(now);
+        t.note_battle(&[plain.clone(), plain], now + Duration::from_secs(10));
+        assert!(t.take_hints().is_empty());
+    }
 
     #[test]
     fn parses_starter_line() {

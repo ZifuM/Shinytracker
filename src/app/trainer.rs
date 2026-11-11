@@ -590,24 +590,22 @@ impl App {
 
         let cat = Category::ALL[tab];
         let filter = self.setup.ach_filter;
-        // one unit per series (tiered ladders stack into one tile)
-        let mut units: Vec<Vec<&'static Achievement>> = Vec::new();
+        // Every achievement as its own tile (no stacks), in order: each
+        // series together, its steps from easiest to hardest.
+        let mut list: Vec<&'static Achievement> = Vec::new();
         for a in ACHIEVEMENTS.iter().filter(|a| a.cat == cat) {
             let name = progress::series_of(a.id);
-            if !units.iter().any(|u| progress::series_of(u[0].id) == name) {
-                units.push(progress::series(name));
+            if !list.iter().any(|x| progress::series_of(x.id) == name) {
+                list.extend(progress::series(name).into_iter().filter(|x| x.cat == cat));
             }
         }
         let is_done = |id: &str| self.cfg.achievements.iter().any(|u| u.id == id);
-        units.retain(|u| {
-            let got = u.iter().filter(|a| is_done(a.id)).count();
-            match filter {
-                AchFilter::All => true,
-                AchFilter::Unlocked => got > 0,
-                AchFilter::Locked => got < u.len(),
-            }
+        list.retain(|a| match filter {
+            AchFilter::All => true,
+            AchFilter::Unlocked => is_done(a.id),
+            AchFilter::Locked => !is_done(a.id),
         });
-        if units.is_empty() {
+        if list.is_empty() {
             ui.label(
                 RichText::new(match filter {
                     AchFilter::Unlocked => "None unlocked here yet. Keep hunting!",
@@ -620,40 +618,14 @@ impl App {
         let gap = 10.0;
         let cols = (((ui.available_width() + gap) / (340.0 + gap)).floor() as usize).clamp(1, 4);
         let tw = ((ui.available_width() - gap * (cols - 1) as f32) / cols as f32).floor();
-        for pair in units.chunks(cols) {
-            let mut toggled = None;
+        for row in list.chunks(cols) {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = gap;
-                for unit in pair {
-                    if self.unit_tile(ui, unit, &l, tw) {
-                        toggled = Some(progress::series_of(unit[0].id).to_string());
-                    }
+                for a in row {
+                    let when = self.cfg.achievements.iter().find(|u| u.id == a.id).map(|u| u.unix);
+                    self.achievement_tile(ui, *a, when, &l, tw, 0);
                 }
             });
-            if let Some(name) = toggled {
-                self.setup.ach_open = if self.setup.ach_open.as_deref() == Some(name.as_str()) { None } else { Some(name) };
-            }
-            // expanded ladder below its row
-            if let Some(open) = self.setup.ach_open.clone() {
-                if let Some(unit) = pair.iter().find(|u| progress::series_of(u[0].id) == open && u.len() > 1) {
-                    ui.add_space(gap);
-                    kit::card(ui, |ui| {
-                        ui.label(RichText::new("Every step").size(kit::fs(12.0)).color(MUTED()));
-                        ui.add_space(6.0);
-                        let w2 = ((ui.available_width() - gap * (cols - 1) as f32) / cols as f32).floor();
-                        for steps in unit.chunks(cols) {
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = gap;
-                                for a in steps {
-                                    let when = self.cfg.achievements.iter().find(|u| u.id == a.id).map(|u| u.unix);
-                                    self.achievement_tile(ui, *a, when, &l, w2, 0);
-                                }
-                            });
-                            ui.add_space(gap);
-                        }
-                    });
-                }
-            }
             ui.add_space(gap);
         }
         if self.cfg.events.is_empty() && unlocked == 0 {
@@ -820,6 +792,7 @@ impl App {
     /// A tile for a whole series: the highest step earned (or the first
     /// step if none), pips for every step and the next goal. Returns true
     /// when clicked (to show every step).
+    #[allow(dead_code)]
     fn unit_tile(&mut self, ui: &mut egui::Ui, unit: &[&'static Achievement], l: &Lifetime, w: f32) -> bool {
         let got = unit.iter().take_while(|a| self.cfg.achievements.iter().any(|u| u.id == a.id)).count();
         if unit.len() == 1 {

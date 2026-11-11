@@ -90,6 +90,8 @@ pub enum WorkerMsg {
     },
     /// The starter picked from the briefcase came out shiny.
     ShinyGift,
+    /// The log shows which hunting style is being used.
+    MethodHint(crate::gamelog::MethodHint),
     /// Shiny chance the game reported for the latest encounter.
     LogOdds {
         num: u32,
@@ -182,6 +184,13 @@ fn run(
                     // Starter picked from the briefcase: one soft reset, and
                     // the game says whether it's shiny. Screen reading can't
                     // see this, so it's counted whichever way counting is set.
+                    if !s.paused {
+                        for h in tail.take_hints() {
+                            send(WorkerMsg::MethodHint(h));
+                        }
+                    } else {
+                        tail.take_hints();
+                    }
                     for gift in tail.take_gifts() {
                         if s.paused {
                             continue;

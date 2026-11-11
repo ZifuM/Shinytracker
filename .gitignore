@@ -7,3 +7,8 @@ build-status.txt
 topmost-log.txt
 /backup-classic-style/
 /Claude outputs/
+check-log.txt
+check-status.txt
+# downloaded by build.bat (Pokédex data from the Platinum Together Wiki)
+/assets/wiki.json
+/assets/wiki.json.tmp

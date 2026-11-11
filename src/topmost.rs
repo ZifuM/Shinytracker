@@ -238,7 +238,7 @@ mod imp {
             unsafe {
                 let mut pid = 0u32;
                 GetWindowThreadProcessId(h, &mut pid);
-                if pid == GetCurrentProcessId() && text(h, false).starts_with("Shiny Tracker — Settings") {
+                if pid == GetCurrentProcessId() && text(h, false).starts_with(super::LAUNCHER_TITLE) {
                     *(out as *mut isize) = h as isize;
                     return 0;
                 }
@@ -265,6 +265,31 @@ mod imp {
         }
         // Done either way (older Windows just ignores it).
         *done = true;
+    }
+
+    /// One of our own windows, found by its exact title.
+    pub fn own_window_titled(title: &str) -> Option<isize> {
+        struct Find {
+            title: String,
+            out: isize,
+        }
+        extern "system" fn cb(h: Hwnd, lp: isize) -> i32 {
+            unsafe {
+                let f = &mut *(lp as *mut Find);
+                let mut pid = 0u32;
+                GetWindowThreadProcessId(h, &mut pid);
+                if pid == GetCurrentProcessId() && text(h, false) == f.title {
+                    f.out = h as isize;
+                    return 0;
+                }
+            }
+            1
+        }
+        let mut f = Find { title: title.to_string(), out: 0 };
+        unsafe {
+            EnumWindows(cb, &mut f as *mut Find as isize);
+        }
+        (f.out != 0).then_some(f.out)
     }
 
     /// Is the game open (its window exists)?
@@ -510,6 +535,9 @@ mod imp {
 
 #[cfg(not(windows))]
 mod imp {
+    pub fn own_window_titled(_title: &str) -> Option<isize> {
+        None
+    }
     pub fn round_settings_corners(done: &mut bool) {
         *done = true;
     }
@@ -546,6 +574,25 @@ pub fn ensure_started(
     if let Some(h) = imp::hwnd_of(frame) {
         imp::spawn_keeper(h, borderless_fix.clone());
         *started = true;
+    }
+}
+
+/// Title of the launcher (main) window.
+pub const LAUNCHER_TITLE: &str = "Poke Together Companion";
+/// Title of the Shiny Hunter overlay window (how the keeper finds it).
+pub const OVERLAY_TITLE: &str = "Shiny Hunter overlay";
+
+/// Call every frame while the overlay is open: starts a keeper for each new
+/// overlay window (a closed one's keeper stops by itself).
+pub fn ensure_overlay_keeper(
+    last: &mut Option<isize>,
+    borderless_fix: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    if let Some(h) = imp::own_window_titled(OVERLAY_TITLE) {
+        if *last != Some(h) {
+            imp::spawn_keeper(h, borderless_fix.clone());
+            *last = Some(h);
+        }
     }
 }
 

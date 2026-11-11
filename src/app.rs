@@ -13,11 +13,17 @@ use std::sync::mpsc::{channel, Receiver};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+mod catch_spots;
+mod dex_tabs;
 mod extras;
 mod hunt_pages;
 mod insights;
 mod notices;
+mod launcher;
+mod map;
 mod overlay_mod;
+mod pokedex;
+mod rare;
 mod settings;
 mod trainer;
 mod ui_kit;
@@ -39,6 +45,10 @@ fn shiny_alert_text(plate_idx: usize) -> String {
 
 #[derive(PartialEq, Clone, Copy)]
 enum Tab {
+    Home,
+    Shiny,
+    Pokedex,
+    Map,
     Profile,
     Dex,
     Hunt,
@@ -81,7 +91,10 @@ struct Setup {
     bind_msg: Option<(bool, String)>,
     picking_target: bool,
     /// Picking the optional second target.
-    picking_target2: bool,
+    /// Picking an extra target: Some(i) replaces the i-th, Some(len) adds one.
+    picking_also: Option<usize>,
+    /// The "which shiny was it?" page (hunts with 3+ targets).
+    caught_pick: bool,
     /// Backup "Save as" (true) / "Open" (false) box while it's open.
     backup_picker: Option<(bool, Receiver<Option<std::path::PathBuf>>)>,
     /// A backup read from disk, waiting for "Replace everything?".
@@ -91,7 +104,6 @@ struct Setup {
     /// "Move data folder" box while it's open, and the last result.
     data_picker: Option<Receiver<Option<std::path::PathBuf>>>,
     data_msg: Option<(bool, String)>,
-    show_all_methods: bool,
     welcome_step: usize,
     /// Runs page: showing the stats of this run.
     view_run: Option<RunRef>,
@@ -99,6 +111,15 @@ struct Setup {
     chart_view: hunt_pages::ChartView,
     /// Which tab of a run's stats page is open.
     run_tab: hunt_pages::RunTab,
+    overlay_tab: settings::OverlayTab,
+    hunt_tab: settings::HuntTab,
+    pokedex: pokedex::DexState,
+    /// "Hunt it on sparkly grass?" after picking a target that's there today.
+    rare_offer: Option<rare::RareOffer>,
+    /// Apps in the sidebar whose pages are folded away.
+    nav_collapsed: Vec<Tab>,
+    appear_tab: hunt_pages::AppearTab,
+    adv_tab: settings::AdvTab,
     /// "Choose…" box for a sound file while it's open: which sound it's for
     /// (None = the alert song) and where the answer arrives.
     song_picker: Option<(Option<crate::sound::Sfx>, Receiver<Option<std::path::PathBuf>>)>,
@@ -179,10 +200,6 @@ pub struct App {
     setup: Setup,
     applied_size: Option<[f32; 2]>,
     icon_tex: egui::TextureHandle,
-    topmost_started: bool,
-    setup_geom: Option<(egui::Pos2, egui::Vec2)>,
-    /// Open the settings window maximized (restored from last time).
-    setup_max: bool,
     /// Window position/size changed: save without flashing "✔ Saved".
     geom_dirty: bool,
     saved_flash: Option<Instant>,
@@ -218,6 +235,26 @@ pub struct App {
     progress_checked: Instant,
     /// Modular overlay: size it needs (measured while drawing).
     ov_size: Option<[f32; 2]>,
+    /// The Shiny Hunter overlay window is open (Start / Stop).
+    overlay_on: bool,
+    /// Pokédex data from the wiki (None until loaded).
+    wiki: Option<Arc<crate::wiki::Wiki>>,
+    wiki_rx: Receiver<Arc<crate::wiki::Wiki>>,
+    /// Sinnoh's layout from the game's own files (None until read).
+    gamemap: Option<Result<Arc<crate::gamemap::GameMap>, String>>,
+    gamemap_rx: Receiver<Result<Arc<crate::gamemap::GameMap>, crate::gamemap::LoadError>>,
+    /// The Map app's view.
+    mapui: map::MapState,
+    /// Extra Pokédex facts from pokemondb.net, fetched as entries are opened.
+    dexdb: crate::dexextra::Fetcher,
+    /// Where and how big the overlay opened (fixed while it's open).
+    ov_geom: Option<([f32; 2], [f32; 2])>,
+    /// When the overlay window last opened.
+    ov_opened: Option<Instant>,
+    /// The overlay window the stay-on-top keeper is looking after.
+    overlay_keeper: Option<isize>,
+    /// "Counting paused because the overlay is stopped", as last sent.
+    applied_bg_pause: Option<bool>,
     /// Click-through state last sent to the window.
     applied_passthrough: Option<bool>,
     /// Recent auto-counted encounters (unix time, how many) for the pace graph.
@@ -320,6 +357,17 @@ impl App {
             status: Status::default(),
             last_battle: Vec::new(),
             ov_size: None,
+            overlay_on: cfg.overlay_autostart,
+            wiki: None,
+            wiki_rx: crate::wiki::start(),
+            dexdb: Default::default(),
+            gamemap: None,
+            gamemap_rx: crate::gamemap::start(),
+            mapui: Default::default(),
+            ov_geom: None,
+            ov_opened: None,
+            overlay_keeper: None,
+            applied_bg_pause: None,
             applied_passthrough: None,
             recent_enc: std::collections::VecDeque::new(),
             last_enc_at: None,
@@ -331,7 +379,7 @@ impl App {
             confirm_caught: false,
             show_setup,
             setup: Setup {
-                tab: Tab::Hunt,
+                tab: Tab::Home,
                 search: String::new(),
                 monitors: 0,
                 shot: None,
@@ -346,17 +394,25 @@ impl App {
                 recording: None,
                 bind_msg: None,
                 picking_target: false,
-                picking_target2: false,
+                picking_also: None,
+                caught_pick: false,
                 backup_picker: None,
                 restore_pending: None,
                 backup_msg: None,
                 data_picker: None,
                 data_msg: None,
-                show_all_methods: false,
                 welcome_step: 0,
                 view_run: None,
                 chart_view: Default::default(),
                 run_tab: Default::default(),
+                overlay_tab: Default::default(),
+                hunt_tab: Default::default(),
+                pokedex: Default::default(),
+                rare_offer: None,
+                // Apps start folded; clicking one opens its pages.
+                nav_collapsed: vec![Tab::Shiny],
+                appear_tab: Default::default(),
+                adv_tab: Default::default(),
                 song_picker: None,
                 share: None,
                 toast: None,
@@ -378,9 +434,6 @@ impl App {
                     egui::TextureOptions::LINEAR,
                 )
             },
-            topmost_started: false,
-            setup_geom: None,
-            setup_max: false,
             geom_dirty: false,
             saved_flash: None,
             borderless_fix: Arc::new(std::sync::atomic::AtomicBool::new(cfg.borderless_fix)),
@@ -422,6 +475,51 @@ impl App {
         self.species.iter().position(|s| s.slug == slug).filter(|i| Some(*i) != self.target_idx())
     }
 
+    /// Every extra target ("also hunting"), in order: the second target, then
+    /// the rest. No repeats, never the main target.
+    fn also_slugs(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for s in self.cfg.target2.iter().chain(self.cfg.more_targets.iter()) {
+            if self.cfg.target.as_deref() != Some(s.as_str()) && !out.contains(s) {
+                out.push(s.clone());
+            }
+        }
+        out
+    }
+
+    /// Store the extra targets (the first goes in the second-target slot).
+    fn set_also(&mut self, list: Vec<String>) {
+        let mut it = list.into_iter();
+        self.cfg.target2 = it.next();
+        self.cfg.more_targets = it.collect();
+        self.dirty = true;
+    }
+
+    /// Species index of every target: the main one first.
+    fn all_target_idx(&self) -> Vec<usize> {
+        let mut out: Vec<usize> = self.target_idx().into_iter().collect();
+        for slug in self.also_slugs() {
+            if let Some(i) = self.species.iter().position(|s| s.slug == slug) {
+                if !out.contains(&i) {
+                    out.push(i);
+                }
+            }
+        }
+        out
+    }
+
+    /// "Scyther", "Scyther + Scizor", "Scyther + Scizor + 2 more".
+    fn targets_title(&self) -> Option<String> {
+        let all = self.all_target_idx();
+        let name = |k: usize| self.species[all[k]].name;
+        match all.len() {
+            0 => None,
+            1 => Some(name(0).to_string()),
+            2 => Some(format!("{} + {}", name(0), name(1))),
+            n => Some(format!("{} + {} + {} more", name(0), name(1), n - 2)),
+        }
+    }
+
     /// Send current settings to the detector. `restart` clears its state.
     fn push_settings(&mut self, restart: bool) {
         if let Ok(mut s) = self.shared.lock() {
@@ -430,7 +528,8 @@ impl App {
             } else {
                 s.generation
             };
-            *s = worker_settings(&self.cfg, gen, self.game_closed());
+            let bg_pause = !self.overlay_on && !self.cfg.count_in_background;
+            *s = worker_settings(&self.cfg, gen, self.game_closed() || bg_pause);
         }
         self.dirty = true;
     }
@@ -525,10 +624,10 @@ impl App {
                         self.battle_species.push(i);
                     }
                 }
-                let (t1, t2) = (self.target_idx(), self.target2_idx());
-                if t1.is_some() || t2.is_some() {
-                    // A sighting of either target (two-target hunts count both).
-                    let hits = names.iter().filter(|&&i| Some(i) == t1 || Some(i) == t2).count() as u64;
+                let targets = self.all_target_idx();
+                if !targets.is_empty() {
+                    // A sighting of any target (multi-target hunts count them all).
+                    let hits = names.iter().filter(|i| targets.contains(i)).count() as u64;
                     if hits > self.battle_target_hits {
                         self.cfg.target_seen += hits - self.battle_target_hits;
                         self.battle_target_hits = hits;
@@ -558,6 +657,7 @@ impl App {
                     self.cfg.mini = false;
                 }
             }
+            WorkerMsg::MethodHint(h) => self.apply_method_hint(h),
             WorkerMsg::ShinyGift => {
                 if self.shiny_alert.is_none() {
                     self.shiny_fanfare();
@@ -580,7 +680,13 @@ impl App {
     fn on_hotkey(&mut self, a: HotAction) {
         match a {
             HotAction::ToggleHide => {
-                self.cfg.mini = !self.cfg.mini;
+                if self.overlay_on {
+                    self.cfg.mini = !self.cfg.mini;
+                } else {
+                    // Overlay stopped: the hotkey brings it back, full size.
+                    self.overlay_on = true;
+                    self.cfg.mini = false;
+                }
                 self.dirty = true;
             }
             HotAction::Plus => self.add(1),
@@ -600,14 +706,20 @@ impl App {
         }
     }
 
-    fn sync_window(&mut self, ctx: &egui::Context) {
-        let want = if self.cfg.mini {
+    /// Size the overlay window should be right now.
+    fn overlay_size(&self) -> [f32; 2] {
+        if self.cfg.mini {
             MINI_SIZE
         } else if self.cfg.overlay.legacy() {
             FULL_SIZE
         } else {
             self.ov_size.unwrap_or(FULL_SIZE)
-        };
+        }
+    }
+
+    /// Runs inside the overlay window each frame.
+    fn sync_window(&mut self, ctx: &egui::Context) {
+        let want = self.overlay_size();
         // Click-through (modular overlay only). Never while a shiny or the
         // Caught! question needs a click.
         let pass = self.click_through_active();
@@ -623,7 +735,7 @@ impl App {
         }
         // Remember where the overlay sits (ignore the first second while the
         // window is still being placed).
-        if self.started.elapsed() > Duration::from_secs(1) {
+        if self.ov_opened.is_some_and(|t| t.elapsed() > Duration::from_secs(1)) {
             if let Some(r) = ctx.input(|i| i.viewport().outer_rect) {
                 let p = [r.min.x, r.min.y];
                 let moved = self.cfg.window_pos.map_or(true, |q| {
@@ -641,7 +753,7 @@ impl App {
         if (self.dirty || self.geom_dirty) && self.last_save.elapsed() > Duration::from_millis(800) {
             self.cfg.save();
             // Only real setting changes flash "✔ Saved"; moving a window doesn't.
-            if self.dirty && self.show_setup {
+            if self.dirty {
                 self.saved_flash = Some(Instant::now());
             }
             self.dirty = false;
@@ -650,12 +762,23 @@ impl App {
         }
     }
 
-    /// Save everything now, then quit the app (overlay's ✕ button).
-    fn save_and_quit(&mut self, ctx: &egui::Context) {
+    /// The overlay's ✕: save, then close the overlay (the launcher keeps
+    /// running; Start brings it back).
+    fn save_and_quit(&mut self, _ctx: &egui::Context) {
+        self.overlay_on = false;
+        self.save_now();
+    }
+
+    fn save_now(&mut self) {
         self.cfg.save();
         self.dirty = false;
         self.geom_dirty = false;
         self.last_save = Instant::now();
+    }
+
+    /// The launcher's ✕: save everything and quit (overlay included).
+    fn quit_app(&mut self, ctx: &egui::Context) {
+        self.save_now();
         ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Close);
     }
 
@@ -945,7 +1068,7 @@ impl App {
                 let xs = Stroke::new(1.8f32, Color32::WHITE);
                 p.line_segment([cc - egui::vec2(3.5, 3.5), cc + egui::vec2(3.5, 3.5)], xs);
                 p.line_segment([cc + egui::vec2(-3.5, 3.5), cc + egui::vec2(3.5, -3.5)], xs);
-                if close.on_hover_text("Save and close Shiny Tracker").clicked() {
+                if close.on_hover_text("Close the overlay (the Companion keeps running)").clicked() {
                     self.save_and_quit(ctx);
                 }
 
@@ -1325,20 +1448,31 @@ impl App {
                     ctx.request_repaint_after(Duration::from_millis(250));
                 } else if self.confirm_caught {
                     let w = row.width();
-                    let two = self.target2_idx().map(|i| self.species[i].name.to_string());
+                    let many = self.all_target_idx().len() >= 3;
+                    let two = if many { None } else { self.target2_idx().map(|i| self.species[i].name.to_string()) };
                     // Phase / ✕ shift right to make room for a second target button.
-                    let (phase_a, phase_b, x_a) = if two.is_some() { (0.76, 0.90, 0.92) } else { (0.64, 0.86, 0.88) };
+                    let (phase_a, phase_b, x_a) = if two.is_some() || many { (0.76, 0.90, 0.92) } else { (0.64, 0.86, 0.88) };
                     p.text(
                         egui::pos2(row.min.x, row.center().y),
                         Align2::LEFT_CENTER,
-                        if two.is_some() { "Which?" } else { "Shiny! Was it…" },
+                        if two.is_some() || many { "Which?" } else { "Shiny! Was it…" },
                         egui::FontId::proportional(11.5),
                         theme::pal().text,
                     );
                     let at = |a: f32, b: f32| {
                         Rect::from_min_max(egui::pos2(row.min.x + w * a, row.min.y), egui::pos2(row.min.x + w * b, row.max.y))
                     };
-                    if let Some(name2) = two {
+                    if many {
+                        // Three or more targets: pick in the Companion.
+                        if ui
+                            .put(at(0.22, 0.74), egui::Button::new(RichText::new("Choose…").strong().color(Color32::WHITE)).fill(theme::GREEN.gamma_multiply(0.7)))
+                            .on_hover_text("Pick which of your targets it was")
+                            .clicked()
+                        {
+                            self.setup.caught_pick = true;
+                            self.show_setup = true;
+                        }
+                    } else if let Some(name2) = two {
                         // Two-target hunt: one button per target.
                         let short = |n: &str| if n.chars().count() > 8 { format!("{}…", n.chars().take(7).collect::<String>()) } else { n.to_string() };
                         let name1 = self.target_idx().map(|i| self.species[i].name.to_string()).unwrap_or_default();
@@ -1558,14 +1692,18 @@ impl App {
             .filter(|r| r.target.as_deref() == Some(&slug) && r.id != self.cfg.run_id)
             .max_by_key(|r| r.saved_unix)
             .map(|r| r.id);
+        let picked = slug.clone();
         match existing {
             Some(id) => self.resume_run(id),
             None => {
                 self.park_current();
                 self.cfg.target2 = None;
+                self.cfg.more_targets.clear();
                 self.start_fresh(Some(slug));
             }
         }
+        // On sparkly grass today? Offer to hunt it there.
+        self.check_rare_offer(&picked);
     }
 
     fn run_is_empty(&self) -> bool {
@@ -1587,6 +1725,7 @@ impl App {
             saved_unix: now_unix(),
             stats: self.cfg.run_stats.clone(),
             target2: self.cfg.target2.clone(),
+            more_targets: self.cfg.more_targets.clone(),
         };
         match self.cfg.saved_runs.iter_mut().find(|r| r.id == run.id) {
             Some(r) => *r = run,
@@ -1624,6 +1763,7 @@ impl App {
             self.cfg.run_started_unix = r.started_unix;
             self.cfg.run_stats = r.stats;
             self.cfg.target2 = r.target2;
+            self.cfg.more_targets = r.more_targets;
             self.add_event("comeback");
         }
         self.reset_transient();
@@ -2225,13 +2365,15 @@ fn days_ago(unix: u64) -> String {
 }
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        // Stay above the game (background thread, started once).
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Keep the overlay above the game (a background thread per overlay window).
         self.borderless_fix.store(
             self.cfg.borderless_fix,
             std::sync::atomic::Ordering::Relaxed,
         );
-        crate::topmost::ensure_started(&mut self.topmost_started, frame, &self.borderless_fix);
+        if self.overlay_on {
+            crate::topmost::ensure_overlay_keeper(&mut self.overlay_keeper, &self.borderless_fix);
+        }
         self.fonts.poll(ctx);
         self.sprites.poll(ctx);
         for a in self.hotkeys.poll() {
@@ -2240,6 +2382,10 @@ impl eframe::App for App {
         while let Ok(msg) = self.rx.try_recv() {
             self.on_msg(msg);
         }
+        while let Ok(w) = self.wiki_rx.try_recv() {
+            self.wiki = Some(w);
+        }
+        self.map_tick(ctx);
         self.watch_game();
         self.tick_notices(ctx);
         if self.applied_appearance.as_ref() != Some(&self.cfg.appearance) {
@@ -2252,45 +2398,33 @@ impl eframe::App for App {
         if self.progress_checked.elapsed() > Duration::from_secs(20) {
             self.check_progress();
         }
-        self.sync_window(ctx);
-        if self.cfg.mini {
-            self.mini_ui(ctx);
-        } else if self.cfg.overlay.legacy() {
-            self.full_ui(ctx);
-        } else {
-            self.modular_ui(ctx);
+        // Counting can pause while the overlay is stopped (a setting).
+        let bg_pause = !self.overlay_on && !self.cfg.count_in_background;
+        if self.applied_bg_pause != Some(bg_pause) {
+            self.applied_bg_pause = Some(bg_pause);
+            self.push_settings(false);
         }
+        // Something on the overlay asked for the launcher (⚙, Phase, a notice).
         if self.show_setup {
-            // Open next to the overlay, on the side with more room (same monitor).
-            if self.setup_geom.is_none() {
-                let ppp = ctx
-                    .native_pixels_per_point()
-                    .unwrap_or_else(|| ctx.pixels_per_point());
-                // Reopen where the user last left it (if that spot is still on a
-                // monitor); otherwise beside the overlay.
-                let remembered = match (self.cfg.settings_pos, self.cfg.settings_size) {
-                    (Some(pos), Some(size))
-                        if crate::topmost::point_on_screen([pos[0] + 60.0, pos[1] + 16.0], ppp) =>
-                    {
-                        Some((
-                            egui::pos2(pos[0], pos[1]),
-                            egui::vec2(size[0].max(640.0), size[1].max(460.0)),
-                        ))
-                    }
-                    _ => None,
-                };
-                self.setup_geom = remembered.or_else(|| {
-                    crate::topmost::settings_placement(frame, [980.0, 700.0], [640.0, 460.0], ppp)
-                        .map(|(pos, size)| {
-                            (egui::pos2(pos[0], pos[1]), egui::vec2(size[0], size[1]))
-                        })
-                });
-                self.setup_max = self.cfg.settings_maximized;
+            self.show_setup = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            if !self.setup.phase_pick && !launcher::is_shiny_tab(self.setup.tab) && self.cfg.welcome_done {
+                self.setup.tab = Tab::Shiny;
             }
-            self.setup_viewport(ctx);
-        } else {
-            self.setup_geom = None;
-            self.settings_rounded = false;
+        }
+        // The launcher is the main window.
+        self.launcher_ui(ctx);
+        self.rare_offer_window(ctx);
+        // The overlay is its own always-on-top window while it's started.
+        if self.overlay_on {
+            self.overlay_viewport(ctx);
+        } else if self.ov_geom.is_some() {
+            self.ov_geom = None;
+            self.ov_opened = None;
+            self.applied_size = None;
+            self.applied_passthrough = None;
+            self.overlay_keeper = None;
         }
         self.autosave();
         // Keeps sprites animating and hotkeys responsive.
