@@ -774,14 +774,14 @@ impl App {
                 if days_hunted > 0 { theme::thousands(tracked / days_hunted) } else { "—".into() },
             ),
             (
-                "Longest wait between shinies".into(),
+                "Longest shiny wait".into(),
                 longest_wait.map_or("—".into(), |s| if s >= 86_400 { format!("{} days", s / 86_400) } else { fmt_duration(s) }),
             ),
             ("Fastest session".into(), fastest.map_or("—".into(), |r| format!("{}/h", theme::thousands(r.round() as u64)))),
             ("Wild battles".into(), theme::thousands(battles)),
         ];
         kit::section(ui, "Records");
-        let per = if ui.available_width() >= 1100.0 { 8 } else { 4 };
+        let per = if ui.available_width() >= 1500.0 { 8 } else { 4 };
         tile_rows(ui, &tiles, per, |ui, w, (label, value)| kit::stat(ui, w, label, value));
     }
 }

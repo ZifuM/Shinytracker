@@ -359,14 +359,23 @@ pub fn button_shape(rect: Rect, r: f32, hovered: bool) -> Shape {
     )
 }
 
-/// Text colour that reads on the button colour (dark on pale buttons).
+/// Text colour that reads on the button colour: whichever of dark or white
+/// has the stronger contrast (WCAG relative luminance), so mid-bright colours
+/// such as the default pink get dark text instead of washed-out white.
 pub fn button_ink() -> Color32 {
     let pl = pal();
-    let lum = |c: Color32| (0.2126 * c.r() as f32 + 0.7152 * c.g() as f32 + 0.0722 * c.b() as f32) / 255.0;
+    let lin = |v: u8| {
+        let c = v as f32 / 255.0;
+        if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+    };
+    let lum = |c: Color32| 0.2126 * lin(c.r()) + 0.7152 * lin(c.g()) + 0.0722 * lin(c.b());
     // Clean style draws buttons flat in the first colour, so judge that alone.
     let l = if clean() { lum(pl.button) } else { (lum(pl.button) + lum(pl.button2)) / 2.0 };
-    if l > 0.62 {
-        Color32::from_rgb(30, 28, 44)
+    let dark = Color32::from_rgb(30, 28, 44);
+    let on_white = 1.05 / (l + 0.05);
+    let on_dark = (l + 0.05) / (lum(dark) + 0.05);
+    if on_dark >= on_white {
+        dark
     } else {
         Color32::WHITE
     }

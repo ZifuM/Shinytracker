@@ -249,10 +249,10 @@ impl App {
         }
         let id = n.id;
         let action = n.action;
-        // close ✕
+        // close ✖
         let xr = Rect::from_center_size(egui::pos2(r.max.x - 12.0, r.min.y + 12.0), egui::vec2(18.0, 18.0));
         if ui
-            .put(xr, egui::Button::new(RichText::new("✕").size(11.0).color(Color32::from_gray(190))).frame(false))
+            .put(xr, egui::Button::new(RichText::new("✖").size(11.0).color(Color32::from_gray(190))).frame(false))
             .on_hover_text("Dismiss")
             .clicked()
         {

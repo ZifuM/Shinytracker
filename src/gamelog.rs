@@ -146,6 +146,23 @@ pub fn default_log_dir() -> Option<PathBuf> {
     d.is_dir().then_some(d)
 }
 
+/// The log folder to follow: the one picked by hand if it's there,
+/// otherwise the game's usual one. A picked folder may be the logs folder
+/// itself or one above it (the Game folder, or the PlatinumTogether folder).
+pub fn log_dir(custom: Option<&Path>) -> Option<PathBuf> {
+    if let Some(c) = custom {
+        let tries = [c.to_path_buf(), c.join("logs"), c.join("Game").join("logs")];
+        // First one that actually holds session logs, else the folder as given.
+        if let Some(d) = tries.iter().find(|d| newest_log(d).is_some()) {
+            return Some(d.clone());
+        }
+        if c.is_dir() {
+            return Some(c.to_path_buf());
+        }
+    }
+    default_log_dir()
+}
+
 fn newest_log(dir: &Path) -> Option<(PathBuf, SystemTime)> {
     std::fs::read_dir(dir)
         .ok()?
@@ -186,6 +203,11 @@ impl LogTail {
             hints: Vec::new(),
             last_reset: None,
         }
+    }
+
+    /// The folder being followed.
+    pub fn dir(&self) -> &Path {
+        &self.dir
     }
 
     pub fn file_name(&self) -> Option<String> {

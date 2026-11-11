@@ -376,6 +376,7 @@ impl App {
                             .char_limit(16)
                             .desired_width(240.0),
                     )
+                    .on_hover_text("Your trainer name: click to change it")
                     .changed()
                     {
                         self.dirty = true;
@@ -461,7 +462,7 @@ impl App {
             ],
         ];
         let all: Vec<(&str, String)> = rows.into_iter().flatten().collect();
-        let per = if ui.available_width() >= 1100.0 { 8 } else { 4 };
+        let per = if ui.available_width() >= 1500.0 { 8 } else { 4 };
         let sw = if per == 8 { ((ui.available_width() - 56.0) / 8.0).floor() } else { w4 };
         for row in all.chunks(per) {
             ui.horizontal(|ui| {

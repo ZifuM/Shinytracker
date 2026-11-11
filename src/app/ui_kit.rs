@@ -345,7 +345,7 @@ pub fn page_header(ui: &mut Ui, title: &str, subtitle: &str) {
 /// "Experimental" notice under the header of an app that's still being built.
 pub fn experimental(ui: &mut Ui, what: &str) {
     ui.horizontal_wrapped(|ui| {
-        pill(ui, "⚗ Experimental", PillKind::Warn);
+        pill(ui, "Experimental", PillKind::Warn);
         ui.label(
             RichText::new(format!("{what} is still being built: some things may be missing or wrong. Tell the dev if you spot something."))
                 .size(fs(11.5))
@@ -624,6 +624,28 @@ pub fn choice_tile(
 
 /// Metric tile: small label above a big value.
 pub fn stat(ui: &mut Ui, width: f32, label: &str, value: &str) {
+    stat_inner(ui, width, label, value);
+}
+
+/// A stat tile you can click (Home's tiles open the page behind the number).
+pub fn stat_button(ui: &mut Ui, width: f32, label: &str, value: &str, tip: &str) -> bool {
+    let rect = stat_inner(ui, width, label, value).rect;
+    let resp = ui.interact(rect, ui.id().with(("stat-button", label)), Sense::click());
+    if resp.hovered() {
+        ui.painter().rect_stroke(rect, 8.0, Stroke::new(1.0f32, MUTED()));
+    }
+    // A small arrow says the tile goes somewhere.
+    ui.painter().text(
+        rect.right_top() + egui::vec2(-10.0, 9.0),
+        Align2::RIGHT_TOP,
+        "›",
+        egui::FontId::proportional(14.0),
+        if resp.hovered() { TEXT() } else { MUTED() },
+    );
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked()
+}
+
+fn stat_inner(ui: &mut Ui, width: f32, label: &str, value: &str) -> Response {
     if clean() {
         return clean::stat(ui, width, label, value);
     }
@@ -642,14 +664,16 @@ pub fn stat(ui: &mut Ui, width: f32, label: &str, value: &str) {
                 ui.add(
                     egui::Label::new(RichText::new(label).size(11.0).color(MUTED()))
                         .wrap_mode(egui::TextWrapMode::Truncate),
-                );
+                )
+                .on_hover_text(label);
                 ui.add(
                     egui::Label::new(RichText::new(value).size(16.0).strong().color(TEXT()))
                         .wrap_mode(egui::TextWrapMode::Truncate),
                 )
                 .on_hover_text(value);
             });
-        });
+        })
+        .response
 }
 
 /// "−  value  +" stepper. Returns true if changed.
@@ -663,10 +687,22 @@ pub fn stepper(ui: &mut Ui, value: &mut u32, min: u32, max: u32) -> bool {
                 .rounding(btn_round(6.0))
                 .min_size(if clean() { egui::vec2(CONTROL_H, CONTROL_H) } else { egui::vec2(28.0, 26.0) })
         };
-        if ui.add(small("−")).clicked() && *value > min {
-            *value -= 1;
-            changed = true;
-        }
+        // Minus always sits on the left, plus on the right, even inside a
+        // right-aligned row (which lays widgets out in reverse).
+        let rtl = ui.layout().prefer_right_to_left();
+        let (first, second) = if rtl { ("+", "−") } else { ("−", "+") };
+        let mut press = |ui: &mut Ui, sign: &str, value: &mut u32| {
+            let can = if sign == "+" { *value < max } else { *value > min };
+            if ui.add_enabled(can, small(sign)).clicked() {
+                if sign == "+" {
+                    *value += 1;
+                } else {
+                    *value -= 1;
+                }
+                changed = true;
+            }
+        };
+        press(ui, first, &mut *value);
         ui.add_sized(
             [34.0, 26.0],
             egui::Label::new(
@@ -676,10 +712,7 @@ pub fn stepper(ui: &mut Ui, value: &mut u32, min: u32, max: u32) -> bool {
                     .color(TEXT()),
             ),
         );
-        if ui.add(small("+")).clicked() && *value < max {
-            *value += 1;
-            changed = true;
-        }
+        press(ui, second, &mut *value);
     });
     changed
 }
@@ -965,7 +998,7 @@ mod clean {
         resp.on_hover_cursor(egui::CursorIcon::PointingHand)
     }
 
-    pub fn stat(ui: &mut Ui, width: f32, label: &str, value: &str) {
+    pub fn stat(ui: &mut Ui, width: f32, label: &str, value: &str) -> Response {
         let w = (width - 26.0).max(10.0);
         egui::Frame::none()
             .fill(CARD_HOVER())
@@ -979,14 +1012,16 @@ mod clean {
                     ui.add(
                         egui::Label::new(RichText::new(label).size(12.0).color(MUTED()))
                             .wrap_mode(egui::TextWrapMode::Truncate),
-                    );
+                    )
+                    .on_hover_text(label);
                     ui.add(
                         egui::Label::new(RichText::new(value).font(crate::fonts::sans_bold_font(18.0)).color(TEXT()))
                             .wrap_mode(egui::TextWrapMode::Truncate),
                     )
                     .on_hover_text(value);
                 });
-            });
+            })
+            .response
     }
 
     /// Sidebar row: grey highlight when selected, no accent stripe.

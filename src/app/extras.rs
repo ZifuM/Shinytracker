@@ -1184,6 +1184,7 @@ impl App {
                 self.dirty |= ui
                     .add(egui::Slider::new(&mut self.cfg.sounds.volume, 0.0..=1.0).show_value(false))
                     .changed();
+                ui.label(RichText::new(format!("{:.0}%", self.cfg.sounds.volume * 100.0)).size(kit::fs(12.5)).color(MUTED()));
             });
             ui.add_space(6.0);
             ui.horizontal(|ui| {

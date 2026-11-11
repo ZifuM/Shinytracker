@@ -53,6 +53,28 @@ struct ZoneFile {
     places: HashMap<String, PlaceLink>,
     #[serde(rename = "gameSpecies", default)]
     game_species: HashMap<String, String>,
+    #[serde(default)]
+    overlays: Vec<Overlay>,
+}
+
+/// A cave or side area and where it sits on the Sinnoh map: tile (0, 0) of
+/// its own map lands on tile (x, y) outdoors (worked out from the doors
+/// between the two).
+#[derive(Debug, Clone, Deserialize)]
+pub struct Overlay {
+    pub zone: u16,
+    pub matrix: u16,
+    /// "cave" or "side".
+    pub kind: String,
+    pub x: i32,
+    pub y: i32,
+}
+
+/// A cave/side-area picture with see-through walls, cut down to its floor.
+pub struct OverlayPic {
+    pub img: ColorImage,
+    /// Left, top, width, height in tiles, within the area's own map.
+    pub rect: [f32; 4],
 }
 
 // ───────────────────────────── tiles ─────────────────────────────
@@ -228,9 +250,72 @@ pub struct GameMap {
     /// Zoomed-out picture of the outdoors (OVERVIEW_PX a tile), if the game's
     /// minimap pictures were there.
     pub overview: Option<ColorImage>,
+    /// Caves and side areas with their place on the Sinnoh map.
+    pub overlays: Vec<Overlay>,
 }
 
 impl GameMap {
+    /// Picture of a cave or side area for laying over the Sinnoh map: only
+    /// the ground you can stand on plus a rim of wall, the rest see-through.
+    pub fn draw_overlay(&self, matrix: usize) -> Option<OverlayPic> {
+        const OPX: usize = 4;
+        let m = self.matrices.get(matrix)?;
+        let (tw, th) = (m.w * CHUNK, m.h * CHUNK);
+        if tw == 0 || th == 0 || tw * th > 512 * 512 {
+            return None;
+        }
+        let open: Vec<bool> = (0..tw * th).map(|i| self.ground(matrix, i % tw, i / tw) != Ground::Blocked).collect();
+        // Bounds of the walkable part, with a tile of wall around it.
+        let (mut x0, mut y0, mut x1, mut y1) = (usize::MAX, usize::MAX, 0usize, 0usize);
+        for ty in 0..th {
+            for tx in 0..tw {
+                if open[ty * tw + tx] {
+                    x0 = x0.min(tx);
+                    y0 = y0.min(ty);
+                    x1 = x1.max(tx);
+                    y1 = y1.max(ty);
+                }
+            }
+        }
+        if x0 == usize::MAX {
+            return None;
+        }
+        let (x0, y0) = (x0.saturating_sub(1), y0.saturating_sub(1));
+        let (x1, y1) = ((x1 + 1).min(tw - 1), (y1 + 1).min(th - 1));
+        let (cw, ch) = (x1 - x0 + 1, y1 - y0 + 1);
+        let (w, h) = (cw * OPX, ch * OPX);
+        let mut px = vec![Color32::TRANSPARENT; w * h];
+        let wall = Color32::from_rgb(52, 46, 44);
+        for ty in y0..=y1 {
+            for tx in x0..=x1 {
+                let c = if open[ty * tw + tx] {
+                    Some(ground_colour(self.ground(matrix, tx, ty)))
+                } else {
+                    // wall only where it touches floor
+                    let mut near = false;
+                    for dy in -1i32..=1 {
+                        for dx in -1i32..=1 {
+                            let (nx, ny) = (tx as i32 + dx, ty as i32 + dy);
+                            if nx >= 0 && ny >= 0 && (nx as usize) < tw && (ny as usize) < th && open[ny as usize * tw + nx as usize] {
+                                near = true;
+                            }
+                        }
+                    }
+                    near.then_some(wall)
+                };
+                if let Some(c) = c {
+                    for yy in 0..OPX {
+                        for xx in 0..OPX {
+                            let col = if (xx == 0 || yy == 0) && c != wall { shade(c, 0.93) } else { c };
+                            px[((ty - y0) * OPX + yy) * w + (tx - x0) * OPX + xx] = col;
+                        }
+                    }
+                }
+            }
+        }
+        Some(OverlayPic { img: ColorImage { size: [w, h], pixels: px }, rect: [x0 as f32, y0 as f32, cw as f32, ch as f32] })
+    }
+
     pub fn zone(&self, id: u16) -> Option<&Zone> {
         self.zone_index.get(&id).map(|&i| &self.zones[i])
     }
@@ -257,6 +342,12 @@ impl GameMap {
         let (cx, cy) = (x / CHUNK, y / CHUNK);
         m.land_at(cx, cy)?;
         m.header_at(cx, cy).filter(|&h| h != 0 && self.zone_index.contains_key(&h))
+    }
+
+    /// Whether an outdoor map square belongs to a real place (a route, city,
+    /// lake…) as opposed to the filler scenery between them.
+    pub fn is_place_square(&self, cx: usize, cy: usize) -> bool {
+        self.world_zone_at(cx * CHUNK, cy * CHUNK).is_some()
     }
 
     /// The map squares an area covers, in its map.
@@ -508,6 +599,7 @@ pub fn load(dir: &Path, with_overview: bool) -> Result<GameMap, LoadError> {
         matrices,
         perms,
         overview: None,
+        overlays: zf.overlays,
     };
     if with_overview {
         map.overview = build_overview(&map);
@@ -525,7 +617,8 @@ fn build_overview(map: &GameMap) -> Option<ColorImage> {
     let mut any = false;
     for cy in 0..m.h {
         for cx in 0..m.w {
-            if m.land_at(cx, cy).is_none() {
+            // Only real places are drawn; filler scenery is left out.
+            if !map.is_place_square(cx, cy) {
                 continue;
             }
             let img = load_minimap(&map.dir, cx, cy);
@@ -555,7 +648,150 @@ fn build_overview(map: &GameMap) -> Option<ColorImage> {
         }
     }
     let _ = any;
+    fill_sea_and_land(m, &|cx, cy| map.is_place_square(cx, cy), &mut px, side);
     Some(ColorImage { size: [side, side], pixels: px })
+}
+
+/// Open sea around Sinnoh (also the Map's background colour).
+pub const OCEAN: Color32 = Color32::from_rgb(34, 96, 148);
+const SHALLOWS: Color32 = Color32::from_rgb(64, 142, 190);
+
+/// Squares that aren't a real place (no picture, or just filler scenery)
+/// left the map looking patchy. Fill them in: such squares that reach the edge of
+/// the world are sea (lighter along the coast), and empty squares shut in
+/// by land take the colour of the land around them.
+fn fill_sea_and_land(m: &Matrix, mapped: &dyn Fn(usize, usize) -> bool, px: &mut [Color32], side: usize) {
+    let cs = CHUNK * OVERVIEW_PX;
+    let (w, h) = (m.w, m.h);
+    if w == 0 || h == 0 || side != w * cs {
+        return;
+    }
+    // 0 = has a map, 1 = sea, 2 = shut in by land
+    let mut kind: Vec<u8> = // (Everything that isn't a real place is sea now, inland gaps included;
+    // the shut-in handling below only applies if a square is marked 2.)
+    (0..w * h).map(|i| if mapped(i % w, i / w) { 0 } else { 1 }).collect();
+    let mut stack: Vec<(usize, usize)> = Vec::new();
+    for cy in 0..h {
+        for cx in 0..w {
+            if (cx == 0 || cy == 0 || cx == w - 1 || cy == h - 1) && kind[cy * w + cx] == 2 {
+                kind[cy * w + cx] = 1;
+                stack.push((cx, cy));
+            }
+        }
+    }
+    while let Some((cx, cy)) = stack.pop() {
+        let around = [(cx.wrapping_sub(1), cy), (cx + 1, cy), (cx, cy.wrapping_sub(1)), (cx, cy + 1)];
+        for (nx, ny) in around {
+            if nx < w && ny < h && kind[ny * w + nx] == 2 {
+                kind[ny * w + nx] = 1;
+                stack.push((nx, ny));
+            }
+        }
+    }
+    // Average colour of every mapped square, then spread it into the
+    // shut-in squares from their neighbours.
+    let mut avg: Vec<Option<[f32; 3]>> = vec![None; w * h];
+    for cy in 0..h {
+        for cx in 0..w {
+            if kind[cy * w + cx] != 0 {
+                continue;
+            }
+            let (mut r, mut g, mut b) = (0u64, 0u64, 0u64);
+            for y in 0..cs {
+                for x in 0..cs {
+                    let c = px[(cy * cs + y) * side + cx * cs + x];
+                    r += c.r() as u64;
+                    g += c.g() as u64;
+                    b += c.b() as u64;
+                }
+            }
+            let n = (cs * cs) as f32;
+            avg[cy * w + cx] = Some([r as f32 / n, g as f32 / n, b as f32 / n]);
+        }
+    }
+    for _ in 0..(w + h) {
+        let mut next = avg.clone();
+        let mut changed = false;
+        for cy in 0..h {
+            for cx in 0..w {
+                if kind[cy * w + cx] != 2 || avg[cy * w + cx].is_some() {
+                    continue;
+                }
+                let around = [(cx.wrapping_sub(1), cy), (cx + 1, cy), (cx, cy.wrapping_sub(1)), (cx, cy + 1)];
+                let (mut sum, mut n) = ([0.0f32; 3], 0.0f32);
+                for (nx, ny) in around {
+                    if nx < w && ny < h {
+                        if let Some(c) = avg[ny * w + nx] {
+                            for k in 0..3 {
+                                sum[k] += c[k];
+                            }
+                            n += 1.0;
+                        }
+                    }
+                }
+                if n > 0.0 {
+                    next[cy * w + cx] = Some([sum[0] / n, sum[1] / n, sum[2] / n]);
+                    changed = true;
+                }
+            }
+        }
+        avg = next;
+        if !changed {
+            break;
+        }
+    }
+    let band = 16.0f32; // how far the lighter coastal water reaches, in pixels
+    for cy in 0..h {
+        for cx in 0..w {
+            let k = kind[cy * w + cx];
+            if k == 0 {
+                continue;
+            }
+            for y in 0..cs {
+                for x in 0..cs {
+                    let (gx, gy) = (cx * cs + x, cy * cs + y);
+                    let c = if k == 2 {
+                        // Land nobody can reach: the colour around it, a touch
+                        // darker and grainy so it reads as rough ground.
+                        let a = avg[cy * w + cx].unwrap_or([70.0, 110.0, 70.0]);
+                        let grain = (((gx.wrapping_mul(73_856_093)) ^ (gy.wrapping_mul(19_349_663))) >> 7) % 9;
+                        let f = 0.86 + grain as f32 * 0.012;
+                        Color32::from_rgb((a[0] * f) as u8, (a[1] * f) as u8, (a[2] * f) as u8)
+                    } else {
+                        // Sea: lighter the nearer it is to a coast.
+                        let mut d = band;
+                        for dy in -1i32..=1 {
+                            for dx in -1i32..=1 {
+                                let (nx, ny) = (cx as i32 + dx, cy as i32 + dy);
+                                if (dx, dy) == (0, 0) || nx < 0 || ny < 0 || nx >= w as i32 || ny >= h as i32 {
+                                    continue;
+                                }
+                                if kind[ny as usize * w + nx as usize] == 1 {
+                                    continue;
+                                }
+                                let ddx = match dx {
+                                    -1 => x as f32 + 1.0,
+                                    1 => (cs - x) as f32,
+                                    _ => 0.0,
+                                };
+                                let ddy = match dy {
+                                    -1 => y as f32 + 1.0,
+                                    1 => (cs - y) as f32,
+                                    _ => 0.0,
+                                };
+                                d = d.min((ddx * ddx + ddy * ddy).sqrt());
+                            }
+                        }
+                        let t = (1.0 - d / band).clamp(0.0, 1.0);
+                        let t = t * t;
+                        let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t) as u8;
+                        Color32::from_rgb(mix(OCEAN.r(), SHALLOWS.r()), mix(OCEAN.g(), SHALLOWS.g()), mix(OCEAN.b(), SHALLOWS.b()))
+                    };
+                    px[gy * side + gx] = c;
+                }
+            }
+        }
+    }
 }
 
 /// Read the map in the background.

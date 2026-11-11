@@ -488,6 +488,13 @@ pub struct Config {
     pub overlay: OverlayModules,
     /// Keep the overlay visible over the game's borderless/fullscreen mode.
     pub borderless_fix: bool,
+    /// Flash the overlay's border gold when a target is spotted.
+    pub spot_flash: bool,
+    /// Liquid layout: the overlay's width can be dragged, and its sections stretch.
+    pub liquid: bool,
+    pub liquid_width: f32,
+    /// The game's log folder, when picked by hand (None = found automatically).
+    pub log_dir: Option<String>,
 
     pub history: Vec<HuntRecord>,
     pub keybinds: KeyBinds,
@@ -570,6 +577,10 @@ impl Default for Config {
             mini: false,
             opacity: 0.94,
             borderless_fix: true,
+            spot_flash: true,
+            liquid: false,
+            liquid_width: 280.0,
+            log_dir: None,
             history: Vec::new(),
             keybinds: KeyBinds::default(),
             welcome_done: false,

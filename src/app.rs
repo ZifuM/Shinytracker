@@ -29,6 +29,8 @@ mod trainer;
 mod ui_kit;
 
 pub const FULL_SIZE: [f32; 2] = [280.0, 344.0];
+/// Extra window height under the legacy overlay while a notice shows.
+const LEGACY_BELOW: f32 = 102.0;
 pub const MINI_SIZE: [f32; 2] = [84.0, 96.0];
 
 /// `shiny_alert` value for a shiny starter (it isn't on a name plate).
@@ -141,6 +143,10 @@ struct Setup {
     phase_pick: bool,
     /// Series whose steps are shown expanded.
     ach_open: Option<String>,
+    /// Jump the page back to the top on the next frame.
+    scroll_top: bool,
+    /// "Choose log folder" box while it's open.
+    log_picker: Option<Receiver<Option<std::path::PathBuf>>>,
 }
 
 /// Which run a stats page / share image is about.
@@ -237,6 +243,13 @@ pub struct App {
     ov_size: Option<[f32; 2]>,
     /// The Shiny Hunter overlay window is open (Start / Stop).
     overlay_on: bool,
+    /// The overlay is minimised: its window is gone but counting goes on.
+    ov_hidden: bool,
+    /// What the overlay drew this frame, as rounded boxes [x, y, w, h, radius]
+    /// in points; the window is cut to this shape.
+    ov_shape: Vec<[f32; 5]>,
+    /// The shape the window was last cut to (window, boxes in pixels).
+    ov_clip: Option<(isize, Vec<[i32; 5]>)>,
     /// Pokédex data from the wiki (None until loaded).
     wiki: Option<Arc<crate::wiki::Wiki>>,
     wiki_rx: Receiver<Arc<crate::wiki::Wiki>>,
@@ -293,6 +306,7 @@ fn worker_settings(cfg: &Config, generation: u64, game_closed: bool) -> WorkerSe
         shiny_star_alert: cfg.shiny_star_alert,
         star_threshold: cfg.star_threshold.max(1),
         source: cfg.count_source,
+        log_dir: cfg.log_dir.as_ref().map(std::path::PathBuf::from),
         generation,
     }
 }
@@ -358,6 +372,9 @@ impl App {
             last_battle: Vec::new(),
             ov_size: None,
             overlay_on: cfg.overlay_autostart,
+            ov_hidden: false,
+            ov_shape: Vec::new(),
+            ov_clip: None,
             wiki: None,
             wiki_rx: crate::wiki::start(),
             dexdb: Default::default(),
@@ -424,6 +441,8 @@ impl App {
                 note_draft: String::new(),
                 phase_pick: false,
                 ach_open: None,
+                scroll_top: false,
+                log_picker: None,
             },
             applied_size: None,
             icon_tex: {
@@ -631,7 +650,9 @@ impl App {
                     if hits > self.battle_target_hits {
                         self.cfg.target_seen += hits - self.battle_target_hits;
                         self.battle_target_hits = hits;
-                        self.target_flash = Some(Instant::now());
+                        if self.cfg.spot_flash {
+                            self.target_flash = Some(Instant::now());
+                        }
                         self.cfg.run_stats.note_target_seen(self.cfg.count);
                     }
                 }
@@ -680,7 +701,10 @@ impl App {
     fn on_hotkey(&mut self, a: HotAction) {
         match a {
             HotAction::ToggleHide => {
-                if self.overlay_on {
+                if self.overlay_on && self.ov_hidden {
+                    // Minimised: the hotkey brings it back as it was.
+                    self.ov_hidden = false;
+                } else if self.overlay_on {
                     self.cfg.mini = !self.cfg.mini;
                 } else {
                     // Overlay stopped: the hotkey brings it back, full size.
@@ -711,7 +735,8 @@ impl App {
         if self.cfg.mini {
             MINI_SIZE
         } else if self.cfg.overlay.legacy() {
-            FULL_SIZE
+            let below = !self.notices.is_empty() || self.toasts_pending();
+            [FULL_SIZE[0], FULL_SIZE[1] + if below { LEGACY_BELOW } else { 0.0 }]
         } else {
             self.ov_size.unwrap_or(FULL_SIZE)
         }
@@ -762,7 +787,7 @@ impl App {
         }
     }
 
-    /// The overlay's ✕: save, then close the overlay (the launcher keeps
+    /// The overlay's ✖: save, then close the overlay (the launcher keeps
     /// running; Start brings it back).
     fn save_and_quit(&mut self, _ctx: &egui::Context) {
         self.overlay_on = false;
@@ -776,7 +801,7 @@ impl App {
         self.last_save = Instant::now();
     }
 
-    /// The launcher's ✕: save everything and quit (overlay included).
+    /// The launcher's ✖: save everything and quit (overlay included).
     fn quit_app(&mut self, ctx: &egui::Context) {
         self.save_now();
         ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Close);
@@ -848,6 +873,8 @@ impl App {
             .frame(egui::Frame::none())
             .show(ctx, |ui| {
                 let full = ui.max_rect().shrink(2.0);
+                self.ov_shape.clear();
+                self.ov_shape.push([full.min.x, full.min.y, full.width(), full.height(), 14.0]);
                 let p = ui.painter().clone();
                 let bg = theme::BG().gamma_multiply(self.cfg.opacity);
                 p.rect_filled(full, 14.0, bg);
@@ -913,6 +940,40 @@ impl App {
                     "Click to open{}",
                     self.cfg.keybinds.hint(HotAction::ToggleHide)
                 ));
+
+                // Maximise and close, shown while the pointer is over the badge.
+                if ctx.input(|i| i.pointer.hover_pos()).is_some_and(|h| full.expand(4.0).contains(h)) {
+                    let btn = |ui: &mut egui::Ui, at: Pos2, id: &str, tip: &str, red: bool| -> bool {
+                        let rr = Rect::from_center_size(at, egui::vec2(18.0, 18.0));
+                        let resp = ui.interact(rr, ui.id().with(id), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+                        let fill = if resp.hovered() {
+                            if red { Color32::from_rgb(196, 43, 28) } else { Color32::from_gray(90) }
+                        } else {
+                            Color32::from_black_alpha(170)
+                        };
+                        let pp = ui.painter();
+                        pp.circle_filled(rr.center(), 9.0, fill);
+                        pp.circle_stroke(rr.center(), 9.0, Stroke::new(1.0f32, OUTLINE));
+                        let c = rr.center();
+                        let st = Stroke::new(1.6f32, Color32::WHITE);
+                        if red {
+                            pp.line_segment([c - egui::vec2(3.0, 3.0), c + egui::vec2(3.0, 3.0)], st);
+                            pp.line_segment([c + egui::vec2(-3.0, 3.0), c + egui::vec2(3.0, -3.0)], st);
+                        } else {
+                            // a little square: maximise
+                            pp.rect_stroke(Rect::from_center_size(c, egui::vec2(7.0, 7.0)), 1.0, st);
+                        }
+                        resp.on_hover_text(tip).clicked()
+                    };
+                    let max_tip = format!("Open the full overlay{}", self.cfg.keybinds.hint(HotAction::ToggleHide));
+                    if btn(ui, full.left_top() + egui::vec2(11.0, 11.0), "badge-max", &max_tip, false) {
+                        self.cfg.mini = false;
+                        self.dirty = true;
+                    }
+                    if btn(ui, full.right_top() + egui::vec2(-11.0, 11.0), "badge-close", "Close the overlay (the Companion keeps running)", true) {
+                        self.save_and_quit(ctx);
+                    }
+                }
             });
     }
 
@@ -920,7 +981,15 @@ impl App {
         egui::CentralPanel::default()
             .frame(egui::Frame::none())
             .show(ctx, |ui| {
-                let full = ui.max_rect().shrink(1.0);
+                // The panel keeps its size; the window grows underneath it
+                // while a notice or pop-up shows.
+                let full = Rect::from_min_size(ui.max_rect().min, egui::vec2(FULL_SIZE[0], FULL_SIZE[1])).shrink(1.0);
+                let below = !self.notices.is_empty() || self.toasts_pending();
+                self.ov_shape.clear();
+                self.ov_shape.push([full.min.x, full.min.y, full.width(), full.height(), 12.0]);
+                if below {
+                    self.ov_shape.push([full.min.x, full.max.y - 14.0, full.width(), LEGACY_BELOW + 8.0, 10.0]);
+                }
                 let p = ui.painter().clone();
                 let t = self.t_ms();
                 let blink = (t / 350) % 2 == 0;
@@ -1450,7 +1519,7 @@ impl App {
                     let w = row.width();
                     let many = self.all_target_idx().len() >= 3;
                     let two = if many { None } else { self.target2_idx().map(|i| self.species[i].name.to_string()) };
-                    // Phase / ✕ shift right to make room for a second target button.
+                    // Phase / ✖ shift right to make room for a second target button.
                     let (phase_a, phase_b, x_a) = if two.is_some() || many { (0.76, 0.90, 0.92) } else { (0.64, 0.86, 0.88) };
                     p.text(
                         egui::pos2(row.min.x, row.center().y),
@@ -1518,7 +1587,7 @@ impl App {
                         self.show_setup = true;
                     }
                     if ui
-                        .put(at(x_a, 1.0), egui::Button::new("✕").fill(theme::PLATE()))
+                        .put(at(x_a, 1.0), egui::Button::new("✖").fill(theme::PLATE()))
                         .on_hover_text("Not a shiny after all")
                         .clicked()
                     {
@@ -1582,21 +1651,19 @@ impl App {
                     }
                 }
 
-                // Notices (break, goal, "nothing counted?", update) over the sprites.
+                // Notices (break, goal, "nothing counted?", update) hover
+                // just under the overlay.
+                let under = Rect::from_min_max(
+                    egui::pos2(full.min.x, full.max.y + 6.0),
+                    egui::pos2(full.max.x, full.max.y + LEGACY_BELOW - 2.0),
+                );
                 if !self.notices.is_empty() {
-                    let area = Rect::from_min_max(
-                        egui::pos2(full.min.x + 8.0, header.max.y + 6.0),
-                        egui::pos2(full.max.x - 8.0, header.max.y + 100.0),
-                    );
-                    self.draw_notice(ui, ctx, area);
+                    self.draw_notice(ui, ctx, under);
                 }
 
-                // Achievement / level-up pop-up on top of everything.
+                // Achievement / level-up pop-up, in the same spot.
                 if self.cfg.toasts && !self.toasts.is_empty() {
-                    let area = Rect::from_min_max(
-                        egui::pos2(full.min.x + 8.0, header.max.y + 6.0),
-                        egui::pos2(full.max.x - 8.0, header.max.y + 80.0),
-                    );
+                    let area = under;
                     let fg = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("toasts")));
                     self.draw_toast(ctx, &fg, area);
                 }
@@ -2417,9 +2484,9 @@ impl eframe::App for App {
         self.launcher_ui(ctx);
         self.rare_offer_window(ctx);
         // The overlay is its own always-on-top window while it's started.
-        if self.overlay_on {
+        if self.overlay_on && !self.ov_hidden {
             self.overlay_viewport(ctx);
-        } else if self.ov_geom.is_some() {
+        } else if !self.overlay_on && self.ov_geom.is_some() {
             self.ov_geom = None;
             self.ov_opened = None;
             self.applied_size = None;

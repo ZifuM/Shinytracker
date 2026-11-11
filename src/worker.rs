@@ -63,6 +63,8 @@ pub struct WorkerSettings {
     pub shiny_star_alert: bool,
     pub star_threshold: u32,
     pub source: CountSource,
+    /// Log folder picked by hand (None = the game's usual one).
+    pub log_dir: Option<std::path::PathBuf>,
     /// Bumped whenever regions/monitor change so the worker starts fresh.
     pub generation: u64,
 }
@@ -132,6 +134,7 @@ fn run(
     let clock = Instant::now();
     let mut logtail: Option<LogTail> = None;
     let mut last_log_try: Option<Instant> = None;
+    let mut log_dir_set: Option<std::path::PathBuf> = None;
     let mut log_battle_at: Option<Instant> = None;
 
     let send = |msg: WorkerMsg| {
@@ -156,10 +159,16 @@ fn run(
 
         // ── Game log: always followed (it reports the exact odds); it only
         // drives the counter when "count from the game log" is chosen.
+        // A different folder was picked (or cleared): start following it.
+        if log_dir_set != s.log_dir {
+            log_dir_set = s.log_dir.clone();
+            logtail = None;
+            last_log_try = None;
+        }
         if logtail.is_none() && last_log_try.map_or(true, |t| t.elapsed() > Duration::from_secs(5))
         {
             last_log_try = Some(Instant::now());
-            logtail = crate::gamelog::default_log_dir().map(LogTail::new);
+            logtail = crate::gamelog::log_dir(s.log_dir.as_deref()).map(LogTail::new);
         }
         let mut log_error = None;
         match logtail.as_mut() {
@@ -210,7 +219,7 @@ fn run(
             },
             None => {
                 log_error = Some(
-                    "Can't find Platinum Together's log folder (AppData\\Local\\PlatinumTogether\\Game\\logs)".into(),
+"Can't find Platinum Together's log folder. Pick it yourself under Counting.".into(),
                 )
             }
         }

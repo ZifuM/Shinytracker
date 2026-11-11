@@ -4,7 +4,7 @@ use super::ui_kit::{self as kit, MUTED, PillKind, CARD, CARD_HOVER, LINE, PAGE, 
 use super::{fmt_one_in, App, RunRef, Tab};
 use crate::config::{BattleType, Config, CountSource, HuntMethod};
 use crate::hotkeys::{code_for, HotAction, KeyBind, KeyBinds};
-use crate::theme::{self, GOLD, RED};
+use crate::theme::{self, GOLD};
 use eframe::egui::{self, Color32, Rect, RichText, Sense};
 use std::time::{Duration, Instant};
 
@@ -172,6 +172,19 @@ impl App {
                         kit::settings_style(ui);
                         self.sidebar(ui)
                     });
+                // The Map fills the whole pane, edge to edge, with its
+                // controls floating on top.
+                let map_full = self.setup.tab == Tab::Map
+                    && !self.setup.caught_pick
+                    && !self.setup.phase_pick
+                    && self.setup.profile_card.is_none()
+                    && self.setup.share.is_none();
+                if map_full {
+                    egui::CentralPanel::default().frame(egui::Frame::none()).show(ctx, |ui| {
+                        kit::settings_style(ui);
+                        self.page_map(ui);
+                    });
+                } else {
                 egui::CentralPanel::default()
                     .frame(egui::Frame::none().inner_margin(if kit::clean() {
                         egui::Margin {
@@ -201,9 +214,42 @@ impl App {
                         } else {
                             (None, 0)
                         };
-                        egui::ScrollArea::vertical()
+                        // Every page and tab opens at its top: one shared scroll
+                        // spot used to carry over, so a new page could open
+                        // half-way down with its tabs out of sight.
+                        let page_key = format!(
+                            "{}{}{}{}{}{}{:?}{}{}{}{}{}{:?}",
+                            self.setup.tab as u8,
+                            self.setup.hunt_tab as u8,
+                            self.setup.overlay_tab as u8,
+                            self.setup.appear_tab as u8,
+                            self.setup.adv_tab as u8,
+                            self.setup.profile_section as u8,
+                            self.setup.view_run,
+                            self.setup.run_tab as u8,
+                            self.setup.share.is_some() as u8,
+                            self.setup.profile_card.is_some() as u8,
+                            self.setup.phase_pick as u8,
+                            self.setup.caught_pick as u8,
+                            (self.setup.picking_target, self.setup.picking_also),
+                        );
+                        let key_id = egui::Id::new("settings-page-key");
+                        let last: Option<String> = ui.data(|d| d.get_temp(key_id));
+                        if last.as_deref() != Some(page_key.as_str()) {
+                            ui.data_mut(|d| d.insert_temp(key_id, page_key));
+                            // (The Pokédex keeps its own spot per entry and grid.)
+                            if last.is_some() && self.setup.tab != Tab::Pokedex {
+                                self.setup.scroll_top = true;
+                            }
+                        }
+                        let mut area = egui::ScrollArea::vertical()
                             .id_salt(("settings-page", scroll_key))
-                            .auto_shrink([false, false])
+                            .auto_shrink([false, false]);
+                        if std::mem::take(&mut self.setup.scroll_top) {
+                            area = area.vertical_scroll_offset(0.0);
+                        }
+                        let page_rect = ui.max_rect();
+                        let scrolled = area
                             .show(ui, |ui| {
                                 // Cap the page width, but never wider than the window
                                 // (set_max_width can also widen, which cut the right side off).
@@ -248,8 +294,36 @@ impl App {
                                     }
                                 }
                                 ui.add_space(24.0);
-                            });
+                            })
+                            .state
+                            .offset
+                            .y;
+                        // Far down a long page: a button back to the top, where
+                        // the page's tabs are.
+                        if scrolled > 240.0 {
+                            let size = egui::vec2(84.0, 30.0);
+                            let at = page_rect.right_bottom() - egui::vec2(size.x + 28.0, size.y + 10.0);
+                            let up = egui::Area::new(egui::Id::new("settings-to-top"))
+                                .order(egui::Order::Foreground)
+                                .fixed_pos(at)
+                                .show(ui.ctx(), |ui| {
+                                    ui.add(
+                                        egui::Button::new(RichText::new("↑  Top").size(kit::fs(12.5)).strong().color(TEXT()))
+                                            .fill(CARD_HOVER())
+                                            .stroke(egui::Stroke::new(1.0f32, LINE()))
+                                            .rounding(15.0)
+                                            .min_size(size),
+                                    )
+                                    .on_hover_text("Back to the top of the page")
+                                    .clicked()
+                                })
+                                .inner;
+                            if up {
+                                self.setup.scroll_top = true;
+                            }
+                        }
                     });
+                }
             }
             // Outline on top, like the overlay; resize grip bottom-right
             // (neither when maximized).
@@ -276,6 +350,36 @@ impl App {
                 }
                 if gr.drag_started() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(egui::viewport::ResizeDirection::SouthEast));
+                }
+                // Every edge and corner resizes too, like a normal window.
+                use egui::viewport::ResizeDirection as Dir;
+                use egui::CursorIcon as Cur;
+                let (t, c) = (5.0, 14.0);
+                let s = screen;
+                let zones = [
+                    (Rect::from_min_max(egui::pos2(s.min.x + c, s.min.y), egui::pos2(s.max.x - c, s.min.y + t)), Dir::North, Cur::ResizeVertical),
+                    (Rect::from_min_max(egui::pos2(s.min.x + c, s.max.y - t), egui::pos2(s.max.x - 16.0, s.max.y)), Dir::South, Cur::ResizeVertical),
+                    (Rect::from_min_max(egui::pos2(s.min.x, s.min.y + c), egui::pos2(s.min.x + t, s.max.y - c)), Dir::West, Cur::ResizeHorizontal),
+                    (Rect::from_min_max(egui::pos2(s.max.x - t, s.min.y + c), egui::pos2(s.max.x, s.max.y - 16.0)), Dir::East, Cur::ResizeHorizontal),
+                    (Rect::from_min_size(s.min, egui::vec2(c, t)), Dir::NorthWest, Cur::ResizeNwSe),
+                    (Rect::from_min_size(s.min, egui::vec2(t, c)), Dir::NorthWest, Cur::ResizeNwSe),
+                    (Rect::from_min_max(egui::pos2(s.max.x - c, s.min.y), egui::pos2(s.max.x, s.min.y + t)), Dir::NorthEast, Cur::ResizeNeSw),
+                    (Rect::from_min_max(egui::pos2(s.max.x - t, s.min.y), egui::pos2(s.max.x, s.min.y + c)), Dir::NorthEast, Cur::ResizeNeSw),
+                    (Rect::from_min_max(egui::pos2(s.min.x, s.max.y - t), egui::pos2(s.min.x + c, s.max.y)), Dir::SouthWest, Cur::ResizeNeSw),
+                    (Rect::from_min_max(egui::pos2(s.min.x, s.max.y - c), egui::pos2(s.min.x + t, s.max.y)), Dir::SouthWest, Cur::ResizeNeSw),
+                ];
+                for (k, (r, dir, cur)) in zones.into_iter().enumerate() {
+                    let er = egui::Area::new(egui::Id::new(("settings-edge", k)))
+                        .order(egui::Order::Foreground)
+                        .fixed_pos(r.min)
+                        .show(ctx, |ui| ui.allocate_response(r.size(), Sense::drag()))
+                        .inner;
+                    if er.hovered() || er.dragged() {
+                        ctx.set_cursor_icon(cur);
+                    }
+                    if er.drag_started() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(dir));
+                    }
                 }
             }
         }
@@ -485,7 +589,7 @@ impl App {
                         });
                     } else {
                         match std::fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|t| {
-                            serde_json::from_str::<crate::config::Config>(&t).map_err(|_| "That file isn't a Shiny Tracker backup".to_string())
+                            serde_json::from_str::<crate::config::Config>(&t).map_err(|_| "That file isn't a Companion backup".to_string())
                         }) {
                             Ok(c) => self.setup.restore_pending = Some((path, Box::new(c))),
                             Err(e) => self.setup.backup_msg = Some((false, e)),
@@ -641,7 +745,7 @@ impl App {
         kit::section(ui, "Updates");
         kit::card(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new(format!("Shiny Tracker v{}", update::VERSION)).size(kit::fs(13.5)).strong().color(TEXT()));
+                ui.label(RichText::new(format!("Poke Together Companion v{}", update::VERSION)).size(kit::fs(13.5)).strong().color(TEXT()));
                 let (text, kind) = match update::get(&self.updater) {
                     State::Idle => ("Not checked yet".to_string(), PillKind::Info),
                     State::Checking => ("Checking…".to_string(), PillKind::Info),
@@ -747,21 +851,39 @@ impl App {
                 let rect = ui.min_rect();
                 let y = ui.cursor().min.y - 18.0;
                 let right = rect.max.x - 12.0;
-                // A green light beside Shiny Hunter while the overlay runs.
+                // A chevron shows an app has pages under it, open or folded.
+                if expandable {
+                    let c = egui::pos2(right - 3.0, y - 1.0);
+                    let st = egui::Stroke::new(1.5f32, MUTED());
+                    let pts = if collapsed {
+                        [c + egui::vec2(-1.5, -3.5), c + egui::vec2(2.0, 0.0), c + egui::vec2(-1.5, 3.5)]
+                    } else {
+                        [c + egui::vec2(-3.5, -1.5), c + egui::vec2(0.0, 2.0), c + egui::vec2(3.5, -1.5)]
+                    };
+                    ui.painter().add(egui::Shape::line(pts.to_vec(), st));
+                }
+                // A green light on Shiny Hunter's icon while the overlay runs
+                // (a badge on the icon, clear of the name and the chevron).
                 if tab == Tab::Shiny && self.overlay_on {
-                    ui.painter().circle_filled(egui::pos2(right - 2.0, y), 4.0, theme::GREEN);
+                    let c = egui::pos2(rect.min.x + 27.0, y - 8.0);
+                    ui.painter().circle_filled(c, 5.0, if selected { kit::SELECTED_BG() } else { SIDEBAR() });
+                    ui.painter().circle_filled(c, 3.5, theme::GREEN);
                 }
                 r
             };
             if clicked {
                 if expandable {
-                    // Each click on an app opens or folds its list of pages.
+                    // Opening an app shows its pages; only a second click on
+                    // the app you're already on folds them away again.
                     if collapsed {
                         self.setup.nav_collapsed.retain(|t| *t != tab);
-                    } else {
+                    } else if current == tab {
                         self.setup.nav_collapsed.push(tab);
                     }
                 }
+                // Clicking the page you're on takes you back to its top
+                // (coming back to the Pokédex keeps your place in the grid).
+                self.setup.scroll_top = current == tab || tab != Tab::Pokedex;
                 self.setup.tab = tab;
                 self.setup.picking_target = false;
                 self.setup.view_run = None;
@@ -1120,7 +1242,7 @@ impl App {
                             }
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let label = if self.setup.picking_target { "Done" } else { "Change" };
+                            let label = if self.setup.picking_target { "Cancel" } else { "Change" };
                             if ui
                                 .add(
                                     egui::Button::new(RichText::new(label).size(kit::fs(13.0)))
@@ -1255,11 +1377,80 @@ impl App {
         }
     }
 
+    /// Counting: which folder the game log is read from, with a way to
+    /// pick it by hand if it isn't found.
+    fn log_folder_card(&mut self, ui: &mut egui::Ui) {
+        // Folder box answered?
+        if let Some(rx) = &self.setup.log_picker {
+            if let Ok(res) = rx.try_recv() {
+                self.setup.log_picker = None;
+                if let Some(dir) = res {
+                    self.cfg.log_dir = Some(dir.to_string_lossy().to_string());
+                    self.dirty = true;
+                    self.push_settings(true);
+                }
+            }
+        }
+        let custom = self.cfg.log_dir.clone();
+        let using = crate::gamelog::log_dir(custom.as_deref().map(std::path::Path::new));
+        let found = using.is_some();
+        // Open by default only when there's a problem to fix.
+        egui::CollapsingHeader::new(RichText::new("Game log folder").size(kit::fs(13.0)).color(TEXT()))
+            .id_salt("log-folder")
+            .default_open(!found)
+            .show(ui, |ui| {
+                kit::card(ui, |ui| {
+                    let line = match (&using, &custom) {
+                        (Some(d), Some(_)) => format!("Chosen by you: {}", d.display()),
+                        (Some(d), None) => format!("Found automatically: {}", d.display()),
+                        (None, _) => "Not found. Choose the folder that holds the game's session-….log files.".to_string(),
+                    };
+                    ui.label(RichText::new(line).size(kit::fs(12.5)).color(if found { TEXT() } else { theme::HP_YELLOW }));
+                    ui.label(
+                        RichText::new(
+                            "Normally AppData\\Local\\PlatinumTogether\\Game\\logs. If your game is installed somewhere else, pick its logs folder (or the game's own folder) here.",
+                        )
+                        .size(kit::fs(11.5))
+                        .color(MUTED()),
+                    );
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        let busy = self.setup.log_picker.is_some();
+                        if ui
+                            .add_enabled(!busy, egui::Button::new(RichText::new("Choose folder…").size(kit::fs(12.5))).fill(kit::btn_fill()))
+                            .clicked()
+                        {
+                            let start = using
+                                .clone()
+                                .or_else(dirs::data_local_dir)
+                                .unwrap_or_default();
+                            self.setup.log_picker = Some(crate::share::pick_folder(start, ui.ctx().clone()));
+                        }
+                        if custom.is_some()
+                            && ui
+                                .add_enabled(!busy, egui::Button::new(RichText::new("Find automatically").size(kit::fs(12.5))).fill(kit::btn_fill()))
+                                .on_hover_text("Forget the chosen folder and look in the usual place")
+                                .clicked()
+                        {
+                            self.cfg.log_dir = None;
+                            self.dirty = true;
+                            self.push_settings(true);
+                        }
+                        if let Some(d) = &using {
+                            if ui.add(egui::Button::new(RichText::new("Open folder").size(kit::fs(12.5))).fill(kit::btn_fill())).clicked() {
+                                crate::share::open_dir(d);
+                            }
+                        }
+                    });
+                });
+            });
+    }
+
     fn page_counting(&mut self, ui: &mut egui::Ui) {
         kit::page_header(
             ui,
             "COUNTING",
-            "Where Shiny Tracker gets your encounters from.",
+            "Where the Companion gets your encounters from.",
         );
         self.count_source_picker(ui);
         ui.add_space(4.0);
@@ -1286,6 +1477,8 @@ impl App {
             }
         };
         kit::pill(ui, &text, kind);
+        ui.add_space(10.0);
+        self.log_folder_card(ui);
         ui.add_space(14.0);
 
         kit::card(ui, |ui| {
@@ -1402,13 +1595,12 @@ impl App {
                     {
                         share_run = Some(RunRef::Current);
                     }
+                    let empty = self.run_is_empty();
                     if ui
-                        .add(egui::Button::new("Save and start new").fill(kit::btn_fill()))
-                        .on_hover_text(
-                            "Saves this run below and starts again from 0 with the same target",
-                        )
+                        .add_enabled(!empty, egui::Button::new("Save and start new").fill(kit::btn_fill()).min_size(egui::vec2(0.0, 30.0)))
+                        .on_hover_text("Saves this run below and starts again from 0 with the same target")
+                        .on_disabled_hover_text("Nothing to save yet: this run has no encounters")
                         .clicked()
-                        && !self.run_is_empty()
                     {
                         self.park_current();
                         self.start_fresh(self.cfg.target.clone());
@@ -1483,8 +1675,8 @@ impl App {
                             }
                         } else {
                             if ui
-                                .add(egui::Button::new("🗑").frame(false))
-                                .on_hover_text("Delete this run")
+                                .add(egui::Button::new("🗑").fill(kit::btn_fill()).min_size(egui::vec2(32.0, 30.0)))
+                                .on_hover_text("Delete this run (asks first)")
                                 .clicked()
                             {
                                 self.setup.confirm_delete_run = Some(r.id);
@@ -1602,41 +1794,16 @@ impl App {
         use crate::config::{OverlayModules, OverlaySize, OverlayStyle};
         kit::page_header(ui, "OVERLAY", "How the counter window looks and behaves.");
 
-        // Either / or: the modular overlay, or the original one untouched.
-        kit::card(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Overlay style").size(kit::fs(13.0)).color(TEXT()));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let mut style = self.cfg.overlay.style;
-                    if kit::segmented(
-                        ui,
-                        &mut style,
-                        &[(OverlayStyle::Legacy, "Legacy"), (OverlayStyle::Modular, "Modular")],
-                    ) {
-                        self.cfg.overlay.style = style;
-                        self.dirty = true;
-                    }
-                });
-            });
-            ui.add_space(4.0);
-            let about = if self.cfg.overlay.legacy() {
-                "The original overlay, exactly as it was. Switch to Modular to pick its sections and size."
-            } else {
-                "Turn each section on or off below and pick a size. Changes show on the overlay straight away."
-            };
-            ui.label(RichText::new(about).size(kit::fs(12.0)).color(MUTED()));
-        });
-
-        // Tabs keep the page short. Sections only exist for the modular one.
+        // Tabs first, right under the title. Sections only exist for the
+        // modular overlay.
         let legacy = self.cfg.overlay.legacy();
         if legacy && self.setup.overlay_tab == OverlayTab::Sections {
             self.setup.overlay_tab = OverlayTab::Layout;
         }
-        ui.add_space(6.0);
         let mut tab = self.setup.overlay_tab;
         let tabs: Vec<(OverlayTab, &str)> = if legacy {
             vec![
-                (OverlayTab::Layout, "Look"),
+                (OverlayTab::Layout, "Layout"),
                 (OverlayTab::Behaviour, "Behaviour"),
                 (OverlayTab::Sounds, "Sounds"),
             ]
@@ -1651,55 +1818,105 @@ impl App {
         if kit::tab_bar(ui, &mut tab, &tabs) {
             self.setup.overlay_tab = tab;
         }
-        ui.add_space(6.0);
+        ui.add_space(10.0);
 
         match self.setup.overlay_tab {
             OverlayTab::Layout => {
-                if !legacy {
-                    kit::section(ui, "Size");
-                    kit::card(ui, |ui| {
+                // One card, one setting per row: name and what it does on the
+                // left, the control on the right.
+                let row_gap = |ui: &mut egui::Ui| {
+                    ui.add_space(10.0);
+                    ui.separator();
+                    ui.add_space(10.0);
+                };
+                let label = |ui: &mut egui::Ui, title: &str, about: &str| {
+                    ui.vertical(|ui| {
+                        ui.set_max_width((ui.available_width() - 250.0).max(180.0));
+                        ui.label(RichText::new(title).size(kit::fs(13.5)).strong().color(TEXT()));
+                        ui.label(RichText::new(about).size(kit::fs(12.0)).color(MUTED()));
+                    });
+                };
+                kit::card(ui, |ui| {
+                    // Style
+                    ui.horizontal(|ui| {
+                        label(
+                            ui,
+                            "Style",
+                            if legacy {
+                                "Legacy is the original overlay, exactly as it was. Modular lets you pick its sections and size."
+                            } else {
+                                "Modular lets you pick sections and a size. Legacy is the original overlay, exactly as it was."
+                            },
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let mut style = self.cfg.overlay.style;
+                            if kit::segmented(ui, &mut style, &[(OverlayStyle::Legacy, "Legacy"), (OverlayStyle::Modular, "Modular")]) {
+                                self.cfg.overlay.style = style;
+                                self.dirty = true;
+                            }
+                        });
+                    });
+                    if !legacy {
+                        // Size
+                        row_gap(ui);
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Size").size(kit::fs(13.0)).color(TEXT()));
+                            let about = match self.cfg.overlay.size {
+                                OverlaySize::Full => "The usual size. It grows and shrinks to fit the sections you turn on.",
+                                OverlaySize::Compact => "Small and narrow: just the sprites and the counter. Caught! and alerts still pop up when needed.",
+                                OverlaySize::Bar => "One slim line: target, count and odds, plus luck, milestone, session, pace, streak and buttons if they're on.",
+                            };
+                            label(ui, "Size", about);
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 let mut size = self.cfg.overlay.size;
                                 if kit::segmented(
                                     ui,
                                     &mut size,
-                                    &[
-                                        (OverlaySize::Bar, "Bar"),
-                                        (OverlaySize::Compact, "Compact"),
-                                        (OverlaySize::Full, "Full"),
-                                    ],
+                                    &[(OverlaySize::Bar, "Bar"), (OverlaySize::Compact, "Compact"), (OverlaySize::Full, "Full")],
                                 ) {
                                     self.cfg.overlay.size = size;
                                     self.dirty = true;
                                 }
                             });
                         });
-                        ui.add_space(4.0);
-                        let about = match self.cfg.overlay.size {
-                        OverlaySize::Full => "The usual size. The window grows and shrinks to fit the sections you turn on.",
-                        OverlaySize::Compact => "Small and narrow: just the sprites and the counter. The other sections are left out (Caught! and alerts still pop up when needed).",
-                        OverlaySize::Bar => "One slim line with your target, count and odds. Luck, next milestone, session, pace, streak and buttons join it if they're on; the rest are left out.",
-                    };
-                        ui.label(RichText::new(about).size(kit::fs(12.0)).color(MUTED()));
-                    });
-                    kit::section(ui, "Look");
-                }
-                kit::card(ui, |ui| {
-                    ui.label(RichText::new("Background opacity").size(kit::fs(13.0)).color(TEXT()));
-                    if !self.cfg.overlay.legacy() {
-                        ui.label(
-                            RichText::new("Fade the panel so the game shows through.")
-                                .size(kit::fs(12.0))
-                                .color(MUTED()),
-                        );
+                        // Liquid layout (Full only)
+                        if self.cfg.overlay.size == OverlaySize::Full {
+                            row_gap(ui);
+                            self.dirty |= kit::toggle_row(
+                                ui,
+                                "Liquid layout (resizable)",
+                                "Drag the overlay's right edge to make it wider or narrower; the sections stretch to fit.",
+                                &mut self.cfg.liquid,
+                            );
+                            if self.cfg.liquid {
+                                ui.add_space(6.0);
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(format!("Width {:.0}. Drag the overlay's right edge to change it.", self.cfg.liquid_width))
+                                            .size(kit::fs(12.0))
+                                            .color(MUTED()),
+                                    );
+                                    if ui.add(egui::Button::new(RichText::new("Reset width").size(kit::fs(12.0))).fill(kit::btn_fill())).clicked() {
+                                        self.cfg.liquid_width = super::FULL_SIZE[0];
+                                        self.dirty = true;
+                                    }
+                                });
+                            }
+                        }
                     }
+                    // Opacity
+                    row_gap(ui);
+                    ui.label(RichText::new("Background opacity").size(kit::fs(13.5)).strong().color(TEXT()));
+                    ui.label(RichText::new("Fade the panel so the game shows through.").size(kit::fs(12.0)).color(MUTED()));
                     ui.add_space(4.0);
                     ui.spacing_mut().slider_width = ui.available_width() - 70.0;
-                    let lowest = if self.cfg.overlay.legacy() { 0.4 } else { 0.1 };
+                    let lowest = if legacy { 0.4 } else { 0.1 };
                     self.dirty |= ui
-                        .add(egui::Slider::new(&mut self.cfg.opacity, lowest..=1.0).show_value(true))
+                        .add(
+                            egui::Slider::new(&mut self.cfg.opacity, lowest..=1.0)
+                                .show_value(true)
+                                .custom_formatter(|v, _| format!("{:.0}%", v * 100.0))
+                                .custom_parser(|t| t.trim().trim_end_matches('%').trim().parse::<f64>().ok().map(|v| v / 100.0)),
+                        )
                         .changed();
                 });
             }
@@ -1957,6 +2174,15 @@ impl App {
                             self.dirty |= kit::toggle_row(ui, "Click-through", &help, &mut self.cfg.overlay.click_through);
                         });
                     }
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+                    self.dirty |= kit::toggle_row(
+                        ui,
+                        "Flash when a target is spotted",
+                        "The overlay's border blinks gold for a moment (with SPOTTED!) each time one of your targets turns up in a battle. Off: no flashing; a real shiny alert still flashes.",
+                        &mut self.cfg.spot_flash,
+                    );
                     ui.add_space(8.0);
                     ui.separator();
                     ui.add_space(8.0);
@@ -2248,7 +2474,7 @@ impl App {
                         Color32::WHITE,
                     );
                     ui.label(
-                        RichText::new(if kit::clean() { "Welcome to Shiny Tracker" } else { "WELCOME TO SHINY TRACKER" })
+                        RichText::new(if kit::clean() { "Welcome to Poke Together Companion" } else { "WELCOME TO THE COMPANION" })
                             .font(if kit::clean() { crate::fonts::sans_bold_font(20.0) } else { kit::display_font(11.0) })
                             .color(TEXT()),
                     );

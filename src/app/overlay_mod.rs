@@ -14,6 +14,11 @@ use std::time::{Duration, Instant};
 
 const COMPACT_W: f32 = 236.0;
 const BAR_H: f32 = 50.0;
+/// Narrowest and widest the liquid layout goes.
+const LIQUID_MIN: f32 = 236.0;
+const LIQUID_MAX: f32 = 640.0;
+/// Room under the overlay for a notice or pop-up card.
+const BELOW_H: f32 = 96.0;
 const GAP: f32 = 8.0;
 const XP_BLUE: Color32 = Color32::from_rgb(90, 170, 255);
 const FLAME: Color32 = Color32::from_rgb(255, 140, 40);
@@ -496,7 +501,7 @@ impl App {
                 self.setup.search.clear();
                 self.show_setup = true;
             }
-            if ui.put(at(x_a, 1.0), egui::Button::new("✕").fill(theme::PLATE())).on_hover_text("Not a shiny after all").clicked() {
+            if ui.put(at(x_a, 1.0), egui::Button::new("✖").fill(theme::PLATE())).on_hover_text("Not a shiny after all").clicked() {
                 self.confirm_caught = false;
             }
         } else {
@@ -662,7 +667,28 @@ impl App {
             } else {
                 self.modular_ui(ctx);
             }
+            self.clip_overlay(ctx);
         });
+    }
+
+    /// Cut the overlay window to the shape that was just drawn, so nothing of
+    /// the window shows past the rounded corners (on some PCs the see-through
+    /// corners come out black).
+    fn clip_overlay(&mut self, ctx: &egui::Context) {
+        let Some(hwnd) = self.overlay_keeper else { return };
+        let ppp = ctx.pixels_per_point();
+        let px = |v: f32| (v * ppp).round() as i32;
+        // One pixel proud of the drawn edge, so the outline is never shaved.
+        let key: Vec<[i32; 5]> = self
+            .ov_shape
+            .iter()
+            .map(|r| [px(r[0]) - 1, px(r[1]) - 1, px(r[2]) + 2, px(r[3]) + 2, px(r[4]) + 1])
+            .collect();
+        if self.ov_clip.as_ref().is_some_and(|(h, k)| *h == hwnd && *k == key) {
+            return;
+        }
+        crate::topmost::clip_window(hwnd, &key);
+        self.ov_clip = Some((hwnd, key));
     }
 
     // ───────────────────────────── full / compact ─────────────────────────────
@@ -701,7 +727,15 @@ impl App {
                 best: false,
             };
         }
-        let width = if compact { COMPACT_W } else { FULL_SIZE[0] };
+        // Liquid layout: the full overlay is as wide as the user dragged it.
+        let liquid = self.cfg.liquid && !compact;
+        let width = if compact {
+            COMPACT_W
+        } else if liquid {
+            self.cfg.liquid_width.clamp(LIQUID_MIN, LIQUID_MAX)
+        } else {
+            FULL_SIZE[0]
+        };
         let st = self.ov_stats();
         egui::CentralPanel::default().frame(egui::Frame::none()).show(ctx, |ui| {
             let win = ui.max_rect();
@@ -999,10 +1033,6 @@ impl App {
                 y += 2.0;
             }
 
-            // Room for notices / pop-ups, which sit over the top of the body.
-            if !self.notices.is_empty() || self.toasts_pending() {
-                y = y.max(header.max.y + 100.0);
-            }
             let full = Rect::from_min_max(full_w.min, egui::pos2(full_w.max.x, y.max(header.max.y + 24.0)));
 
             let border = if (self.shiny_alert.is_some() || target_flash) && blink { GOLD } else { OUTLINE };
@@ -1020,17 +1050,41 @@ impl App {
                 egui::Shape::rect_stroke(full, 12.0, Stroke::new(if border == GOLD { 2.5f32 } else { 1.5f32 }, border)),
             );
 
-            if !self.notices.is_empty() {
-                let area = Rect::from_min_max(egui::pos2(full.min.x + 8.0, header.max.y + 6.0), egui::pos2(full.max.x - 8.0, header.max.y + 100.0));
-                self.draw_notice(ui, ctx, area);
-            }
-            if self.cfg.toasts && !self.toasts.is_empty() {
-                let area = Rect::from_min_max(egui::pos2(full.min.x + 8.0, header.max.y + 6.0), egui::pos2(full.max.x - 8.0, header.max.y + 80.0));
-                let fg = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("toasts")));
-                self.draw_toast(ctx, &fg, area);
+            // Notices and pop-ups hover just under the overlay, never over it.
+            let below = !self.notices.is_empty() || self.toasts_pending();
+            self.ov_shape.clear();
+            self.ov_shape.push([full.min.x, full.min.y, full.width(), full.height(), 12.0]);
+            if below {
+                let area = Rect::from_min_max(egui::pos2(full.min.x, full.max.y + 6.0), egui::pos2(full.max.x, full.max.y + 6.0 + BELOW_H - 8.0));
+                if !self.notices.is_empty() {
+                    self.draw_notice(ui, ctx, area);
+                }
+                if self.cfg.toasts && !self.toasts.is_empty() {
+                    let fg = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("toasts")));
+                    self.draw_toast(ctx, &fg, area);
+                }
+                self.ov_shape.push([full.min.x, full.max.y - 14.0, full.width(), BELOW_H + 14.0, 10.0]);
             }
 
-            self.ov_size = Some([width, (full.max.y - win.min.y + 1.0).ceil()]);
+            // Liquid layout: drag the right edge to change the width.
+            if liquid {
+                let grip = Rect::from_min_max(egui::pos2(full.max.x - 7.0, header.max.y + 2.0), egui::pos2(full.max.x, full.max.y - 12.0));
+                let gr = ui.interact(grip, ui.id().with("liquid-edge"), Sense::drag());
+                if gr.hovered() || gr.dragged() {
+                    ctx.set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                    let x = full.max.x - 3.0;
+                    p.line_segment([egui::pos2(x, grip.center().y - 16.0), egui::pos2(x, grip.center().y + 16.0)], Stroke::new(3.0f32, GOLD));
+                }
+                if gr.dragged() {
+                    self.cfg.liquid_width = (width + gr.drag_delta().x).clamp(LIQUID_MIN, LIQUID_MAX);
+                }
+                if gr.drag_stopped() {
+                    self.dirty = true;
+                }
+                gr.on_hover_text("Drag to resize the overlay");
+            }
+
+            self.ov_size = Some([width, (full.max.y - win.min.y + 1.0 + if below { BELOW_H + 6.0 } else { 0.0 }).ceil()]);
         });
     }
 
@@ -1246,7 +1300,7 @@ impl App {
                         self.show_setup = true;
                     }
                     x += 58.0;
-                    if ui.put(btn_at(x, 28.0), egui::Button::new("✕").fill(theme::PLATE())).on_hover_text("Not a shiny after all").clicked() {
+                    if ui.put(btn_at(x, 28.0), egui::Button::new("✖").fill(theme::PLATE())).on_hover_text("Not a shiny after all").clicked() {
                         self.confirm_caught = false;
                     }
                     x += 38.0;
@@ -1316,7 +1370,10 @@ impl App {
 
             // Notices and pop-ups get a card under the bar while they show.
             let mut h = BAR_H + 2.0;
+            self.ov_shape.clear();
+            self.ov_shape.push([bar.min.x, bar.min.y, bar.width(), bar.height(), 12.0]);
             if !self.notices.is_empty() || self.toasts_pending() {
+                self.ov_shape.push([left, bar.max.y - 14.0, width.max(270.0) - 2.0, 118.0, 10.0]);
                 let area = Rect::from_min_max(egui::pos2(left, bar.max.y + 6.0), egui::pos2(left + width.max(270.0) - 2.0, bar.max.y + 100.0));
                 if !self.notices.is_empty() {
                     self.draw_notice(ui, ctx, area);

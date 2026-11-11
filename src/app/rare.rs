@@ -189,8 +189,15 @@ impl App {
                         open = s.wiki_id.clone();
                     }
                     ui.vertical(|ui| {
+                        // Keep the text clear of the button: anything too long
+                        // is cut with "…" (hover shows it in full).
+                        ui.set_max_width((row_w - 44.0 - 124.0).max(60.0));
                         if ui
-                            .add(egui::Label::new(RichText::new(s.species.name).size(kit::fs(12.5)).strong().color(TEXT())).sense(Sense::click()))
+                            .add(
+                                egui::Label::new(RichText::new(s.species.name).size(kit::fs(12.5)).strong().color(TEXT()))
+                                    .truncate()
+                                    .sense(Sense::click()),
+                            )
                             .on_hover_text("Open in the Pokédex")
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
                             .clicked()
@@ -198,10 +205,11 @@ impl App {
                             open = s.wiki_id.clone();
                         }
                         let tiles = if s.tiles > 1 { format!("  ·  {} spots", s.tiles) } else { String::new() };
-                        ui.label(RichText::new(format!("{}{tiles}", s.place)).size(kit::fs(11.0)).color(MUTED()));
+                        let place = format!("{}{tiles}", s.place);
+                        ui.add(egui::Label::new(RichText::new(&place).size(kit::fs(11.0)).color(MUTED())).truncate()).on_hover_text(&place);
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Go to").on_hover_text("Show it on the Map").clicked() {
+                        if ui.button("Show on map").on_hover_text("Open the Map zoomed in on this spot").clicked() {
                             go = Some(s.clone());
                         }
                     });
@@ -215,17 +223,6 @@ impl App {
         if let Some(s) = go {
             self.go_to_rare(&s);
         }
-    }
-
-    /// Side panel beside the Map.
-    pub(super) fn rare_panel(&mut self, ui: &mut egui::Ui, spots: &[RareSpot], height: f32) {
-        kit::card(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(RichText::new(format!("Sparkly grass today ({})", spots.len())).size(kit::fs(13.5)).strong().color(TEXT()));
-            ui.label(RichText::new("Pokémon met on sparkly grass, from your game log.").size(kit::fs(11.0)).color(MUTED()));
-            ui.add_space(6.0);
-            self.rare_list(ui, spots, (height - 90.0).max(120.0));
-        });
     }
 
     /// Home's "Rare grass today" section.
@@ -247,7 +244,23 @@ impl App {
                         .color(MUTED()),
                 );
             } else {
-                self.rare_list(ui, &spots, 320.0);
+                // A short list that grows with the page (no scroll box inside
+                // the page's own scrolling); the Map has the full list.
+                let shown = spots.len().min(6);
+                self.rare_list(ui, &spots[..shown], f32::INFINITY);
+                if spots.len() > shown {
+                    ui.add_space(4.0);
+                    if ui
+                        .add(
+                            egui::Button::new(RichText::new(format!("See all {} on the Map", spots.len())).size(kit::fs(12.5)))
+                                .fill(kit::btn_fill()),
+                        )
+                        .clicked()
+                    {
+                        self.setup.tab = Tab::Map;
+                        self.setup.scroll_top = true;
+                    }
+                }
             }
         });
     }

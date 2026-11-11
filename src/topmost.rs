@@ -267,6 +267,43 @@ mod imp {
         *done = true;
     }
 
+    #[link(name = "gdi32")]
+    extern "system" {
+        fn CreateRoundRectRgn(x1: i32, y1: i32, x2: i32, y2: i32, w: i32, h: i32) -> *mut c_void;
+        fn CombineRgn(dst: *mut c_void, a: *mut c_void, b: *mut c_void, mode: i32) -> i32;
+        fn DeleteObject(o: *mut c_void) -> i32;
+    }
+    #[link(name = "user32")]
+    extern "system" {
+        fn SetWindowRgn(h: Hwnd, rgn: *mut c_void, redraw: i32) -> i32;
+    }
+
+    /// Cut a window to a set of rounded boxes ([x, y, w, h, radius] in
+    /// pixels). No boxes: the whole window shows again.
+    pub fn clip_window(hwnd: isize, boxes: &[[i32; 5]]) {
+        const RGN_OR: i32 = 2;
+        unsafe {
+            if IsWindow(hwnd as Hwnd) == 0 {
+                return;
+            }
+            let mut all: *mut c_void = std::ptr::null_mut();
+            for b in boxes {
+                let r = CreateRoundRectRgn(b[0], b[1], b[0] + b[2] + 1, b[1] + b[3] + 1, b[4] * 2, b[4] * 2);
+                if r.is_null() {
+                    continue;
+                }
+                if all.is_null() {
+                    all = r;
+                } else {
+                    CombineRgn(all, all, r, RGN_OR);
+                    DeleteObject(r);
+                }
+            }
+            // Windows owns the region from here on.
+            SetWindowRgn(hwnd as Hwnd, all, 1);
+        }
+    }
+
     /// One of our own windows, found by its exact title.
     pub fn own_window_titled(title: &str) -> Option<isize> {
         struct Find {
@@ -541,6 +578,7 @@ mod imp {
     pub fn round_settings_corners(done: &mut bool) {
         *done = true;
     }
+    pub fn clip_window(_hwnd: isize, _boxes: &[[i32; 5]]) {}
     pub fn game_running() -> bool {
         true
     }
@@ -615,6 +653,11 @@ pub fn point_on_screen(pos: [f32; 2], ppp: f32) -> bool {
 /// Whether the Platinum Together game window is open.
 pub fn game_running() -> bool {
     imp::game_running()
+}
+
+/// Cut a window to a set of rounded boxes ([x, y, w, h, radius], pixels).
+pub fn clip_window(hwnd: isize, boxes: &[[i32; 5]]) {
+    imp::clip_window(hwnd, boxes)
 }
 
 /// Round the settings window's corners (Windows 11). Call each frame while

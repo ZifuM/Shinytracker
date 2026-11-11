@@ -15,18 +15,29 @@ pub(super) fn is_shiny_tab(t: Tab) -> bool {
 impl App {
     pub(super) fn start_overlay(&mut self) {
         self.overlay_on = true;
+        self.ov_hidden = false;
         self.cfg.mini = false;
         self.dirty = true;
     }
 
     pub(super) fn stop_overlay(&mut self) {
         self.overlay_on = false;
+        self.ov_hidden = false;
         self.save_now();
     }
 
     /// The big Start / Stop button.
     fn overlay_button(&mut self, ui: &mut egui::Ui, size: egui::Vec2) {
-        if self.overlay_on {
+        if self.overlay_on && self.ov_hidden {
+            let b = egui::Button::new(RichText::new("▶  Show overlay").size(kit::fs(14.0)).strong().color(theme::button_ink()))
+                .min_size(size);
+            if kit::accent_button(ui, b, kit::primary_round())
+                .on_hover_text("The overlay is minimised and still counting. Bring it back.")
+                .clicked()
+            {
+                self.ov_hidden = false;
+            }
+        } else if self.overlay_on {
             let b = egui::Button::new(RichText::new("■  Stop overlay").size(kit::fs(14.0)).strong().color(TEXT()))
                 .fill(kit::btn_fill())
                 .rounding(kit::btn_round(8.0))
@@ -46,9 +57,21 @@ impl App {
         }
     }
 
+    /// Jump straight to the target picker on the Hunt page.
+    pub(super) fn open_target_picker(&mut self) {
+        self.setup.tab = Tab::Hunt;
+        self.setup.hunt_tab = super::settings::HuntTab::Target;
+        self.setup.picking_target = true;
+        self.setup.search.clear();
+        self.setup.nav_collapsed.retain(|t| *t != Tab::Shiny);
+        self.setup.scroll_top = true;
+    }
+
     /// "Running" / "Stopped" with a light.
     fn overlay_status(&self, ui: &mut egui::Ui) {
-        let (c, t) = if self.overlay_on {
+        let (c, t) = if self.overlay_on && self.ov_hidden {
+            (theme::HP_YELLOW, "Overlay minimised, still counting")
+        } else if self.overlay_on {
             (theme::GREEN, "Overlay running")
         } else {
             (MUTED(), "Overlay stopped")
@@ -154,6 +177,9 @@ impl App {
                 2 => Tab::Map,
                 _ => Tab::Shiny,
             };
+            if t == 0 {
+                self.setup.nav_collapsed.retain(|x| *x != Tab::Shiny);
+            }
         }
 
         kit::section(ui, "Today");
@@ -171,12 +197,38 @@ impl App {
         ];
         let cols = if avail >= 760.0 { 5.0 } else { 3.0 };
         let sw = ((avail - 8.0 * (cols - 1.0)) / cols).floor();
+        let mut open_stat: Option<usize> = None;
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
-            for (label, value) in &stats {
-                kit::stat(ui, sw, label, value);
+            for (i, (label, value)) in stats.iter().enumerate() {
+                let tip = match i {
+                    0 | 1 => "Open this hunt's stats",
+                    2 => "Open your goals",
+                    _ => "Open your Trainer Profile",
+                };
+                if kit::stat_button(ui, sw, label, value, tip) {
+                    open_stat = Some(i);
+                }
             }
         });
+        if let Some(i) = open_stat {
+            self.setup.scroll_top = true;
+            match i {
+                0 | 1 => {
+                    self.setup.tab = Tab::Runs;
+                    self.setup.view_run = Some(super::RunRef::Current);
+                    self.setup.nav_collapsed.retain(|t| *t != Tab::Shiny);
+                }
+                2 => {
+                    self.setup.tab = Tab::Profile;
+                    self.setup.profile_section = super::trainer::ProfileSection::Goals;
+                }
+                _ => {
+                    self.setup.tab = Tab::Profile;
+                    self.setup.profile_section = super::trainer::ProfileSection::Overview;
+                }
+            }
+        }
 
         kit::section(ui, "Sparkly grass today");
         self.rare_home(ui);
@@ -187,7 +239,9 @@ impl App {
         ui.horizontal(|ui| {
             ui.label(RichText::new("✨ Shiny Hunter").size(kit::fs(15.0)).strong().color(TEXT()));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if self.overlay_on {
+                if self.overlay_on && self.ov_hidden {
+                    kit::pill(ui, "Minimised", PillKind::Warn).on_hover_text("The overlay is hidden but still counting");
+                } else if self.overlay_on {
                     kit::pill(ui, "Running", PillKind::Ok);
                 } else {
                     kit::pill(ui, "Stopped", PillKind::Info);
@@ -213,9 +267,17 @@ impl App {
             self.overlay_button(ui, egui::vec2(150.0, 32.0));
             if ui
                 .add(egui::Button::new(RichText::new("Open").size(kit::fs(13.0))).fill(kit::btn_fill()).min_size(egui::vec2(70.0, 32.0)))
+                .on_hover_text("Open Shiny Hunter")
                 .clicked()
             {
                 ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("home-open"), 0u8));
+            }
+            if ui
+                .add(egui::Button::new(RichText::new("Change target").size(kit::fs(13.0))).fill(kit::btn_fill()).min_size(egui::vec2(0.0, 32.0)))
+                .on_hover_text("Pick a different Pokémon to hunt")
+                .clicked()
+            {
+                self.open_target_picker();
             }
         });
     }
@@ -241,7 +303,7 @@ impl App {
                         }
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.add(egui::Button::new("✕").frame(false)).on_hover_text("Dismiss").clicked() {
+                        if ui.add(egui::Button::new("✖").frame(false)).on_hover_text("Dismiss").clicked() {
                             dismiss = Some(n.id);
                         }
                         if let Some((label, a)) = n.action {
@@ -293,6 +355,14 @@ impl App {
                     );
                     let (odds, col) = self.odds_line();
                     ui.label(RichText::new(odds).size(kit::fs(12.0)).color(col));
+                    ui.add_space(4.0);
+                    if ui
+                        .add(egui::Button::new(RichText::new("Change target").size(kit::fs(12.5))).fill(kit::btn_fill()))
+                        .on_hover_text("Pick a different Pokémon to hunt")
+                        .clicked()
+                    {
+                        self.open_target_picker();
+                    }
                 });
                 // Button and status flush right, stacked.
                 ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
@@ -325,7 +395,7 @@ impl App {
             let key = self.cfg.keybinds.hint(crate::hotkeys::HotAction::ToggleHide);
             ui.label(
                 RichText::new(format!(
-                    "The overlay's ✕ closes just the overlay. The hide hotkey{key} opens it again, or shrinks it to a badge while it's open."
+                    "The overlay's ✖ closes just the overlay. The hide hotkey{key} opens it again, or shrinks it to a badge while it's open."
                 ))
                 .size(kit::fs(11.5))
                 .color(MUTED()),
