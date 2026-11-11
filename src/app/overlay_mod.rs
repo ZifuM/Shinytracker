@@ -19,6 +19,8 @@ const LIQUID_MIN: f32 = 236.0;
 const LIQUID_MAX: f32 = 640.0;
 /// Room under the overlay for a notice or pop-up card.
 const BELOW_H: f32 = 96.0;
+/// Width of a pop-up under the bar layout.
+const BAR_POPUP_W: f32 = 250.0;
 const GAP: f32 = 8.0;
 const XP_BLUE: Color32 = Color32::from_rgb(90, 170, 255);
 const FLAME: Color32 = Color32::from_rgb(255, 140, 40);
@@ -637,7 +639,16 @@ impl App {
     pub(super) fn overlay_viewport(&mut self, ctx: &egui::Context) {
         let want = self.overlay_size();
         if self.ov_geom.is_none() {
-            let pos = self.cfg.window_pos.unwrap_or([24.0, 120.0]);
+            let key = self.overlay_layout_key();
+            // Older settings kept one spot for every layout.
+            if self.cfg.overlay_positions.is_empty() {
+                if let Some(p) = self.cfg.window_pos {
+                    self.cfg.overlay_positions.insert(key.to_string(), p);
+                }
+            }
+            let saved = self.cfg.overlay_positions.get(key).copied();
+            let pos = crate::topmost::fit_on_screen(saved, want, ctx.pixels_per_point(), true);
+            self.ov_layout = Some(key);
             self.ov_geom = Some((pos, want));
             self.applied_size = Some(want);
             self.applied_passthrough = None;
@@ -669,6 +680,23 @@ impl App {
             }
             self.clip_overlay(ctx);
         });
+    }
+
+    /// The window shape a notice or pop-up card under the overlay needs:
+    /// just the card itself, so the space around it stays see-through.
+    pub(super) fn popup_shape(&self, area: Rect) -> [f32; 5] {
+        let h = match self.notices.first() {
+            Some(n) if n.progress.is_some() || n.action.is_some() => 84.0,
+            Some(_) => 64.0,
+            None => {
+                // A pop-up opening or closing: just the part that's showing.
+                if let Some(r) = self.toast_now(area) {
+                    return [r.min.x, r.min.y, r.width(), r.height() + 1.0, 10.0_f32.min(r.height() / 2.0)];
+                }
+                64.0
+            }
+        };
+        [area.min.x, area.min.y, area.width(), h + 1.0, 10.0]
     }
 
     /// Cut the overlay window to the shape that was just drawn, so nothing of
@@ -768,16 +796,54 @@ impl App {
                 theme::plate(&p, plate, theme::PLATE());
                 match &target {
                     Some(sp) => {
-                        let (name, size) = if multi {
-                            (self.targets_title().unwrap_or_default().to_uppercase(), 7.5)
-                        } else {
-                            (sp.name.to_uppercase(), 10.0)
+                        // What sits on the right of the plate, so the name can
+                        // be fitted into what's left.
+                        let watch = if !target_flash && !compact { self.target_watch() } else { None };
+                        let right_txt = match (&watch, target_flash) {
+                            (_, true) => Some(("SPOTTED!".to_string(), 7.0)),
+                            (Some(w), _) if w.dry => Some((format!("NOT SEEN IN {}", theme::thousands(w.since.unwrap_or(0))), 6.5)),
+                            (Some(w), _) => Some((format!("SEEN {}", theme::thousands(w.seen)), 6.5)),
+                            _ => None,
                         };
-                        outlined_text(&p, plate.left_center() + egui::vec2(16.0, 1.0), Align2::LEFT_CENTER, &name, size, Color32::WHITE);
+                        let text_w = |t: &str, size: f32| p.layout_no_wrap(t.to_string(), crate::fonts::pixel_font(size), Color32::WHITE).size().x;
+                        let right_w = right_txt.as_ref().map_or(0.0, |(t, sz)| text_w(t, *sz) + 18.0);
+                        let room = plate.width() - 16.0 - 12.0 - right_w;
+                        // Longest wording that fits: every name, then the
+                        // first name + "N more", then smaller text.
+                        let (name, size) = if multi {
+                            let names: Vec<&str> = all.iter().map(|s| s.name).collect();
+                            let n = names.len();
+                            let mut options: Vec<String> = vec![names.join(" + ")];
+                            if n > 2 {
+                                options.push(format!("{} + {} + {} more", names[0], names[1], n - 2));
+                            }
+                            options.push(format!("{} + {} more", names[0], n - 1));
+                            let mut pick = None;
+                            'fit: for size in [8.0, 7.0, 6.0] {
+                                for o in &options {
+                                    let o = o.to_uppercase();
+                                    if text_w(&o, size) <= room {
+                                        pick = Some((o, size));
+                                        break 'fit;
+                                    }
+                                }
+                            }
+                            pick.unwrap_or_else(|| (format!("{} +{}", names[0], n - 1).to_uppercase(), 6.0))
+                        } else {
+                            let nm = sp.name.to_uppercase();
+                            let size = if text_w(&nm, 10.0) <= room { 10.0 } else { 8.0 };
+                            (nm, size)
+                        };
+                        let name_clip = p.with_clip_rect(Rect::from_min_max(plate.min, egui::pos2(plate.max.x - right_w, plate.max.y)));
+                        outlined_text(&name_clip, plate.left_center() + egui::vec2(16.0, 1.0), Align2::LEFT_CENTER, &name, size, Color32::WHITE);
+                        if multi {
+                            let full = all.iter().map(|s| s.name).collect::<Vec<_>>().join(", ");
+                            ui.interact(plate, ui.id().with("target-plate-names"), Sense::hover()).on_hover_text(format!("Hunting {full}"));
+                        }
                         if target_flash && blink {
                             outlined_text(&p, plate.right_center() - egui::vec2(16.0, -1.0), Align2::RIGHT_CENTER, "SPOTTED!", 7.0, GOLD);
                         } else if !target_flash && !compact {
-                            if let Some(w) = self.target_watch() {
+                            if let Some(w) = watch {
                                 let (txt, col) = if w.dry {
                                     (format!("NOT SEEN IN {}", theme::thousands(w.since.unwrap_or(0))), theme::HP_YELLOW)
                                 } else {
@@ -1059,11 +1125,12 @@ impl App {
                 if !self.notices.is_empty() {
                     self.draw_notice(ui, ctx, area);
                 }
-                if self.cfg.toasts && !self.toasts.is_empty() {
+                if !self.toasts.is_empty() {
                     let fg = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("toasts")));
                     self.draw_toast(ctx, &fg, area);
                 }
-                self.ov_shape.push([full.min.x, full.max.y - 14.0, full.width(), BELOW_H + 14.0, 10.0]);
+                let shape = self.popup_shape(area);
+                self.ov_shape.push(shape);
             }
 
             // Liquid layout: drag the right edge to change the width.
@@ -1373,18 +1440,21 @@ impl App {
             self.ov_shape.clear();
             self.ov_shape.push([bar.min.x, bar.min.y, bar.width(), bar.height(), 12.0]);
             if !self.notices.is_empty() || self.toasts_pending() {
-                self.ov_shape.push([left, bar.max.y - 14.0, width.max(270.0) - 2.0, 118.0, 10.0]);
-                let area = Rect::from_min_max(egui::pos2(left, bar.max.y + 6.0), egui::pos2(left + width.max(270.0) - 2.0, bar.max.y + 100.0));
+                // A compact card pinned under the bar's right end.
+                let right = bar.max.x.max(left + BAR_POPUP_W);
+                let area = Rect::from_min_max(egui::pos2(right - BAR_POPUP_W, bar.max.y + 6.0), egui::pos2(right, bar.max.y + 100.0));
+                let shape = self.popup_shape(area);
+                self.ov_shape.push(shape);
                 if !self.notices.is_empty() {
                     self.draw_notice(ui, ctx, area);
                 }
-                if self.cfg.toasts && !self.toasts.is_empty() {
+                if !self.toasts.is_empty() {
                     let fg = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("toasts")));
                     self.draw_toast(ctx, &fg, area);
                 }
                 h = BAR_H + 104.0;
             }
-            let w = if h > BAR_H + 2.0 { width.max(270.0) } else { width };
+            let w = if h > BAR_H + 2.0 { width.max(BAR_POPUP_W + 2.0) } else { width };
             self.ov_size = Some([w, h]);
         });
     }

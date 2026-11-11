@@ -12,12 +12,47 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
 const TOAST_SECS: f32 = 4.8;
+/// How long a pop-up takes to open and to close.
+const TOAST_IN: f32 = 0.32;
+const TOAST_OUT: f32 = 0.26;
+
+/// Size (0..1 of full) and content opacity of a pop-up `t` seconds in:
+/// it springs open from a thin strip, settles, then folds away at the end.
+fn toast_anim(t: f32) -> (f32, f32) {
+    let ease_out_back = |x: f32| {
+        let c1 = 1.4;
+        let c3 = c1 + 1.0;
+        1.0 + c3 * (x - 1.0).powi(3) + c1 * (x - 1.0).powi(2)
+    };
+    let ease_in_cubic = |x: f32| x * x * x;
+    if t < TOAST_IN {
+        let x = (t / TOAST_IN).clamp(0.0, 1.0);
+        let s = 0.15 + 0.85 * ease_out_back(x);
+        (s.min(1.03), ((x - 0.35) / 0.65).clamp(0.0, 1.0))
+    } else if t > TOAST_SECS - TOAST_OUT {
+        let x = ((t - (TOAST_SECS - TOAST_OUT)) / TOAST_OUT).clamp(0.0, 1.0);
+        (1.0 - 0.85 * ease_in_cubic(x), (1.0 - x * 2.0).clamp(0.0, 1.0))
+    } else {
+        (1.0, 1.0)
+    }
+}
+
+/// The pop-up card at `scale`: full width always, opening and closing in
+/// height around its middle (like a blind).
+fn toast_rect(area: Rect, scale: f32) -> Rect {
+    let full = Rect::from_min_size(area.min, egui::vec2(area.width(), 64.0));
+    let h = (full.height() * scale).max(4.0);
+    Rect::from_center_size(full.center(), egui::vec2(full.width(), h))
+}
 
 pub(super) enum ToastKind {
     Achievement { name: String, desc: String, tier: Tier },
     LevelUp { level: u32 },
     Welcome { count: usize, level: u32 },
     Goal { title: String, xp: u64, weekly: bool },
+    /// 1,000 encounters, 1× / 2× the odds… (its own setting, not the
+    /// achievement pop-ups one).
+    Milestone { text: String },
 }
 
 pub(super) struct Toast {
@@ -229,6 +264,13 @@ impl App {
         }
     }
 
+    /// A milestone pop-up, shown like the others, just under the overlay.
+    pub(super) fn push_milestone(&mut self, text: String) {
+        if self.toasts.len() < 8 {
+            self.toasts.push_back(Toast { kind: ToastKind::Milestone { text }, shown_at: None });
+        }
+    }
+
     fn push_toast(&mut self, kind: ToastKind) {
         if !self.cfg.toasts {
             return;
@@ -239,7 +281,8 @@ impl App {
     }
 
     pub(super) fn toasts_pending(&self) -> bool {
-        self.cfg.toasts && !self.toasts.is_empty()
+        // (Achievement pop-ups are only queued when they're switched on.)
+        !self.toasts.is_empty()
     }
 
     pub(super) fn current_level(&self) -> u32 {
@@ -248,6 +291,14 @@ impl App {
     }
 
     /// Draw the front toast across the top of the overlay (call last).
+    /// Where the front pop-up's card is right now (for cutting the overlay
+    /// window to it), or None when no pop-up is showing.
+    pub(super) fn toast_now(&self, area: Rect) -> Option<Rect> {
+        let front = self.toasts.front()?;
+        let t = front.shown_at.map_or(0.0, |at| at.elapsed().as_secs_f32());
+        Some(toast_rect(area, toast_anim(t).0))
+    }
+
     pub(super) fn draw_toast(&mut self, ctx: &egui::Context, p: &egui::Painter, area: Rect) {
         let Some(front) = self.toasts.front_mut() else { return };
         let at = *front.shown_at.get_or_insert_with(Instant::now);
@@ -258,17 +309,11 @@ impl App {
             return;
         }
         ctx.request_repaint();
-        // slide in with a little overshoot, slide up and fade at the end
-        let ease_in = {
-            let x = (t / 0.4).min(1.0);
-            let s = 1.70158;
-            1.0 + (s + 1.0) * (x - 1.0).powi(3) + s * (x - 1.0).powi(2)
-        };
-        let out = ((t - (TOAST_SECS - 0.4)) / 0.4).clamp(0.0, 1.0);
-        let alpha = (t / 0.15).min(1.0) * (1.0 - out);
-        let h = 64.0;
-        let y = area.min.y - 30.0 * (1.0 - ease_in) - 24.0 * out;
-        let r = Rect::from_min_size(egui::pos2(area.min.x, y), egui::vec2(area.width(), h));
+        // The card grows out of its own middle and shrinks back into it
+        // (the overlay window is cut to the card, so it can't slide around:
+        // anything outside would be clipped off).
+        let (scale, alpha) = toast_anim(t);
+        let r = toast_rect(area, scale);
         let (rgb, caption, title, line) = match &front.kind {
             ToastKind::Achievement { name, desc, tier } => (
                 tier.rgb(),
@@ -286,6 +331,7 @@ impl App {
                 title.to_uppercase(),
                 format!("Complete  ·  +{xp} XP"),
             ),
+            ToastKind::Milestone { text } => ([246, 200, 66], "MILESTONE!".to_string(), text.clone(), "Keep going!".to_string()),
             ToastKind::Welcome { count, level } => (
                 [246, 200, 66],
                 "WELCOME, TRAINER!".to_string(),
@@ -299,9 +345,15 @@ impl App {
         };
         let tint = Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
         let a = |c: Color32| c.gamma_multiply(alpha);
-        p.rect_filled(r.translate(egui::vec2(0.0, 3.0)), 10.0, a(Color32::from_black_alpha(120)));
-        p.rect_filled(r, 10.0, a(Color32::from_rgb(22, 19, 36)));
-        p.rect_stroke(r, 10.0, Stroke::new(2.0f32, a(tint)));
+        // The card itself stays solid (see-through would show black on some
+        // PCs); only what's on it fades.
+        p.rect_filled(r, 10.0 * scale, Color32::from_rgb(22, 19, 36));
+        p.rect_stroke(r, 10.0 * scale, Stroke::new(2.0f32, tint.gamma_multiply(0.35 + 0.65 * alpha)));
+        // Everything on the card is laid out on the full-size card and
+        // revealed through the opening one.
+        let clipped = p.with_clip_rect(r.shrink(1.0));
+        let p = &clipped;
+        let r = toast_rect(area, 1.0);
         // shimmer sweeping across once
         let sweep = ((t - 0.35) / 0.9).clamp(0.0, 1.0);
         if sweep > 0.0 && sweep < 1.0 {
@@ -324,6 +376,11 @@ impl App {
             ToastKind::Achievement { .. } | ToastKind::Goal { .. } => {
                 let pop = 1.0 + 0.25 * (1.0 - ((t - 0.2) / 0.35).clamp(0.0, 1.0));
                 theme::medal(p, ic, 15.0 * pop, rgb, false);
+            }
+            ToastKind::Milestone { .. } => {
+                // a big twinkling star
+                let pop = 1.0 + 0.25 * (1.0 - ((t - 0.2) / 0.35).clamp(0.0, 1.0));
+                theme::sparkle(p, ic, (11.0 + 2.0 * (t * 5.0).sin().abs()) * pop, a(GOLD));
             }
             ToastKind::LevelUp { level } | ToastKind::Welcome { level, .. } => {
                 let pop = 1.0 + 0.25 * (1.0 - ((t - 0.2) / 0.35).clamp(0.0, 1.0));

@@ -503,6 +503,46 @@ mod imp {
         }
     }
 
+    /// Keep a window of `size` fully on a monitor: the one the game is on
+    /// when it's open. With a position on that monitor: there, pulled in if it
+    /// sticks out. Otherwise: that monitor's top-right corner (the primary
+    /// monitor's when the game is closed and there's no position). Points in and out; `ppp` = pixels per point.
+    pub fn fit_on_screen(pos: Option<[f32; 2]>, size: [f32; 2], ppp: f32, on_game: bool) -> [f32; 2] {
+        const MONITOR_DEFAULTTOPRIMARY: u32 = 1;
+        let s = ppp.max(0.5);
+        let px = |v: f32| (v * s).round() as i32;
+        unsafe {
+            // The game's monitor wins: a remembered spot on another screen
+            // is dropped for the top-right of the game's screen.
+            let near = pos.map(|p| MonitorFromPoint(Point { x: px(p[0] + size[0] / 2.0), y: px(p[1] + 8.0) }, MONITOR_DEFAULTTONEAREST));
+            let game = if on_game { find_game().map(|g| MonitorFromWindow(g, MONITOR_DEFAULTTONEAREST)).filter(|m| !m.is_null()) } else { None };
+            let pos = match (near, game) {
+                (Some(n), Some(g)) if n != g => None,
+                _ => pos,
+            };
+            let m = match (pos, game, near) {
+                (_, Some(g), _) => g,
+                (Some(_), None, Some(n)) => n,
+                _ => MonitorFromPoint(Point { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY),
+            };
+            let mut mi = MonitorInfo { cb: std::mem::size_of::<MonitorInfo>() as u32, ..Default::default() };
+            if m.is_null() || GetMonitorInfoW(m, &mut mi) == 0 {
+                return pos.unwrap_or([24.0, 120.0]);
+            }
+            let wa = mi.work;
+            let margin = px(16.0);
+            let (w, h) = (px(size[0]), px(size[1]));
+            let (x, y) = match pos {
+                Some(p) => (px(p[0]), px(p[1])),
+                None => (wa.r - margin - w, wa.t + margin),
+            };
+            // Fully inside (or as much as fits when it's bigger than the screen).
+            let x = x.min(wa.r - margin - w).max(wa.l + margin.min((wa.r - wa.l - w).max(0) / 2));
+            let y = y.min(wa.b - margin - h).max(wa.t + margin.min((wa.b - wa.t - h).max(0) / 2));
+            [x as f32 / s, y as f32 / s]
+        }
+    }
+
     /// Is this point (egui points; `ppp` = pixels per point) on any monitor?
     /// Used to check a remembered window position is still visible.
     pub fn point_on_screen(pos: [f32; 2], ppp: f32) -> bool {
@@ -585,6 +625,9 @@ mod imp {
     pub fn hwnd_of(_frame: &eframe::Frame) -> Option<isize> {
         None
     }
+    pub fn fit_on_screen(pos: Option<[f32; 2]>, _size: [f32; 2], _ppp: f32, _on_game: bool) -> [f32; 2] {
+        pos.unwrap_or([24.0, 120.0])
+    }
     pub fn point_on_screen(_pos: [f32; 2], _ppp: f32) -> bool {
         true
     }
@@ -642,6 +685,13 @@ pub fn settings_placement(
     ppp: f32,
 ) -> Option<([f32; 2], [f32; 2])> {
     imp::settings_placement(frame, want, min, ppp)
+}
+
+/// Where to put a window of `size` (points) so it's fully on a monitor:
+/// near `pos` if given, else the primary monitor's top-right corner.
+/// `on_game`: put it on the game's monitor (when the game is open).
+pub fn fit_on_screen(pos: Option<[f32; 2]>, size: [f32; 2], ppp: f32, on_game: bool) -> [f32; 2] {
+    imp::fit_on_screen(pos, size, ppp, on_game)
 }
 
 /// Whether a point (in egui points) is on a connected monitor, so a

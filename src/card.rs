@@ -360,6 +360,12 @@ pub struct CardOptions {
     pub res: u32,
     /// Show the latest hunt journal note.
     pub show_note: bool,
+    /// Nickname and gender of the Pokémon on the image being made. Kept per
+    /// hunt in the settings (not here), so they aren't saved with the style.
+    #[cfg_attr(not(offline_test), serde(skip))]
+    pub nickname: String,
+    #[cfg_attr(not(offline_test), serde(skip))]
+    pub gender: Gender,
 }
 
 impl Default for CardOptions {
@@ -379,8 +385,20 @@ impl Default for CardOptions {
             animated: false,
             res: 1080,
             show_note: true,
+            nickname: String::new(),
+            gender: Gender::None,
         }
     }
+}
+
+/// The Pokémon's gender on the share image (None = genderless or not set).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(not(offline_test), derive(Serialize, Deserialize))]
+pub enum Gender {
+    #[default]
+    None,
+    Male,
+    Female,
 }
 
 /// Everything the card shows about a hunt.
@@ -415,6 +433,9 @@ pub struct CardData {
     pub odds_on_target: bool,
     /// Shinies of other Pokémon found during this hunt.
     pub phases: Vec<String>,
+    /// The player's nickname for it (shown as the title, species underneath).
+    pub nickname: Option<String>,
+    pub gender: Gender,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -615,7 +636,39 @@ fn short_date(s: &str) -> String {
     }
 }
 
+/// ♂ / ♀ drawn as shapes (the pixel font has no such characters).
+fn gender_sign(pen: &mut Pen, g: Gender, cx: f32, cy: f32, r: f32) {
+    let t = (r * 0.32).max(2.0);
+    match g {
+        Gender::None => {}
+        Gender::Male => {
+            let c = Col::rgb(96, 168, 255);
+            let (cx, cy) = (cx - r * 0.2, cy + r * 0.2);
+            let k = std::f32::consts::FRAC_1_SQRT_2;
+            let (sx, sy) = (cx + r * k, cy - r * k);
+            let (ex, ey) = (cx + r * 1.75, cy - r * 1.75);
+            pen.line(sx + 1.0, sy + 1.0, ex + 1.0, ey + 1.0, t, Col::rgb(0, 0, 0).alpha(0.35));
+            pen.ring(cx + 1.5, cy + 1.5, r, t, Col::rgb(0, 0, 0).alpha(0.35));
+            pen.ring(cx, cy, r, t, c);
+            pen.line(sx, sy, ex, ey, t, c);
+            pen.line(ex, ey, ex - r * 0.8, ey, t, c);
+            pen.line(ex, ey, ex, ey + r * 0.8, t, c);
+        }
+        Gender::Female => {
+            let c = Col::rgb(255, 120, 172);
+            let cy = cy - r * 0.45;
+            pen.ring(cx + 1.5, cy + 1.5, r, t, Col::rgb(0, 0, 0).alpha(0.35));
+            pen.ring(cx, cy, r, t, c);
+            pen.line(cx, cy + r, cx, cy + r * 2.3, t, c);
+            pen.line(cx - r * 0.6, cy + r * 1.65, cx + r * 0.6, cy + r * 1.65, t, c);
+        }
+    }
+}
+
 fn auto_title(d: &CardData) -> String {
+    if let Some(n) = d.nickname.as_ref().map(|n| n.trim()).filter(|n| !n.is_empty()) {
+        return n.to_uppercase();
+    }
     if d.caught {
         format!("SHINY {}!", d.name.to_uppercase())
     } else {
@@ -993,11 +1046,34 @@ fn header(pen: &mut Pen, d: &CardData, o: &CardOptions, x: f32, y: f32, w: f32, 
     pen.text(chip, cx + 16.0 + icon_w, y + 10.0, 13.0, ink, Face::Pixel, Align::Left, false);
     let mut y = y + 52.0;
     let title = if o.title.trim().is_empty() { auto_title(d) } else { o.title.trim().to_uppercase() };
-    let size = pen.fit(&title, 46.0, w, Face::Pixel);
+    // Room for the ♂/♀ sign after the title.
+    let sign = d.gender != Gender::None;
+    let gap = |size: f32| if sign { size * 1.15 } else { 0.0 };
+    let mut size = pen.fit(&title, 46.0, w, Face::Pixel);
+    while sign && size > 10.0 && pen.width(&title, size, Face::Pixel) + gap(size) > w {
+        size -= 1.0;
+    }
     let tc = if d.caught { p.highlight } else { p.text };
-    pen.text(&title, x, y, size, tc, Face::Pixel, align, true);
+    let tw = pen.width(&title, size, Face::Pixel);
+    let tx = match align {
+        Align::Center => x - gap(size) / 2.0,
+        _ => x,
+    };
+    pen.text(&title, tx, y, size, tc, Face::Pixel, align, true);
+    if sign {
+        let left = match align {
+            Align::Center => tx - tw / 2.0,
+            Align::Right => tx - tw,
+            Align::Left => tx,
+        };
+        gender_sign(pen, d.gender, left + tw + size * 0.6, y + size * 0.5, size * 0.42);
+    }
     y += size + 20.0;
     let mut sub = Vec::new();
+    // With a nickname, the species goes under it.
+    if d.nickname.as_ref().is_some_and(|n| !n.trim().is_empty()) && o.title.trim().is_empty() {
+        sub.push(d.name.clone());
+    }
     if let Some(n) = d.dex {
         sub.push(format!("#{n:04}"));
     }

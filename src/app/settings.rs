@@ -787,7 +787,7 @@ impl App {
                     }
                     self.last_update_check = Some(std::time::Instant::now());
                     self.update_dismissed = false;
-                    update::check(self.updater.clone(), ui.ctx().clone());
+                    update::check(self.updater.clone(), ui.ctx().clone(), self.cfg.installed_update.clone());
                 }
                 if matches!(state, State::Ready { .. })
                     && kit::accent_button(ui, egui::Button::new(RichText::new("Restart to update").strong().color(theme::button_ink())), 6.0).clicked()
@@ -2189,14 +2189,14 @@ impl App {
                     self.dirty |= kit::toggle_row(
                         ui,
                         "Milestone celebrations",
-                        "A little confetti moment on the overlay every 1,000 encounters and when you reach 1×, 2×, 3×… the odds.",
+                        "A pop-up under the overlay every 1,000 encounters and when you reach 1×, 2×, 3×… the odds.",
                         &mut self.cfg.celebrate_milestones,
                     );
                     if ui
                         .add(egui::Button::new(RichText::new("Preview celebration").size(kit::fs(12.0))).fill(kit::btn_fill()))
                         .clicked()
                     {
-                        self.celebrate = Some((Instant::now(), "1,000 ENCOUNTERS!".to_string()));
+                        self.push_milestone("1,000 ENCOUNTERS!".to_string());
                         self.cfg.mini = false;
                         self.play(crate::sound::Sfx::Milestone);
                     }

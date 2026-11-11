@@ -134,10 +134,18 @@ impl App {
         let avail = ui.available_width();
         let three = avail >= 760.0;
         let w = if three { ((avail - gap * 2.0) / 3.0).floor() } else { avail };
+        // Side by side, the cards all take the tallest one's height (it's
+        // measured each frame and applied on the next).
+        let h_id = egui::Id::new("home-app-card-h");
+        let same_h: f32 = if three { ui.data(|d| d.get_temp(h_id)).unwrap_or(0.0) } else { 0.0 };
+        let tallest = std::cell::Cell::new(0.0f32);
         let card = |ui: &mut egui::Ui, which: u8, app: &mut App| {
             ui.allocate_ui_with_layout(egui::vec2(w, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
                 ui.set_width(w);
-                kit::card(ui, |ui| match which {
+                kit::card(ui, |ui| {
+                    let top = ui.cursor().min.y;
+                    ui.set_min_height(same_h);
+                    match which {
                     0 => app.shiny_app_card(ui),
                     1 => app_card(
                         ui,
@@ -153,6 +161,9 @@ impl App {
                         "Sinnoh from your game's own map: every area, who lives there, and today's sparkly grass.",
                         true,
                     ),
+                    }
+                    // Height of the content itself (not the stretched card).
+                    tallest.set(tallest.get().max(ui.cursor().min.y - top));
                 });
             });
         };
@@ -169,6 +180,13 @@ impl App {
             card(ui, 1, self);
             ui.add_space(gap);
             card(ui, 2, self);
+        }
+        if three {
+            let t = tallest.get();
+            if (t - same_h).abs() > 0.5 {
+                ui.data_mut(|d| d.insert_temp(h_id, t));
+                ui.ctx().request_repaint();
+            }
         }
         // "Preview" buttons on the soon cards.
         if let Some(t) = ui.ctx().data_mut(|d| d.remove_temp::<u8>(egui::Id::new("home-open"))) {

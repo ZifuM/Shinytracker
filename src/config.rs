@@ -416,6 +416,8 @@ pub struct Config {
     pub idle_minutes: u32,
     /// Last-used share image options.
     pub card: CardOptions,
+    /// Nickname and gender for each hunt's share image, by hunt.
+    pub card_names: std::collections::HashMap<String, (String, crate::card::Gender)>,
     /// Where share images are saved (None = Pictures\Shiny Tracker).
     pub share_folder: Option<String>,
     /// Show a "Save as" box every time instead of saving straight away.
@@ -464,6 +466,9 @@ pub struct Config {
 
     // Overlay window
     pub window_pos: Option<[f32; 2]>,
+    /// Where the overlay was last, for each layout ("full", "compact",
+    /// "bar", "legacy", "badge"): each one remembers its own spot.
+    pub overlay_positions: std::collections::HashMap<String, [f32; 2]>,
     /// Optional second target (two-target hunts, e.g. Scyther and Scizor).
     pub target2: Option<String>,
     /// Third target onwards (several Pokémon hunted on one route).
@@ -475,6 +480,9 @@ pub struct Config {
     pub session_goal: u64,
     /// Check GitHub for new versions and download them.
     pub auto_update: bool,
+    /// The release this copy was last updated to (stops a re-download loop
+    /// if that release's .exe reports an older version number).
+    pub installed_update: Option<String>,
     /// Settings window position / size (egui points) and maximized state,
     /// restored next time it opens.
     pub settings_pos: Option<[f32; 2]>,
@@ -536,6 +544,7 @@ impl Default for Config {
             idle_pause: true,
             idle_minutes: 5,
             card: CardOptions::default(),
+            card_names: Default::default(),
             share_folder: None,
             share_ask: false,
             appearance: Appearance::default(),
@@ -563,12 +572,14 @@ impl Default for Config {
             count_in_background: true,
             star_threshold: 60,
             window_pos: None,
+            overlay_positions: Default::default(),
             target2: None,
             more_targets: Vec::new(),
             break_reminder: false,
             break_minutes: 90,
             session_goal: 0,
             auto_update: true,
+            installed_update: None,
             settings_pos: None,
             settings_size: None,
             settings_maximized: false,

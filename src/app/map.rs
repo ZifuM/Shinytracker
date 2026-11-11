@@ -28,7 +28,17 @@ pub(super) enum Layer {
     #[default]
     Overworld,
     Caves,
+    Ruins,
     Side,
+}
+
+/// A layer laid out: each part (zone, its map, tile rect) and each place
+/// (name, tile rect around its parts).
+#[derive(Clone, Default)]
+pub(super) struct LayerLayout {
+    /// zone, its map, tile rect, how many parts its place has
+    pub parts: Vec<(u16, usize, Rect, usize)>,
+    pub places: Vec<(String, Rect)>,
 }
 
 /// Which map is showing.
@@ -82,7 +92,7 @@ pub(super) struct MapState {
     overlay_tex: HashMap<usize, Option<(TextureHandle, [f32; 4])>>,
     /// Where each piece of a layer sits (zone, its map, tile rect), worked
     /// out once: near its real place, nudged apart so none overlap.
-    layer_layout: HashMap<Layer, Vec<(u16, usize, Rect)>>,
+    layer_layout: HashMap<Layer, LayerLayout>,
     /// Frame the layer just switched to.
     layer_fit: bool,
     /// Size of the map on screen last frame (for fitting areas into it).
@@ -98,6 +108,8 @@ pub(super) struct MapState {
     pub spot_sets: HashMap<String, Option<super::catch_spots::SpotSet>>,
     crop_pending: HashSet<String>,
     pub rare: Vec<Rare>,
+    /// Result of saving the shared sparkly grass file.
+    export_msg: Option<String>,
     rare_asked: Option<Instant>,
     /// Outline pieces of each outdoor area (tile coordinates).
     edges: HashMap<u16, Vec<(Pos2, Pos2)>>,
@@ -178,6 +190,33 @@ pub(super) fn tile_edges(tiles: &[(usize, usize)]) -> Vec<(Pos2, Pos2)> {
     out
 }
 
+/// Write today's sparkly grass as the shared list file. Goes into the
+/// GitHub copy of the app (…\GitHub\Shinytracker\data) when there is one,
+/// otherwise Downloads. Returns a line saying where it went.
+fn export_shared_rare(rare: &[Rare]) -> String {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    let reset = gamemap::last_reset(now);
+    let mut spots: Vec<(usize, usize, u32)> = rare.iter().filter_map(|r| Some((r.x, r.y, r.species?))).collect();
+    spots.sort();
+    spots.dedup();
+    let body = serde_json::json!({
+        "about": "Sparkly grass Pokémon seen today, shared with everyone. 'reset' is the daily reset (midnight Central European time) these are for.",
+        "reset": reset,
+        "spots": spots,
+    });
+    let repo = dirs::document_dir().map(|d| d.join("GitHub").join("Shinytracker"));
+    let dir = match repo.filter(|r| r.join(".git").exists()) {
+        Some(r) => r.join("data"),
+        None => dirs::download_dir().unwrap_or_default(),
+    };
+    let path = dir.join("rare-today.json");
+    let text = serde_json::to_string_pretty(&body).unwrap_or_default();
+    match std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&path, text)) {
+        Ok(()) => format!("Saved {} spots to {}", spots.len(), path.display()),
+        Err(e) => format!("Couldn't save: {e}"),
+    }
+}
+
 /// Name of a cave or side area on its layer.
 fn layer_name(z: &gamemap::Zone) -> &str {
     if z.code.starts_with("R209R") {
@@ -187,49 +226,95 @@ fn layer_name(z: &gamemap::Zone) -> &str {
     }
 }
 
-/// Lay out a layer's pieces: one per place (its biggest map), each starting
-/// where it really is in Sinnoh, then pushed apart until none overlap (with
-/// room around each for its name).
+/// Lay out a layer: the parts of each place (floors, rooms) packed together
+/// in a tidy block, each block centred where the place really is in Sinnoh,
+/// then blocks nudged apart until none overlap.
 fn layer_layout(
-    map: &GameMap,
     pieces: &[gamemap::Overlay],
     tex: &HashMap<usize, Option<(TextureHandle, [f32; 4])>>,
-) -> Vec<(u16, usize, Rect)> {
-    let mut best: Vec<(String, u16, usize, Rect)> = Vec::new();
+) -> LayerLayout {
+    // place → parts (zone, map, size, real rect if known, entry)
+    let mut groups: Vec<(String, Vec<(u16, usize, Vec2, Option<Rect>, bool)>)> = Vec::new();
     for o in pieces {
-        let Some(Some((_, r))) = tex.get(&(o.matrix as usize)) else { continue };
-        let Some(z) = map.zone(o.zone) else { continue };
-        let name = layer_name(z).to_string();
-        let tr = Rect::from_min_size(Pos2::new(o.x as f32 + r[0], o.y as f32 + r[1]), Vec2::new(r[2], r[3]));
-        match best.iter_mut().find(|b| b.0 == name) {
-            Some(b) if b.3.area() < tr.area() => *b = (name, o.zone, o.matrix as usize, tr),
-            Some(_) => {}
-            None => best.push((name, o.zone, o.matrix as usize, tr)),
+        let m = o.matrix as usize;
+        let Some(Some((_, r))) = tex.get(&m) else { continue };
+        let size = Vec2::new(r[2], r[3]);
+        let real = match (o.x, o.y) {
+            (Some(x), Some(y)) => Some(Rect::from_min_size(Pos2::new(x as f32 + r[0], y as f32 + r[1]), size)),
+            _ => None,
+        };
+        let g = if o.group.is_empty() { format!("{}", o.zone) } else { o.group.clone() };
+        match groups.iter_mut().find(|(n, _)| *n == g) {
+            Some((_, v)) => v.push((o.zone, m, size, real, o.entry)),
+            None => groups.push((g, vec![(o.zone, m, size, real, o.entry)])),
         }
     }
-    // Room for the name above and a gap all round.
-    let pad = |r: Rect| Rect::from_min_max(r.min - Vec2::new(10.0, 22.0), r.max + Vec2::new(10.0, 10.0));
-    let n = best.len();
-    for _ in 0..400 {
+    const GAP: f32 = 6.0; // between parts of one place
+    const LABEL: f32 = 12.0; // room for a part's name above it
+    let mut blocks: Vec<(String, Rect, Vec<(u16, usize, Rect)>)> = Vec::new();
+    for (name, mut parts) in groups {
+        // Where the place is: the middle of the parts you walk into.
+        let entries: Vec<Pos2> = parts.iter().filter(|p| p.4).filter_map(|p| p.3.map(|r| r.center())).collect();
+        let known: Vec<Pos2> = parts.iter().filter_map(|p| p.3.map(|r| r.center())).collect();
+        let pts = if entries.is_empty() { known } else { entries };
+        if pts.is_empty() {
+            continue;
+        }
+        let anchor = pts.iter().fold(Vec2::ZERO, |a, p| a + p.to_vec2()) / pts.len() as f32;
+        parts.sort_by_key(|p| p.0);
+        // Shelf packing into rows about as wide as the block is tall.
+        let label = if parts.len() > 1 { LABEL } else { 0.0 };
+        let area: f32 = parts.iter().map(|p| (p.2.x + GAP) * (p.2.y + GAP + label)).sum();
+        let widest = parts.iter().map(|p| p.2.x).fold(0.0f32, f32::max);
+        let row_w = widest.max(area.sqrt() * 1.25);
+        let (mut x, mut y, mut row_h) = (0.0f32, 0.0f32, 0.0f32);
+        let mut placed: Vec<(u16, usize, Rect)> = Vec::new();
+        for (zone, m, size, _, _) in &parts {
+            if x > 0.0 && x + size.x > row_w {
+                x = 0.0;
+                y += row_h + GAP;
+                row_h = 0.0;
+            }
+            placed.push((*zone, *m, Rect::from_min_size(Pos2::new(x, y + label), *size)));
+            x += size.x + GAP;
+            row_h = row_h.max(size.y + label);
+        }
+        let mut bb = placed[0].2;
+        for p in &placed {
+            bb = bb.union(p.2);
+        }
+        // Centre the block on the place.
+        let shift = anchor - bb.center().to_vec2();
+        let shift = Vec2::new(shift.x, shift.y);
+        let placed: Vec<(u16, usize, Rect)> = placed.into_iter().map(|(z, m, r)| (z, m, r.translate(shift))).collect();
+        let bb = Rect::from_min_max(bb.min - Vec2::new(0.0, label), bb.max).translate(shift);
+        blocks.push((name, bb, placed));
+    }
+    // Keep blocks apart (with room for the place name above each).
+    let pad = |r: Rect| Rect::from_min_max(r.min - Vec2::new(10.0, 26.0), r.max + Vec2::new(10.0, 10.0));
+    let n = blocks.len();
+    for _ in 0..600 {
         let mut moved = false;
         for i in 0..n {
             for j in i + 1..n {
-                let (a, b) = (pad(best[i].3), pad(best[j].3));
+                let (a, b) = (pad(blocks[i].1), pad(blocks[j].1));
                 if !a.intersects(b) {
                     continue;
                 }
                 let ox = a.max.x.min(b.max.x) - a.min.x.max(b.min.x);
                 let oy = a.max.y.min(b.max.y) - a.min.y.max(b.min.y);
                 let d = b.center() - a.center();
-                // Half the overlap each (plus a hair, so they end up clear),
-                // along whichever way is the shorter move.
                 let push = if ox < oy {
                     Vec2::new(if d.x >= 0.0 { ox + 1.0 } else { -ox - 1.0 }, 0.0)
                 } else {
                     Vec2::new(0.0, if d.y >= 0.0 { oy + 1.0 } else { -oy - 1.0 })
                 } * 0.5;
-                best[i].3 = best[i].3.translate(-push);
-                best[j].3 = best[j].3.translate(push);
+                for (k, dir) in [(i, -1.0f32), (j, 1.0)] {
+                    blocks[k].1 = blocks[k].1.translate(push * dir);
+                    for p in blocks[k].2.iter_mut() {
+                        p.2 = p.2.translate(push * dir);
+                    }
+                }
                 moved = true;
             }
         }
@@ -237,7 +322,13 @@ fn layer_layout(
             break;
         }
     }
-    best.into_iter().map(|(_, z, m, r)| (z, m, r)).collect()
+    let mut out = LayerLayout::default();
+    for (name, r, parts) in blocks {
+        out.places.push((name, r));
+        let n = parts.len();
+        out.parts.extend(parts.into_iter().map(|(z, m, r)| (z, m, r, n)));
+    }
+    out
 }
 
 /// Text with a dark halo, readable on any part of the map.
@@ -529,7 +620,11 @@ impl App {
             .show(&ctx, |ui| {
                 kit::settings_style(ui);
                 float_frame().show(ui, |ui| {
+                    // One fixed-height row with everything centred in it
+                    // (a plain row lines items up against the first one's
+                    // height, so the taller layer switch sat lower).
                     ui.horizontal(|ui| {
+                        ui.set_min_height(38.0);
                         ui.spacing_mut().item_spacing.x = 10.0;
                         if let Area::Inside(z) = area {
                             if ui.button("‹  Outdoors").on_hover_text("Back to the Sinnoh map").clicked() {
@@ -548,7 +643,7 @@ impl App {
                         }
                         kit::search_box(ui, &mut self.mapui.search, "Find a route, town, cave…", 210.0);
                         kit::checkbox(ui, &mut self.mapui.show_rare, "Sparkly grass").on_hover_text(format!(
-                            "Today's sparkly grass, from your game log. New patches in {}h {:02}m (midnight, Central European time).",
+                            "Today's sparkly grass, from your game log plus the shared list. New patches in {}h {:02}m (midnight, Central European time).",
                             left / 3600,
                             left % 3600 / 60
                         ));
@@ -558,7 +653,7 @@ impl App {
                         // Layers, at the right end of the bar (outdoors only).
                         if area == Area::World {
                             let mut layer = self.mapui.layer;
-                            if kit::segmented(ui, &mut layer, &[(Layer::Overworld, "Overworld"), (Layer::Caves, "Caves"), (Layer::Side, "Side areas")]) {
+                            if kit::segmented(ui, &mut layer, &[(Layer::Overworld, "Overworld"), (Layer::Caves, "Caves"), (Layer::Ruins, "Ruins"), (Layer::Side, "Side areas")]) {
                                 self.mapui.layer = layer;
                                 self.mapui.layer_fit = true;
                                 self.mapui.selected = None;
@@ -600,9 +695,21 @@ impl App {
                 float_frame().inner_margin(egui::Margin::same(4.0)).show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 4.0;
                     let b = |ui: &mut egui::Ui, t: &str, tip: &str| {
-                        ui.add_sized([36.0, 30.0], egui::Button::new(RichText::new(t).size(kit::fs(13.0))).fill(kit::btn_fill()))
-                            .on_hover_text(tip)
-                            .clicked()
+                        // Drawn by hand so every button is the same size and
+                        // the label never wraps ("Fit" was being squeezed).
+                        let (r, resp) = ui.allocate_exact_size(Vec2::new(42.0, 30.0), Sense::click());
+                        let fill = if resp.is_pointer_button_down_on() {
+                            kit::btn_fill().gamma_multiply(0.8)
+                        } else if resp.hovered() {
+                            super::ui_kit::CARD_HOVER()
+                        } else {
+                            kit::btn_fill()
+                        };
+                        let p = ui.painter();
+                        p.rect_filled(r, 6.0, fill);
+                        p.rect_stroke(r, 6.0, Stroke::new(1.0f32, LINE()));
+                        p.text(r.center(), Align2::CENTER_CENTER, t, kit::font_bold(kit::fs(13.0)), TEXT());
+                        resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
                     };
                     if b(ui, "+", "Zoom in") {
                         zoom_by = Some(1.4);
@@ -653,9 +760,21 @@ impl App {
                                 {
                                     toggle = true;
                                 }
+                                // Save today's list as the shared file (for the dev to
+                                // put on GitHub so everyone gets it).
+                                if ui
+                                    .add(egui::Button::new(RichText::new("⬇").size(kit::fs(13.0))).fill(kit::btn_fill()).min_size(Vec2::new(28.0, 26.0)))
+                                    .on_hover_text("Save today's list as rare-today.json for sharing (into the GitHub folder if you have one)")
+                                    .clicked()
+                                {
+                                    self.mapui.export_msg = Some(export_shared_rare(&self.mapui.rare));
+                                }
                             });
                         });
-                        ui.label(RichText::new("Pokémon met on sparkly grass, from your game log.").size(kit::fs(11.0)).color(MUTED()));
+                        ui.label(RichText::new("Pokémon met on sparkly grass today: yours plus the shared list.").size(kit::fs(11.0)).color(MUTED()));
+                        if let Some(m) = &self.mapui.export_msg {
+                            ui.label(RichText::new(m).size(kit::fs(11.0)).color(theme::LINK()));
+                        }
                         ui.add_space(6.0);
                         self.rare_list(ui, &spots, list_h);
                     });
@@ -762,7 +881,7 @@ impl App {
         let layered = area == Area::World && self.mapui.layer != Layer::Overworld;
         let backdrop = match (area, self.mapui.layer) {
             (Area::World, Layer::Overworld) | (Area::World, Layer::Side) => gamemap::OCEAN,
-            (Area::World, Layer::Caves) => Color32::from_rgb(24, 22, 30),
+            (Area::World, Layer::Caves) | (Area::World, Layer::Ruins) => Color32::from_rgb(24, 22, 30),
             _ => Color32::from_rgb(14, 22, 34),
         };
         p.rect_filled(rect, 0.0, backdrop);
@@ -820,7 +939,11 @@ impl App {
         let mut over_rects: Vec<(u16, Rect)> = Vec::new();
         if layered {
             let layer = self.mapui.layer;
-            let kind = if layer == Layer::Caves { "cave" } else { "side" };
+            let kind = match layer {
+                Layer::Caves => "cave",
+                Layer::Ruins => "ruins",
+                _ => "side",
+            };
             let pieces: Vec<gamemap::Overlay> = map.overlays.iter().filter(|o| o.kind == kind).cloned().collect();
             for o in &pieces {
                 let m = o.matrix as usize;
@@ -832,32 +955,60 @@ impl App {
                 }
             }
             if !self.mapui.layer_layout.contains_key(&layer) {
-                let layout = layer_layout(&map, &pieces, &self.mapui.overlay_tex);
+                let layout = layer_layout(&pieces, &self.mapui.overlay_tex);
                 self.mapui.layer_layout.insert(layer, layout);
             }
             let layout = self.mapui.layer_layout.get(&layer).cloned().unwrap_or_default();
             // Frame the whole layer when it's switched to (or on Fit).
-            if (self.mapui.layer_fit || fit_all) && !layout.is_empty() {
+            if (self.mapui.layer_fit || fit_all) && !layout.places.is_empty() {
                 self.mapui.layer_fit = false;
-                let mut bb = layout[0].2;
-                for (_, _, r) in &layout {
+                let mut bb = layout.places[0].1;
+                for (_, r) in &layout.places {
                     bb = bb.union(*r);
                 }
                 let bb = bb.expand(24.0);
                 let z = (rect.width() / bb.width()).min(rect.height() / bb.height()).clamp(MIN_ZOOM, MAX_ZOOM);
                 self.mapui.fly_to(bb.center(), z);
             }
-            for (zone, m, tr) in &layout {
+            // Each place: a card behind its parts, its name on top.
+            let mut names: Vec<(Pos2, String, f32)> = Vec::new();
+            for (name, tr) in &layout.places {
+                let sr = Rect::from_min_max(to_screen(tr.min), to_screen(tr.max)).expand(8.0);
+                if !rect.intersects(sr.expand(40.0)) {
+                    continue;
+                }
+                p.rect_filled(sr.translate(Vec2::new(0.0, 3.0)), 10.0, Color32::from_black_alpha(90));
+                p.rect_filled(sr, 10.0, Color32::from_rgba_unmultiplied(16, 18, 26, 215));
+                p.rect_stroke(sr, 10.0, Stroke::new(1.0f32, Color32::from_white_alpha(45)));
+                names.push((sr.center_top() - Vec2::new(0.0, 12.0), name.clone(), (11.0 + zoom * 1.6).clamp(12.0, 16.0)));
+            }
+            // Parts of the place, with a floor/room name when there's more than one.
+            for (zone, m, tr, group_size) in &layout.parts {
                 let Some(Some((tex, _))) = self.mapui.overlay_tex.get(m) else { continue };
                 let sr = Rect::from_min_max(to_screen(tr.min), to_screen(tr.max));
                 if rect.intersects(sr.expand(40.0)) {
-                    let card = sr.expand(6.0);
-                    p.rect_filled(card.translate(Vec2::new(0.0, 3.0)), 8.0, Color32::from_black_alpha(90));
-                    p.rect_filled(card, 8.0, Color32::from_rgba_unmultiplied(16, 18, 26, 210));
-                    p.rect_stroke(card, 8.0, Stroke::new(1.0f32, Color32::from_white_alpha(40)));
                     p.image(tex.id(), sr, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                    if self.mapui.labels && *group_size > 1 && zoom >= 0.9 {
+                        let label = self.zone_label(&map, *zone);
+                        let place = map.zone(*zone).map(|z| layer_name(z).to_string()).unwrap_or_default();
+                        let short = label.strip_prefix(place.as_str()).map(|t| t.trim_start_matches([' ', '-', '(', ',']).trim_end_matches(')').trim().to_string()).filter(|t| !t.is_empty());
+                        // No floor name known: "Room N" from the area's code (…R0103 → 3).
+                        let text = short.unwrap_or_else(|| {
+                            let code = map.zone(*zone).map(|z| z.code.clone()).unwrap_or_default();
+                            let n: u32 = code.chars().rev().take(2).collect::<String>().chars().rev().collect::<String>().parse().unwrap_or(0);
+                            if n > 0 {
+                                format!("Room {n}")
+                            } else {
+                                String::new()
+                            }
+                        });
+                        p.text(sr.left_top() - Vec2::new(0.0, 3.0), Align2::LEFT_BOTTOM, text, kit::font_bold(11.0), Color32::from_white_alpha(190));
+                    }
                 }
                 over_rects.push((*zone, sr));
+            }
+            for (pos, name, size) in names {
+                halo_text(&p, pos, &name, size, Color32::WHITE);
             }
         } else if area == Area::World && self.mapui.layer_fit {
             // Back to the overworld: show all of Sinnoh again.
@@ -931,12 +1082,7 @@ impl App {
                 let st = if picked { Stroke::new(2.5f32, theme::LINK()) } else { Stroke::new(1.5f32, Color32::from_white_alpha(170)) };
                 p.rect_stroke(r.expand(6.0), 8.0, st);
             }
-            if self.mapui.labels && rect.intersects(r.expand(40.0)) {
-                if let Some(zn) = map.zone(*z) {
-                    let size = (10.0 + zoom * 1.6).clamp(11.0, 15.0);
-                    halo_text(&p, r.center_top() - Vec2::new(0.0, 16.0), layer_name(zn), size, Color32::WHITE);
-                }
-            }
+
         }
 
         // ── the flashing highlight

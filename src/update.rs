@@ -71,6 +71,12 @@ fn update_path() -> Option<PathBuf> {
 /// Delete leftovers from a previous update (call at start-up).
 pub fn cleanup() {
     if let Ok(exe) = std::env::current_exe() {
+        // A downloaded update that was never installed is stale by now:
+        // the next check fetches a fresh one if it's still needed.
+        if let Some(p) = update_path() {
+            let _ = std::fs::remove_file(p.with_extension("part"));
+            let _ = std::fs::remove_file(&p);
+        }
         let old = exe.with_extension("old.exe");
         // The old copy may still be closing: try a few times in the background.
         std::thread::spawn(move || {
@@ -85,7 +91,11 @@ pub fn cleanup() {
 }
 
 /// Check GitHub (and download if there's a newer build) on a background thread.
-pub fn check(shared: Shared, ctx: eframe::egui::Context) {
+/// `installed` is the release this copy was last updated to: if GitHub's
+/// latest is still that one, there's nothing new, even when the build's own
+/// version number says otherwise (a release whose .exe was labelled with an
+/// older version would otherwise be downloaded again on every start).
+pub fn check(shared: Shared, ctx: eframe::egui::Context, installed: Option<String>) {
     {
         let Ok(mut g) = shared.lock() else { return };
         if matches!(*g, State::Checking | State::Downloading { .. } | State::Ready { .. }) {
@@ -94,7 +104,7 @@ pub fn check(shared: Shared, ctx: eframe::egui::Context) {
         *g = State::Checking;
     }
     std::thread::spawn(move || {
-        let result = run(&shared, &ctx);
+        let result = run(&shared, &ctx, installed.as_deref());
         if let Err(e) = result {
             set(&shared, State::Failed(e));
         }
@@ -102,7 +112,7 @@ pub fn check(shared: Shared, ctx: eframe::egui::Context) {
     });
 }
 
-fn run(shared: &Shared, ctx: &eframe::egui::Context) -> Result<(), String> {
+fn run(shared: &Shared, ctx: &eframe::egui::Context, installed: Option<&str>) -> Result<(), String> {
     let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
     let resp = ureq::get(&url)
         .set("User-Agent", "ShinyTracker-updater")
@@ -116,7 +126,8 @@ fn run(shared: &Shared, ctx: &eframe::egui::Context) -> Result<(), String> {
     let body = resp.into_string().map_err(|e| e.to_string())?;
     let json: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
     let tag = json["tag_name"].as_str().unwrap_or("").to_string();
-    if !is_newer(&tag, VERSION) {
+    let same_as_installed = installed.is_some_and(|i| parse_version(i).is_some() && parse_version(i) == parse_version(&tag));
+    if !is_newer(&tag, VERSION) || same_as_installed {
         set(shared, State::UpToDate);
         return Ok(());
     }

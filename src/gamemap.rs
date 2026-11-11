@@ -57,17 +57,24 @@ struct ZoneFile {
     overlays: Vec<Overlay>,
 }
 
-/// A cave or side area and where it sits on the Sinnoh map: tile (0, 0) of
-/// its own map lands on tile (x, y) outdoors (worked out from the doors
-/// between the two).
+/// A part of a cave, ruin or side area (one of its maps) for the Map's
+/// layers: which layer, which place it belongs to, and where it sits on the
+/// Sinnoh map (tile (0, 0) of its own map lands on tile (x, y) outdoors,
+/// worked out from the doors between them; unknown for some deep floors).
 #[derive(Debug, Clone, Deserialize)]
 pub struct Overlay {
     pub zone: u16,
     pub matrix: u16,
-    /// "cave" or "side".
+    /// "cave", "ruins" or "side".
     pub kind: String,
-    pub x: i32,
-    pub y: i32,
+    /// The place it's part of ("Mt. Coronet").
+    #[serde(default)]
+    pub group: String,
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+    /// One of the parts you walk into from outside (sets where the place is).
+    #[serde(default)]
+    pub entry: bool,
 }
 
 /// A cave/side-area picture with see-through walls, cut down to its floor.
@@ -945,10 +952,63 @@ pub fn read_rare_today(dir: &Path, map: &GameMap) -> Vec<Rare> {
             }
         }
     }
+    // Today's spots shared by the dev (bundled with the app, or the newer
+    // copy on GitHub), so nobody has to find every patch themselves.
+    for (x, y, sp) in shared_rare(reset) {
+        if map.world().land_at(x / CHUNK, y / CHUNK).is_some() {
+            out.push(Rare { x, y, species: Some(sp), tiles: 0 });
+        }
+    }
     // Only spots where a Pokémon was actually met count: the "N rare grass
     // tiles around x,y" scan lines also fire where there's no sparkly grass.
     let mut seen = std::collections::HashSet::new();
     out.into_iter().filter(|r| r.species.is_some() && seen.insert((r.x, r.y, r.species))).collect()
+}
+
+/// Sparkly grass shipped with this version (for the day it was made).
+const SHARED_RARE: &str = include_str!("rare_today.json");
+/// The latest shared list, updated on GitHub without a new release.
+const SHARED_RARE_URL: &str = "https://raw.githubusercontent.com/ZifuM/Shinytracker/main/data/rare-today.json";
+
+#[derive(Deserialize)]
+struct SharedRare {
+    reset: i64,
+    spots: Vec<(usize, usize, u32)>,
+}
+
+/// Shared sparkly grass for the day that started at `reset` (empty when the
+/// shared lists are for another day). GitHub is asked at most every 20 minutes.
+fn shared_rare(reset: i64) -> Vec<(usize, usize, u32)> {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static REMOTE: Mutex<Option<(Instant, Option<SharedRare>)>> = Mutex::new(None);
+    let mut out = Vec::new();
+    if let Ok(b) = serde_json::from_str::<SharedRare>(SHARED_RARE) {
+        if b.reset == reset {
+            out.extend(b.spots);
+        }
+    }
+    let Ok(mut g) = REMOTE.lock() else { return out };
+    let stale = g.as_ref().map_or(true, |(t, _)| t.elapsed() > Duration::from_secs(20 * 60));
+    if stale {
+        // Fetch on its own thread (this one also loads the map pictures);
+        // the result is used from the next look onwards.
+        let keep = g.take().and_then(|(_, r)| r);
+        *g = Some((Instant::now(), keep));
+        std::thread::spawn(|| {
+            if let Some(got) = crate::sprites::fetch(SHARED_RARE_URL).ok().and_then(|b| serde_json::from_slice::<SharedRare>(&b).ok()) {
+                if let Ok(mut g) = REMOTE.lock() {
+                    *g = Some((Instant::now(), Some(got)));
+                }
+            }
+        });
+    }
+    if let Some((_, Some(r))) = g.as_ref() {
+        if r.reset == reset {
+            out.extend(r.spots.iter().copied());
+        }
+    }
+    out
 }
 
 fn nums(s: &str) -> Vec<u64> {

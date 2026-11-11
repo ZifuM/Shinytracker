@@ -167,11 +167,11 @@ impl App {
             };
             if due {
                 self.last_update_check = Some(now_i);
-                update::check(self.updater.clone(), ctx.clone());
+                update::check(self.updater.clone(), ctx.clone(), self.cfg.installed_update.clone());
             }
         }
         match update::get(&self.updater) {
-            State::Downloading { version, got, total } => {
+            State::Downloading { version, got, total } if !self.update_dismissed => {
                 let mb = |b: u64| b as f64 / 1_048_576.0;
                 self.notify(Notice {
                     id: "update",
@@ -202,18 +202,23 @@ impl App {
                     });
                 }
             }
+            // Up to date, checking, failed, or dismissed: no update card.
             _ => self.clear_notice("update"),
         }
     }
 
     /// Install the downloaded update: save, swap the exe, start it, quit.
     pub(super) fn restart_to_update(&mut self, ctx: &egui::Context) {
-        let State::Ready { path, .. } = update::get(&self.updater) else { return };
+        let State::Ready { path, version } = update::get(&self.updater) else { return };
+        let before = self.cfg.installed_update.replace(version);
         self.cfg.save();
         self.dirty = false;
         match update::install(&path) {
             Ok(()) => ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Close),
-            Err(e) => self.notify(Notice {
+            Err(e) => {
+                self.cfg.installed_update = before;
+                self.cfg.save();
+                self.notify(Notice {
                 id: "update",
                 icon: "⚠",
                 title: "Couldn't update".into(),
@@ -222,7 +227,8 @@ impl App {
                 action: None,
                 expires: Some(Instant::now() + Duration::from_secs(15)),
                 accent: theme::HP_RED,
-            }),
+                })
+            }
         }
     }
 

@@ -262,6 +262,8 @@ pub struct App {
     dexdb: crate::dexextra::Fetcher,
     /// Where and how big the overlay opened (fixed while it's open).
     ov_geom: Option<([f32; 2], [f32; 2])>,
+    /// The overlay layout the window was last placed for.
+    ov_layout: Option<&'static str>,
     /// When the overlay window last opened.
     ov_opened: Option<Instant>,
     /// The overlay window the stay-on-top keeper is looking after.
@@ -382,6 +384,7 @@ impl App {
             gamemap_rx: crate::gamemap::start(),
             mapui: Default::default(),
             ov_geom: None,
+            ov_layout: None,
             ov_opened: None,
             overlay_keeper: None,
             applied_bg_pause: None,
@@ -612,7 +615,8 @@ impl App {
                     crate::stats::Reached::Odds(1) => "YOU HIT THE ODDS!".to_string(),
                     crate::stats::Reached::Odds(k) => format!("{k}× THE ODDS!"),
                 };
-                self.celebrate = Some((Instant::now(), text));
+                // A pop-up under the overlay, like every other one.
+                self.push_milestone(text);
                 self.play(crate::sound::Sfx::Milestone);
                 self.add_event("celebrated");
             }
@@ -742,9 +746,50 @@ impl App {
         }
     }
 
+    /// Which layout the overlay is in, for remembering where each one sits.
+    fn overlay_layout_key(&self) -> &'static str {
+        use crate::config::OverlaySize;
+        if self.cfg.mini {
+            "badge"
+        } else if self.cfg.overlay.legacy() {
+            "legacy"
+        } else {
+            match self.cfg.overlay.size {
+                OverlaySize::Full => "full",
+                OverlaySize::Compact => "compact",
+                OverlaySize::Bar => "bar",
+            }
+        }
+    }
+
     /// Runs inside the overlay window each frame.
     fn sync_window(&mut self, ctx: &egui::Context) {
         let want = self.overlay_size();
+        let ppp = ctx.pixels_per_point();
+        let key = self.overlay_layout_key();
+        let here = ctx.input(|i| i.viewport().outer_rect).map(|r| [r.min.x, r.min.y]);
+        if self.ov_layout != Some(key) {
+            // Switched layout: go to where this one was last (or the top-right
+            // corner the first time), fully on screen.
+            self.ov_layout = Some(key);
+            let saved = self.cfg.overlay_positions.get(key).copied();
+            let to = crate::topmost::fit_on_screen(saved, want, ppp, true);
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(to[0], to[1])));
+            self.cfg.overlay_positions.insert(key.to_string(), to);
+            self.cfg.window_pos = Some(to);
+            self.geom_dirty = true;
+            // Don't record the old spot under the new layout while it moves.
+            self.ov_opened = Some(Instant::now());
+        } else if self.applied_size.is_some_and(|a| a != want) {
+            // Grew (more sections, a pop-up, a wider liquid layout): pull it
+            // back in if it now sticks off the screen.
+            if let Some(p) = here {
+                let to = crate::topmost::fit_on_screen(Some(p), want, ppp, false);
+                if (to[0] - p[0]).abs() > 0.5 || (to[1] - p[1]).abs() > 0.5 {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(to[0], to[1])));
+                }
+            }
+        }
         // Click-through (modular overlay only). Never while a shiny or the
         // Caught! question needs a click.
         let pass = self.click_through_active();
@@ -768,6 +813,7 @@ impl App {
                 });
                 if moved {
                     self.cfg.window_pos = Some(p);
+                    self.cfg.overlay_positions.insert(key.to_string(), p);
                     self.geom_dirty = true;
                 }
             }
@@ -988,7 +1034,9 @@ impl App {
                 self.ov_shape.clear();
                 self.ov_shape.push([full.min.x, full.min.y, full.width(), full.height(), 12.0]);
                 if below {
-                    self.ov_shape.push([full.min.x, full.max.y - 14.0, full.width(), LEGACY_BELOW + 8.0, 10.0]);
+                    let under = Rect::from_min_max(egui::pos2(full.min.x, full.max.y + 6.0), egui::pos2(full.max.x, full.max.y + LEGACY_BELOW - 2.0));
+                    let shape = self.popup_shape(under);
+                    self.ov_shape.push(shape);
                 }
                 let p = ui.painter().clone();
                 let t = self.t_ms();
@@ -1152,10 +1200,32 @@ impl App {
                 let target2 = self.target2_idx().map(|i| self.species[i].clone());
                 match &target {
                     Some(sp) => {
-                        // Two-target hunts show both names (smaller to fit).
-                        let (name, size) = match &target2 {
-                            Some(t2) => (format!("{} + {}", sp.name.to_uppercase(), t2.name.to_uppercase()), 7.5),
-                            None => (sp.name.to_uppercase(), 10.0),
+                        // Several targets: as many names as fit, else the
+                        // first one + "N more".
+                        let names: Vec<&str> = self.all_target_idx().into_iter().map(|i| self.species[i].name).collect();
+                        let _ = &target2;
+                        let room = plate.width() - 32.0 - 96.0;
+                        let text_w = |t: &str, size: f32| p.layout_no_wrap(t.to_string(), crate::fonts::pixel_font(size), Color32::WHITE).size().x;
+                        let (name, size) = if names.len() > 1 {
+                            let n = names.len();
+                            let mut options = vec![names.join(" + ")];
+                            if n > 2 {
+                                options.push(format!("{} + {} + {} more", names[0], names[1], n - 2));
+                            }
+                            options.push(format!("{} + {} more", names[0], n - 1));
+                            let mut pick = None;
+                            'fit: for size in [7.5, 6.5] {
+                                for o in &options {
+                                    let o = o.to_uppercase();
+                                    if text_w(&o, size) <= room {
+                                        pick = Some((o, size));
+                                        break 'fit;
+                                    }
+                                }
+                            }
+                            pick.unwrap_or_else(|| (format!("{} +{}", names[0], n - 1).to_uppercase(), 6.5))
+                        } else {
+                            (sp.name.to_uppercase(), 10.0)
                         };
                         let name_r = outlined_text(
                             &p,
@@ -1662,7 +1732,7 @@ impl App {
                 }
 
                 // Achievement / level-up pop-up, in the same spot.
-                if self.cfg.toasts && !self.toasts.is_empty() {
+                if !self.toasts.is_empty() {
                     let area = under;
                     let fg = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("toasts")));
                     self.draw_toast(ctx, &fg, area);

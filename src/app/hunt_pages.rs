@@ -36,6 +36,30 @@ pub(super) struct RunInfo {
     pub phase: bool,
 }
 
+/// Which hunt a share image's nickname and gender belong to.
+fn card_key(info: &RunInfo) -> String {
+    format!("{}:{}:{}", info.run_id, info.started, info.slug.as_deref().unwrap_or(&info.name))
+}
+
+/// Which signs a species can have, from its Pokédex gender line
+/// ("Genderless", "100% male", "50% male, 50% female"…). Unknown = both.
+fn gender_choices(line: Option<&str>) -> (bool, bool) {
+    let Some(l) = line.map(|l| l.to_lowercase()) else { return (true, true) };
+    if l.contains("genderless") {
+        return (false, false);
+    }
+    // The percentage written just before "% male" / "% female".
+    let pct = |word: &str| -> Option<f32> {
+        let at = l.find(word)?;
+        let num: String = l[..at].chars().rev().take_while(|c| c.is_ascii_digit() || *c == '.').collect::<String>().chars().rev().collect();
+        num.parse().ok()
+    };
+    match (pct("% male"), pct("% female")) {
+        (None, None) => (true, true),
+        (m, f) => (m.unwrap_or(0.0) > 0.0, f.unwrap_or(0.0) > 0.0),
+    }
+}
+
 const ACCENTS: [(&str, [u8; 3]); 9] = [
     ("Red", [214, 52, 58]),
     ("Orange", [236, 112, 36]),
@@ -198,6 +222,8 @@ impl App {
             target_seen: (!info.phase && info.target_seen > 0).then_some(info.target_seen),
             odds_on_target: self.cfg.odds_target_only && !info.phase && info.target_seen > 0,
             phases: if info.phase { Vec::new() } else { self.phases_of(info.run_id).iter().map(|&i| self.cfg.history[i].target.clone()).collect() },
+            nickname: self.cfg.card_names.get(&card_key(info)).map(|n| n.0.trim().to_string()).filter(|n| !n.is_empty()),
+            gender: self.cfg.card_names.get(&card_key(info)).map(|n| n.1).unwrap_or_default(),
         }
     }
 
@@ -231,6 +257,10 @@ impl App {
     pub(super) fn open_share(&mut self, src: RunRef, back_to: Option<RunRef>) {
         if let Some(info) = self.run_info(src) {
             self.request_sprites(info.slug.as_deref());
+            // This hunt's nickname and gender, if it has them.
+            let (nick, gender) = self.cfg.card_names.get(&card_key(&info)).cloned().unwrap_or_default();
+            self.cfg.card.nickname = nick;
+            self.cfg.card.gender = gender;
         }
         self.setup.share = Some(ShareView {
             src,
@@ -1102,6 +1132,56 @@ impl App {
                         .char_limit(28),
                 );
                 ui.end_row();
+                ui.label(RichText::new("Nickname").size(kit::fs(12.5)).color(TEXT()));
+                let nick_changed = ui
+                    .add(
+                        egui::TextEdit::singleline(&mut self.cfg.card.nickname)
+                            .hint_text(format!("Optional: shown as the title, with {} underneath", info.name))
+                            .desired_width(ui.available_width())
+                            .char_limit(12),
+                    )
+                    .changed();
+                ui.end_row();
+                // Gender: only the signs this species can have.
+                let line = info.slug.as_deref().and_then(|slug| match self.dexdb.get(slug) {
+                    crate::dexextra::State::Ready(e) => Some(e.gender.clone()),
+                    _ => None,
+                });
+                let (can_m, can_f) = gender_choices(line.as_deref());
+                use crate::card::Gender;
+                let mut gender_changed = false;
+                if !can_m && self.cfg.card.gender == Gender::Male || !can_f && self.cfg.card.gender == Gender::Female {
+                    self.cfg.card.gender = Gender::None;
+                    gender_changed = true;
+                }
+                ui.label(RichText::new("Gender").size(kit::fs(12.5)).color(TEXT()));
+                if !can_m && !can_f {
+                    ui.label(RichText::new("Genderless: no sign on the image").size(kit::fs(12.0)).color(MUTED()));
+                } else {
+                    let mut opts: Vec<(Gender, &str)> = vec![(Gender::None, "  None  ")];
+                    if can_m {
+                        opts.push((Gender::Male, "  ♂ Male  "));
+                    }
+                    if can_f {
+                        opts.push((Gender::Female, "  ♀ Female  "));
+                    }
+                    let mut g = self.cfg.card.gender;
+                    if kit::segmented(ui, &mut g, &opts) {
+                        self.cfg.card.gender = g;
+                        gender_changed = true;
+                    }
+                }
+                ui.end_row();
+                if nick_changed || gender_changed {
+                    let entry = (self.cfg.card.nickname.trim().to_string(), self.cfg.card.gender);
+                    let key = card_key(&info);
+                    if entry.0.is_empty() && entry.1 == Gender::None {
+                        self.cfg.card_names.remove(&key);
+                    } else {
+                        self.cfg.card_names.insert(key, entry);
+                    }
+                    self.dirty = true;
+                }
                 ui.label(RichText::new("Trainer name").size(kit::fs(12.5)).color(TEXT()));
                 ui.add(
                     egui::TextEdit::singleline(&mut self.cfg.card.trainer)
