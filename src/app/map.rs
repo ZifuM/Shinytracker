@@ -231,61 +231,80 @@ pub(super) struct MapState {
     started: bool,
 }
 
-/// The look of everything that floats over the map.
+/// The look of everything that floats over the map: a Cirrus Cloud card
+/// with a hairline and a soft shadow (a touch stronger than on a page, so
+/// it lifts off busy map pictures).
 fn float_frame() -> egui::Frame {
     egui::Frame::none()
         .fill(kit::CARD())
-        .rounding(10.0)
+        .rounding(20.0)
         .stroke(Stroke::new(1.0f32, LINE()))
-        .inner_margin(egui::Margin::same(10.0))
-        .shadow(egui::epaint::Shadow {
-            offset: Vec2::new(0.0, 3.0),
-            blur: 14.0,
-            spread: 0.0,
-            color: Color32::from_black_alpha(110),
-        })
+        .inner_margin(egui::Margin::same(12.0))
+        .shadow(float_shadow())
 }
 
-/// The Map's "Experimental" tag: a box exactly as tall as the search box
-/// and the layer tabs beside it, so the three line up.
+/// A one-line float (a hint, "Showing: …", a folded panel): a full pill.
+fn float_pill() -> egui::Frame {
+    float_frame().rounding(40.0).inner_margin(egui::Margin::symmetric(14.0, 6.0))
+}
+
+fn float_shadow() -> egui::epaint::Shadow {
+    egui::epaint::Shadow {
+        offset: Vec2::new(0.0, 8.0),
+        blur: 22.0,
+        spread: 0.0,
+        color: Color32::from_black_alpha(if theme::pal().light { 40 } else { 110 }),
+    }
+}
+
+/// Height of the controls along the top of the map (the search box's).
+const TOP_H: f32 = kit::CONTROL_H + 4.0;
+
+/// The Map's "Experimental" tag: a Cirrus chip (Cloud pill, hairline, a
+/// Citrus dot) exactly as tall as the search box and the layer tabs.
 fn map_tag(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    let font = egui::FontId::proportional(kit::fs(12.0));
-    let ink = Color32::from_rgb(250, 214, 110);
-    let galley = ui.painter().layout_no_wrap(text.to_string(), font, ink);
-    let (r, resp) = ui.allocate_exact_size(Vec2::new(galley.size().x + 22.0, kit::CONTROL_H), Sense::hover());
-    ui.painter().rect_filled(r, 6.0, Color32::from_rgb(72, 56, 14));
-    ui.painter().galley(r.center() - galley.size() / 2.0, galley, ink);
+    let font = kit::font(12.5);
+    let galley = ui.painter().layout_no_wrap(text.to_string(), font, TEXT());
+    let (r, resp) = ui.allocate_exact_size(Vec2::new(galley.size().x + 40.0, TOP_H), Sense::hover());
+    let p = ui.painter();
+    let rad = r.height() / 2.0;
+    p.add(float_shadow().as_shape(r, rad));
+    p.rect_filled(r, rad, kit::CARD());
+    p.rect_stroke(r, rad, Stroke::new(1.0f32, LINE()));
+    p.circle_filled(Pos2::new(r.left() + 17.0, r.center().y), 4.0, Color32::from_rgb(255, 122, 61));
+    p.galley(Pos2::new(r.left() + 28.0, r.center().y - galley.size().y / 2.0), galley, TEXT());
     resp
 }
 
-/// The Map's layer tabs: one grey box (the search box's grey and outline,
-/// the same height) with the tabs inside; the one showing is highlighted.
+/// The Map's layer tabs: a Cirrus pill track (Cloud, hairline, soft
+/// shadow) as tall as the search box; the layer showing is a pill in the
+/// button colour.
 fn map_tabs<T: PartialEq + Copy>(ui: &mut egui::Ui, value: &mut T, options: &[(T, &str)]) -> bool {
-    const INSET: f32 = 3.0;
-    const PAD: f32 = 12.0;
-    let font = egui::FontId::proportional(kit::fs(13.0));
+    const INSET: f32 = 4.0;
+    const PAD: f32 = 14.0;
+    let font = kit::font_bold(13.0);
     let widths: Vec<f32> = options.iter().map(|(_, l)| ui.painter().layout_no_wrap(l.to_string(), font.clone(), TEXT()).size().x + 2.0 * PAD).collect();
     let total = widths.iter().sum::<f32>() + 2.0 * INSET + 2.0 * (options.len().saturating_sub(1)) as f32;
-    let (track, _) = ui.allocate_exact_size(Vec2::new(total, kit::CONTROL_H), Sense::hover());
-    ui.painter().rect(track, 6.0, ui.visuals().extreme_bg_color, Stroke::new(1.0f32, kit::CONTROL()));
+    let (track, _) = ui.allocate_exact_size(Vec2::new(total, TOP_H), Sense::hover());
+    let rad = track.height() / 2.0;
+    ui.painter().add(float_shadow().as_shape(track, rad));
+    ui.painter().rect(track, rad, kit::CARD(), Stroke::new(1.0f32, LINE()));
     let mut changed = false;
     let mut x = track.left() + INSET;
     for ((v, label), w) in options.iter().zip(widths) {
-        let r = Rect::from_min_size(Pos2::new(x, track.top() + INSET), Vec2::new(w, kit::CONTROL_H - 2.0 * INSET));
+        let r = Rect::from_min_size(Pos2::new(x, track.top() + INSET), Vec2::new(w, TOP_H - 2.0 * INSET));
         x += w + 2.0;
         let resp = ui.interact(r, ui.id().with(("map-layer-tab", *label)), Sense::click());
         let selected = *value == *v;
-        let fill = if selected {
-            kit::SELECTED_BG()
+        let p = ui.painter();
+        if selected {
+            p.add(kit::primary_shape(r, false));
         } else if resp.hovered() {
-            kit::CARD_HOVER()
-        } else {
-            Color32::TRANSPARENT
-        };
-        ui.painter().rect_filled(r, 4.0, fill);
-        let col = if selected { TEXT() } else { MUTED() };
-        let galley = ui.painter().layout_no_wrap(label.to_string(), font.clone(), col);
-        ui.painter().galley(r.center() - galley.size() / 2.0, galley, col);
+            p.rect_filled(r, r.height() / 2.0, kit::sunken());
+        }
+        let col = if selected { kit::on_primary() } else if resp.hovered() { TEXT() } else { MUTED() };
+        let galley = p.layout_no_wrap(label.to_string(), font.clone(), col);
+        p.galley(r.center() - galley.size() / 2.0, galley, col);
         if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() && !selected {
             *value = *v;
             changed = true;
@@ -731,19 +750,23 @@ fn layer_layout(pieces: &[gamemap::Overlay], tex: &HashMap<usize, Option<(Textur
 fn fold_tab(ui: &mut egui::Ui, label: &str, open: bool, tip: &str) -> bool {
     let font = kit::font_bold(kit::fs(12.5));
     let g = ui.painter().layout_no_wrap(label.to_string(), font, TEXT());
-    let size = Vec2::new(g.size().x + 44.0, 30.0);
+    let size = Vec2::new(g.size().x + 46.0, 32.0);
     let (r, resp) = ui.allocate_exact_size(size, Sense::click());
     let hot = resp.hovered();
     let p = ui.painter();
-    p.rect_filled(r, 8.0, if hot { super::ui_kit::CARD_HOVER() } else { kit::btn_fill() });
-    p.rect_stroke(r, 8.0, Stroke::new(1.0f32, if hot { theme::LINK() } else { LINE() }));
+    let rad = r.height() / 2.0;
+    if hot {
+        p.rect_filled(r, rad, kit::sunken());
+    }
+    // the chevron in a small pill disc
     let c = Pos2::new(r.left() + 16.0, r.center().y);
-    p.circle_filled(c, 9.0, theme::LINK().gamma_multiply(if hot { 0.45 } else { 0.28 }));
+    p.circle_filled(c, 11.0, if hot { kit::primary() } else { kit::sunken() });
+    p.circle_stroke(c, 11.0, Stroke::new(1.0f32, LINE()));
     let d = if open { -1.0 } else { 1.0 };
-    let st = Stroke::new(2.0f32, TEXT());
+    let st = Stroke::new(1.8f32, if hot { kit::on_primary() } else { TEXT() });
     p.line_segment([c + Vec2::new(-4.0, -2.0 * d), c + Vec2::new(0.0, 2.0 * d)], st);
     p.line_segment([c + Vec2::new(0.0, 2.0 * d), c + Vec2::new(4.0, -2.0 * d)], st);
-    p.galley(Pos2::new(r.left() + 32.0, r.center().y - g.size().y / 2.0), g, TEXT());
+    p.galley(Pos2::new(r.left() + 34.0, r.center().y - g.size().y / 2.0), g, TEXT());
     resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }
 
@@ -1162,7 +1185,7 @@ impl App {
                     kit::page_header(ui, "MAP", "Sinnoh, drawn from your game's own map files.");
                     kit::card(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        ui.label(RichText::new("Couldn't read the map").size(kit::fs(13.5)).strong().color(TEXT()));
+                        ui.label(RichText::new("Couldn't read the map").size(kit::fs(13.5)).family(kit::strong_family(kit::fs(13.5))).strong().color(TEXT()));
                         ui.label(RichText::new(e).size(kit::fs(12.0)).color(MUTED()));
                         ui.label(
                             RichText::new("The Map uses the map files of your Platinum Together install. If you moved the game somewhere else, choose its folder in the game folder settings.")
@@ -1270,6 +1293,9 @@ impl App {
         let left = (gamemap::next_reset(now) - now).max(0);
 
         // ── floating: search, layers (top left)
+        // Where the row along the top ends (the rare grass panel drops under
+        // it when the window is too narrow for both).
+        let mut top_right = rect.min.x;
         egui::Area::new(egui::Id::new("map-float-top"))
             .order(egui::Order::Middle)
             .fixed_pos(rect.min + Vec2::splat(pad))
@@ -1278,7 +1304,7 @@ impl App {
                 // Each control sits straight on the map with just its own
                 // background (no panel around them); top aligned so search
                 // results can drop down.
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                top_right = ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
                     if let Area::Inside(z) = area {
                         egui::Frame::none().show(ui, |ui| {
@@ -1312,7 +1338,7 @@ impl App {
                                     ui.label(RichText::new("No place or Pokémon by that name.").size(kit::fs(12.0)).color(MUTED()));
                                 }
                                 let head = |ui: &mut egui::Ui, t: &str| {
-                                    ui.label(RichText::new(t).size(kit::fs(10.5)).strong().color(MUTED()));
+                                    ui.label(RichText::new(t).size(kit::fs(10.5)).family(kit::strong_family(kit::fs(10.5))).strong().color(MUTED()));
                                 };
                                 if !hits.is_empty() {
                                     head(ui, "PLACES");
@@ -1372,10 +1398,10 @@ impl App {
                             }
                         }
                     }
-                });
+                }).response.rect.max.x;
                 if let Some(title) = &showing {
                     ui.add_space(6.0);
-                    float_frame().inner_margin(egui::Margin::symmetric(10.0, 5.0)).show(ui, |ui| {
+                    float_pill().show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new(format!("Showing: {title}")).size(kit::fs(12.0)).color(theme::LINK()));
                             if ui
@@ -1402,27 +1428,32 @@ impl App {
             .fixed_pos(rect.max - Vec2::new(pad, pad))
             .show(&ctx, |ui| {
                 kit::settings_style(ui);
-                // Three square buttons floating on their own, a little apart.
-                ui.spacing_mut().item_spacing.y = 8.0;
+                // A Cirrus icon rail: a vertical Cloud pill holding round
+                // buttons; the one under the pointer fills with the button colour.
+                ui.spacing_mut().item_spacing.y = 4.0;
                 let b = |ui: &mut egui::Ui, t: &str, tip: &str| {
                     // Drawn by hand so every button is the same size and
                     // the label never wraps.
-                    let (r, resp) = ui.allocate_exact_size(Vec2::splat(36.0), Sense::click());
-                    let fill = if resp.is_pointer_button_down_on() {
-                        kit::CARD().gamma_multiply(0.85)
-                    } else if resp.hovered() {
-                        super::ui_kit::CARD_HOVER()
-                    } else {
-                        kit::CARD()
-                    };
+                    let (r, resp) = ui.allocate_exact_size(Vec2::splat(38.0), Sense::click());
                     let p = ui.painter();
-                    p.rect_filled(r.translate(Vec2::new(0.0, 2.0)).expand(1.0), 8.0, Color32::from_black_alpha(70));
-                    p.rect_filled(r, 8.0, fill);
-                    p.rect_stroke(r, 8.0, Stroke::new(1.0f32, if resp.hovered() { theme::LINK() } else { LINE() }));
-                    let size = if t.chars().count() > 1 { 12.0 } else { 16.0 };
-                    p.text(r.center(), Align2::CENTER_CENTER, t, kit::font_bold(kit::fs(size)), TEXT());
+                    let down = resp.is_pointer_button_down_on();
+                    let ink = if resp.hovered() {
+                        p.add(kit::primary_shape(r.shrink(if down { 1.0 } else { 0.0 }), false));
+                        kit::on_primary()
+                    } else {
+                        TEXT()
+                    };
+                    let size = if t.chars().count() > 1 { 12.0 } else { 17.0 };
+                    p.text(r.center(), Align2::CENTER_CENTER, t, kit::font_bold(kit::fs(size)), ink);
                     resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
                 };
+                let rail = egui::Frame::none()
+                    .fill(kit::CARD())
+                    .stroke(Stroke::new(1.0f32, LINE()))
+                    .rounding(30.0)
+                    .inner_margin(egui::Margin::same(5.0))
+                    .shadow(float_shadow());
+                rail.show(ui, |ui| {
                 if b(ui, "+", "Zoom in") {
                     zoom_by = Some(1.4);
                 }
@@ -1432,13 +1463,18 @@ impl App {
                 if b(ui, "Fit", "Show the whole map") {
                     fit_all = true;
                 }
+                });
             });
 
         // ── floating: today's rare grass (right), folds away to a tab
         let mut open_poster = false;
         if !spots.is_empty() {
             let mut toggle = false;
-            let at = rect.right_top() + Vec2::new(-pad, pad);
+            let mut at = rect.right_top() + Vec2::new(-pad, pad);
+            let rare_w = if self.mapui.rare_collapsed { 280.0 } else { panel_w };
+            if at.x - rare_w < top_right + 8.0 {
+                at.y += TOP_H + 8.0;
+            }
             if self.mapui.rare_collapsed {
                 egui::Area::new(egui::Id::new("map-float-rare-tab"))
                     .order(egui::Order::Middle)
@@ -1446,13 +1482,13 @@ impl App {
                     .fixed_pos(at)
                     .show(&ctx, |ui| {
                         kit::settings_style(ui);
-                        float_frame().inner_margin(egui::Margin::same(4.0)).show(ui, |ui| {
+                        float_frame().rounding(40.0).inner_margin(egui::Margin::same(4.0)).show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 if fold_tab(ui, &format!("✨ Rare grass today ({})", spots.len()), false, "Show today's rare grass list") {
                                     toggle = true;
                                 }
                                 if ui
-                                    .add(egui::Button::new(RichText::new("📷").size(kit::fs(13.0))).fill(kit::btn_fill()).min_size(Vec2::new(28.0, 26.0)))
+                                    .add(egui::Button::new(RichText::new("📷").size(kit::fs(13.0))).fill(kit::btn_fill()).min_size(Vec2::new(32.0, 32.0)))
                                     .on_hover_text("Share today's rare grass as an image (the infographic)")
                                     .clicked()
                                 {
@@ -2213,7 +2249,7 @@ impl App {
                 .interactable(false)
                 .show(&ctx, |ui| {
                     kit::settings_style(ui);
-                    float_frame().inner_margin(egui::Margin::symmetric(10.0, 6.0)).show(ui, |ui| {
+                    float_pill().show(ui, |ui| {
                         ui.label(
                             RichText::new("Scroll to zoom, drag to move. Click an area to see what lives there; double-click to go inside.")
                                 .size(kit::fs(11.5))
@@ -2328,7 +2364,7 @@ impl App {
     fn map_key(&mut self, ui: &mut egui::Ui, left: i64) -> bool {
         let mut fold = false;
         if self.mapui.key_collapsed {
-            float_frame().inner_margin(egui::Margin::same(4.0)).show(ui, |ui| {
+            float_frame().rounding(40.0).inner_margin(egui::Margin::same(4.0)).show(ui, |ui| {
                 if fold_tab(ui, "Map key", false, "Show the map key: turn pins and icons on or off") {
                     fold = true;
                 }
@@ -2522,7 +2558,7 @@ impl App {
             ui.horizontal(|ui| {
                 let chev = if folded { "▸" } else { "▾" };
                 if ui
-                    .add(egui::Button::new(RichText::new(format!("{chev}  {label}")).size(kit::fs(13.0)).strong().color(TEXT())).frame(false))
+                    .add(egui::Button::new(RichText::new(format!("{chev}  {label}")).size(kit::fs(13.0)).family(kit::strong_family(kit::fs(13.0))).strong().color(TEXT())).frame(false))
                     .on_hover_text(if folded { "Show what lives here" } else { "Fold this away" })
                     .clicked()
                 {
@@ -2540,7 +2576,7 @@ impl App {
                         .on_hover_text("Pokémon only added by MORE POKéMON or MODERN POKéMON aren't listed here; see the Pokédex for those.");
                     if let Some(first) = inside {
                         if ui
-                            .add(egui::Button::new(RichText::new("Go inside").size(kit::fs(11.0))).min_size(Vec2::new(0.0, 20.0)))
+                            .add(egui::Button::new(RichText::new("Go inside").size(kit::fs(11.5))).fill(kit::btn_fill()).min_size(Vec2::new(0.0, 24.0)))
                             .clicked()
                         {
                             go_inside = Some(first);

@@ -21,6 +21,7 @@ pub(super) fn tab_meta(t: Tab) -> (&'static str, &'static str, Color32) {
     match t {
         Tab::Home => ("🏠", "Home", kit::C_BLUE),
         Tab::Profile => ("🏅", "Profile", kit::C_GOLD),
+        Tab::Stats => ("📊", "Stats", kit::C_CYAN),
         Tab::Shiny => ("✨", "Shiny Hunter", kit::C_VIOLET),
         Tab::Hunt => ("🎯", "Hunt", kit::C_PINK),
         Tab::Counting => ("👁", "Counting", kit::C_CYAN),
@@ -37,9 +38,10 @@ pub(super) fn tab_meta(t: Tab) -> (&'static str, &'static str, Color32) {
 }
 
 /// Sidebar entries: (group heading, page, parent app).
-const NAV: [(Option<&str>, Tab, Option<Tab>); 13] = [
+const NAV: [(Option<&str>, Tab, Option<Tab>); 14] = [
     (None, Tab::Home, None),
     (None, Tab::Profile, None),
+    (None, Tab::Stats, None),
     (Some("APPS"), Tab::Shiny, None),
     (None, Tab::Hunt, Some(Tab::Shiny)),
     (None, Tab::Counting, Some(Tab::Shiny)),
@@ -91,7 +93,7 @@ impl App {
         let r = if maxed { 0.0 } else { 8.0 };
         let p = ui.painter().clone();
         // (No sidebar during the first-run welcome.)
-        let nav_w = if self.cfg.welcome_done { self.nav_width() } else { 0.0 };
+        let nav_w = if !self.onboarding_open() { self.nav_width() } else { 0.0 };
         let left = Rect::from_min_max(rect.min, egui::pos2(rect.min.x + nav_w, rect.max.y));
         let right = Rect::from_min_max(egui::pos2(left.max.x, rect.min.y), rect.max);
         p.rect_filled(left, egui::Rounding { nw: r, ..Default::default() }, SIDEBAR());
@@ -107,7 +109,7 @@ impl App {
         ));
 
         // Brand.
-        let compact = self.cfg.appearance.nav_compact && self.cfg.welcome_done;
+        let compact = self.cfg.appearance.nav_compact && !self.onboarding_open();
         let logo_c = if compact { left.center() } else { rect.left_center() + egui::vec2(30.0, 0.0) };
         p.image(
             self.icon_tex.id(),
@@ -123,7 +125,7 @@ impl App {
         // Where you are: "Shiny Hunter › Hunt".
         let tab = self.setup.tab;
         let (_, name, color) = tab_meta(tab);
-        let mut x = if self.cfg.welcome_done { right.min.x + 28.0 } else { rect.min.x + 200.0 };
+        let mut x = if !self.onboarding_open() { right.min.x + 28.0 } else { rect.min.x + 200.0 };
         let cy = right.center().y;
         if is_shiny_tab(tab) && tab != Tab::Shiny {
             let g = p.text(egui::pos2(x, cy), Align2::LEFT_CENTER, "Shiny Hunter", crate::fonts::sans_font(14.0), MUTED());
@@ -131,7 +133,7 @@ impl App {
             let g = p.text(egui::pos2(x, cy), Align2::LEFT_CENTER, "›", crate::fonts::sans_font(15.0), MUTED());
             x = g.max.x + 10.0;
         }
-        if self.cfg.welcome_done {
+        if !self.onboarding_open() {
             p.circle_filled(egui::pos2(x + 4.0, cy), 4.0, color);
             p.text(egui::pos2(x + 16.0, cy), Align2::LEFT_CENTER, name, crate::fonts::sans_bold_font(15.0), TEXT());
         }
@@ -186,7 +188,7 @@ impl App {
         // The overlay's status and its Start / Stop, always in reach.
         let controls = Rect::from_min_max(egui::pos2(right.min.x + 240.0, rect.min.y), egui::pos2(minb.min.x - 10.0, rect.max.y));
         let mut drag_until = controls.max.x;
-        if self.cfg.welcome_done && controls.width() > 160.0 {
+        if !self.onboarding_open() && controls.width() > 160.0 {
             let used = ui
                 .allocate_new_ui(egui::UiBuilder::new().max_rect(controls).layout(egui::Layout::right_to_left(egui::Align::Center)), |ui| {
                     kit::settings_style(ui);

@@ -29,7 +29,7 @@ impl App {
     /// The big Start / Stop button.
     pub(super) fn overlay_button(&mut self, ui: &mut egui::Ui, size: egui::Vec2) {
         if self.overlay_on && self.ov_hidden {
-            let b = egui::Button::new(RichText::new("▶  Show overlay").size(kit::fs(14.0)).strong().color(theme::button_ink()))
+            let b = egui::Button::new(RichText::new("▶  Show overlay").size(kit::fs(14.0)).family(kit::strong_family(kit::fs(14.0))).strong().color(kit::on_primary()))
                 .min_size(size);
             if kit::accent_button(ui, b, kit::primary_round())
                 .on_hover_text("The overlay is minimised and still counting. Bring it back.")
@@ -38,7 +38,7 @@ impl App {
                 self.ov_hidden = false;
             }
         } else if self.overlay_on {
-            let b = egui::Button::new(RichText::new("■  Stop overlay").size(kit::fs(14.0)).strong().color(TEXT()))
+            let b = egui::Button::new(RichText::new("■  Stop overlay").size(kit::fs(14.0)).family(kit::strong_family(kit::fs(14.0))).strong().color(TEXT()))
                 .fill(kit::btn_fill())
                 .rounding(kit::btn_round(8.0))
                 .min_size(size);
@@ -46,7 +46,7 @@ impl App {
                 self.stop_overlay();
             }
         } else {
-            let b = egui::Button::new(RichText::new("▶  Start overlay").size(kit::fs(14.0)).strong().color(theme::button_ink()))
+            let b = egui::Button::new(RichText::new("▶  Start overlay").size(kit::fs(14.0)).family(kit::strong_family(kit::fs(14.0))).strong().color(kit::on_primary()))
                 .min_size(size);
             if kit::accent_button(ui, b, kit::primary_round())
                 .on_hover_text("Open the overlay on top of the game")
@@ -258,7 +258,7 @@ impl App {
     /// The Shiny Hunter card on Home.
     fn shiny_app_card(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label(RichText::new("✨ Shiny Hunter").size(kit::fs(15.0)).strong().color(TEXT()));
+            ui.label(RichText::new("✨ Shiny Hunter").size(kit::fs(15.0)).family(kit::strong_family(kit::fs(15.0))).strong().color(TEXT()));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if self.overlay_on && self.ov_hidden {
                     kit::pill(ui, "Minimised", PillKind::Warn).on_hover_text("The overlay is hidden but still counting");
@@ -273,7 +273,7 @@ impl App {
         ui.horizontal(|ui| {
             self.target_badge(ui, 64.0);
             ui.vertical(|ui| {
-                ui.label(RichText::new(self.target_label()).size(kit::fs(14.0)).strong().color(TEXT()));
+                ui.label(RichText::new(self.target_label()).size(kit::fs(14.0)).family(kit::strong_family(kit::fs(14.0))).strong().color(TEXT()));
                 ui.label(
                     RichText::new(format!("{} encounters", theme::thousands(self.cfg.count)))
                         .size(kit::fs(12.5))
@@ -311,7 +311,7 @@ impl App {
         }
         let mut act: Option<(&'static str, NoticeAction)> = None;
         let mut dismiss: Option<&'static str> = None;
-        for n in &self.notices {
+        for n in self.notices.iter().filter(|n| n.id != "preview") {
             // Modern: a banner with the notice's colour down its left edge.
             let slot = ui.painter().add(egui::Shape::Noop);
             let modern = kit::modern();
@@ -325,7 +325,7 @@ impl App {
                         ui.label(RichText::new(n.icon).size(kit::fs(20.0)).color(n.accent));
                     }
                     ui.vertical(|ui| {
-                        ui.label(RichText::new(&n.title).size(kit::fs(13.5)).strong().color(TEXT()));
+                        ui.label(RichText::new(&n.title).size(kit::fs(13.5)).family(kit::strong_family(kit::fs(13.5))).strong().color(TEXT()));
                         ui.label(RichText::new(&n.body).size(kit::fs(12.0)).color(MUTED()));
                         if let Some(f) = n.progress {
                             ui.add_space(4.0);
@@ -379,6 +379,7 @@ impl App {
                     self.clear_notice(id);
                 }
                 NoticeAction::UseRunningGame => self.use_running_game_folder(),
+                NoticeAction::Preview => self.clear_notice(id),
             }
         }
     }
@@ -397,7 +398,7 @@ impl App {
                     ui.add_space(6.0);
                     ui.vertical(|ui| {
                         ui.label(RichText::new("Current hunt").size(kit::fs(11.0)).color(MUTED()));
-                        ui.label(RichText::new(self.target_label()).size(kit::fs(18.0)).strong().color(TEXT()));
+                        ui.label(RichText::new(self.target_label()).size(kit::fs(18.0)).family(kit::strong_family(kit::fs(18.0))).strong().color(TEXT()));
                         ui.label(
                             RichText::new(format!(
                                 "{} encounters · {} hunted today",
@@ -503,7 +504,7 @@ impl App {
             .inner_margin(egui::Margin::symmetric(12.0, 8.0))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("✨ Shiny Hunter").size(kit::fs(12.5)).strong().color(TEXT()));
+                    ui.label(RichText::new("✨ Shiny Hunter").size(kit::fs(12.5)).family(kit::strong_family(kit::fs(12.5))).strong().color(TEXT()));
                     ui.add_space(8.0);
                     self.overlay_status(ui);
                     ui.label(
@@ -573,7 +574,7 @@ impl App {
 /// A Home card for another app (`ready` = built; otherwise "Coming soon").
 fn app_card(ui: &mut egui::Ui, icon: &str, title: &str, about: &str, ready: bool) {
     ui.horizontal(|ui| {
-        ui.label(RichText::new(format!("{icon} {title}")).size(kit::fs(15.0)).strong().color(TEXT()));
+        ui.label(RichText::new(format!("{icon} {title}")).size(kit::fs(15.0)).family(kit::strong_family(kit::fs(15.0))).strong().color(TEXT()));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ready {
                 kit::pill(ui, "Experimental", PillKind::Warn).on_hover_text("Still being built: some things may be missing or wrong");

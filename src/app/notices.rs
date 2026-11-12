@@ -16,6 +16,8 @@ pub(super) enum NoticeAction {
     OpenCounting,
     /// The game runs from another folder: use that one.
     UseRunningGame,
+    /// A preview from Settings: the button just closes it.
+    Preview,
 }
 
 pub(super) struct Notice {
@@ -235,11 +237,15 @@ impl App {
     }
 
     /// Draw the first notice as a card in `area` (overlay, under the header).
-    pub(super) fn draw_notice(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, area: Rect) {
+    pub(super) fn draw_notice(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, area: Rect, theme: crate::config::OverlayTheme) {
         let Some(n) = self.notices.first() else { return };
         let h = if n.progress.is_some() || n.action.is_some() { 84.0 } else { 64.0 };
         let r = Rect::from_min_size(area.min, egui::vec2(area.width(), h));
         let p = ui.painter().clone();
+        if let Some(sk) = super::ov_toast::skin(theme) {
+            self.themed_notice(ui, ctx, r, theme, &sk);
+            return;
+        }
         p.rect_filled(r.translate(egui::vec2(0.0, 3.0)), 10.0, Color32::from_black_alpha(110));
         p.rect_filled(r, 10.0, Color32::from_rgb(22, 19, 36));
         p.rect_stroke(r, 10.0, Stroke::new(2.0f32, n.accent));
@@ -286,8 +292,101 @@ impl App {
                         self.clear_notice(id);
                     }
                     NoticeAction::UseRunningGame => self.use_running_game_folder(),
+                    NoticeAction::Preview => self.clear_notice(id),
                 }
             }
         }
+    }
+}
+
+impl App {
+    /// A notice in the overlay's theme (see ov_toast).
+    fn themed_notice(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, r: Rect, theme: crate::config::OverlayTheme, sk: &super::ov_toast::ToastSkin) {
+        use super::ov_common::Kind;
+        let Some(n) = self.notices.first() else { return };
+        let lk = super::ov_common::look(theme);
+        let p = ui.painter().clone();
+        let inner = (sk.inner)(r);
+        let xr = Rect::from_center_size(egui::pos2(inner.max.x - 8.0, inner.min.y + 9.0), egui::vec2(18.0, 18.0));
+        let close = ui.interact(xr, ui.id().with(("notice-x", n.id)), egui::Sense::click()).on_hover_text("Dismiss");
+        let view = super::ov_toast::NoticeView {
+            icon: n.icon,
+            title: &n.title,
+            body: &n.body,
+            progress: n.progress,
+            has_action: n.action.is_some(),
+            accent: n.accent,
+            close: xr,
+            close_hot: close.hovered(),
+        };
+        super::ov_toast::notice(&p, r, &view, sk, &lk);
+        let id = n.id;
+        let action = n.action;
+        if close.clicked() {
+            if id == "update" {
+                self.update_dismissed = true;
+            }
+            self.clear_notice(id);
+            return;
+        }
+        if let Some((label, act)) = action {
+            let br = Rect::from_min_size(egui::pos2(inner.max.x - 100.0, r.max.y - 30.0), egui::vec2(96.0, 22.0));
+            let b = ui.interact(br, ui.id().with(("notice-act", id)), egui::Sense::click());
+            let kind = if act == NoticeAction::RestartToUpdate { Kind::Main } else { Kind::Plain };
+            (lk.button)(&p, br, label, kind, b.hovered(), b.is_pointer_button_down_on());
+            if b.clicked() {
+                match act {
+                    NoticeAction::RestartToUpdate => self.restart_to_update(ctx),
+                    NoticeAction::OpenCounting => {
+                        self.show_setup = true;
+                        self.setup.tab = Tab::Counting;
+                        self.clear_notice(id);
+                    }
+                    NoticeAction::UseRunningGame => self.use_running_game_folder(),
+                    NoticeAction::Preview => self.clear_notice(id),
+                }
+            }
+        }
+    }
+}
+
+impl App {
+    /// Settings > Overlay: show a sample notice (`which` 0..3): a plain one,
+    /// one with a progress bar and one with a button.
+    pub(super) fn preview_notice(&mut self, which: usize) {
+        let now = Instant::now();
+        let n = match which {
+            0 => Notice {
+                id: "preview",
+                icon: "☕",
+                title: "Time for a break?".into(),
+                body: "2h 05m of hunting this session. Stretch and grab a drink, the shiny will wait.".into(),
+                progress: None,
+                action: None,
+                expires: Some(now + Duration::from_secs(10)),
+                accent: theme::GREEN,
+            },
+            1 => Notice {
+                id: "preview",
+                icon: "⬇",
+                title: "Downloading update v9.9.9".into(),
+                body: "12.4 of 20.0 MB (this is only a preview)".into(),
+                progress: Some(0.62),
+                action: None,
+                expires: Some(now + Duration::from_secs(10)),
+                accent: theme::BUTTON(),
+            },
+            _ => Notice {
+                id: "preview",
+                icon: "🔎",
+                title: "Nothing counted yet".into(),
+                body: "The game's open but no encounters have come through.".into(),
+                progress: None,
+                action: Some(("Got it", NoticeAction::Preview)),
+                expires: Some(now + Duration::from_secs(12)),
+                accent: theme::HP_YELLOW,
+            },
+        };
+        self.notify(n);
     }
 }

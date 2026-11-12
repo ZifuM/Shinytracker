@@ -6,7 +6,7 @@ use super::ui_kit::{self as kit, CARD_HOVER, LINE, MUTED, TEXT};
 use super::{App, Tab};
 use crate::config::HuntMethod;
 use crate::gamemap::GameMap;
-use crate::theme::{self, GOLD};
+use crate::theme::GOLD;
 use eframe::egui::{self, Align2, Color32, Pos2, Rect, RichText, Sense, Stroke, Vec2};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -155,7 +155,7 @@ impl App {
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     if !already {
-                        let b = egui::Button::new(RichText::new("Hunt on rare grass").strong().color(theme::button_ink()));
+                        let b = egui::Button::new(RichText::new("Hunt on rare grass").family(kit::strong_family(13.5)).strong().color(kit::on_primary()));
                         if kit::accent_button(ui, b, 6.0).clicked() {
                             hunt = true;
                         }
@@ -208,7 +208,7 @@ impl App {
                             ui.set_max_width((row_w - 44.0 - 124.0).max(60.0));
                             if ui
                                 .add(
-                                    egui::Label::new(RichText::new(s.species.name).size(kit::fs(12.5)).strong().color(TEXT()))
+                                    egui::Label::new(RichText::new(s.species.name).size(kit::fs(12.5)).family(kit::strong_family(kit::fs(12.5))).strong().color(TEXT()))
                                         .truncate()
                                         .sense(Sense::click()),
                                 )

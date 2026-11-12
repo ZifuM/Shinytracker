@@ -91,16 +91,16 @@ fn method_experimental(m: HuntMethod) -> bool {
 
 const EXPERIMENTAL_NOTE: &str = "Experimental: issues may occur with this hunting style.";
 
-/// Small amber "issues may occur" chip in a method tile's top-right corner
-/// (left of the tick when it's selected).
-fn warn_chip(ui: &egui::Ui, tile: Rect, selected: bool) {
+/// Small amber "issues may occur" chip in a method tile's bottom-right
+/// corner (clear of the title, beside the odds badge).
+fn warn_chip(ui: &egui::Ui, tile: Rect, _selected: bool) {
     let p = ui.painter();
     let font = egui::FontId::proportional(kit::fs(10.5));
-    let ink = theme::HP_YELLOW;
+    let ink = if theme::pal().light { theme::blend(theme::HP_YELLOW, Color32::BLACK, 0.35) } else { theme::HP_YELLOW };
     let galley = p.layout_no_wrap("⚠ Issues may occur".to_string(), font, ink);
-    let right = tile.right() - if selected { 32.0 } else { 10.0 };
+    let right = tile.right() - 12.0;
     let r = Rect::from_min_size(
-        egui::pos2(right - galley.size().x - 12.0, tile.top() + 9.0),
+        egui::pos2(right - galley.size().x - 12.0, tile.bottom() - 27.0),
         galley.size() + egui::vec2(12.0, 4.0),
     );
     p.rect_filled(r, r.height() / 2.0, ink.gamma_multiply(0.16));
@@ -192,8 +192,8 @@ impl App {
                 egui::Rounding { nw: 0.0, ne: 0.0, sw: r, se: r },
                 PAGE(),
             );
-            if !self.cfg.welcome_done {
-                self.welcome(ctx);
+            if self.onboarding_open() {
+                self.onboarding(ctx);
             } else {
                 // (Panels draw on the background layer, so the sidebar fills
                 // itself rather than being painted over afterwards.)
@@ -314,7 +314,7 @@ impl App {
                                     || self.setup.caught_pick
                                     || (self.setup.profile_card.is_none()
                                         && self.setup.share.is_none()
-                                        && matches!(self.setup.tab, Tab::Home | Tab::Profile | Tab::Dex | Tab::Trophies | Tab::Runs | Tab::Pokedex | Tab::Map));
+                                        && matches!(self.setup.tab, Tab::Home | Tab::Profile | Tab::Stats | Tab::Dex | Tab::Trophies | Tab::Runs | Tab::Pokedex | Tab::Map));
                                 let cap = if modern { 1060.0 } else { 900.0 };
                                 let w = if wide { ui.available_width() } else { ui.available_width().min(cap) };
                                 ui.set_max_width(w);
@@ -339,6 +339,7 @@ impl App {
                                         Tab::Pokedex => self.page_pokedex(ui),
                                         Tab::Map => self.page_map(ui),
                                         Tab::Profile => self.page_profile(ui),
+                                        Tab::Stats => self.page_stats(ui),
                                         Tab::Dex => self.page_dex(ui),
                                         Tab::Hunt => self.page_hunt(ui),
                                         Tab::Counting => self.page_counting(ui),
@@ -365,7 +366,7 @@ impl App {
                                 .fixed_pos(at)
                                 .show(ui.ctx(), |ui| {
                                     ui.add(
-                                        egui::Button::new(RichText::new("↑  Top").size(kit::fs(12.5)).strong().color(TEXT()))
+                                        egui::Button::new(RichText::new("↑  Top").size(kit::fs(12.5)).family(kit::strong_family(kit::fs(12.5))).strong().color(TEXT()))
                                             .fill(CARD_HOVER())
                                             .stroke(egui::Stroke::new(1.0f32, LINE()))
                                             .rounding(15.0)
@@ -579,7 +580,7 @@ impl App {
                     let p = ui.painter_at(r);
                     p.rect_filled(r, 20.0, CARD_HOVER());
                     self.draw_sprite(&p, &sp, false, r.center_bottom() - egui::vec2(0.0, 3.0), egui::vec2(36.0, 36.0));
-                    ui.label(RichText::new(format!("{}  #{:04}", sp.name, sp.dex)).size(kit::fs(14.0)).strong().color(TEXT()));
+                    ui.label(RichText::new(format!("{}  #{:04}", sp.name, sp.dex)).size(kit::fs(14.0)).family(kit::strong_family(kit::fs(14.0))).strong().color(TEXT()));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.add(egui::Button::new(RichText::new("Remove").size(kit::fs(12.5))).fill(kit::btn_fill())).clicked() {
                             remove = Some(k);
@@ -699,7 +700,7 @@ impl App {
                 let mut go = false;
                 let mut cancel = false;
                 ui.horizontal(|ui| {
-                    go = kit::accent_button(ui, egui::Button::new(RichText::new("Replace").strong().color(theme::button_ink())), 6.0).clicked();
+                    go = kit::accent_button(ui, egui::Button::new(RichText::new("Replace").family(kit::strong_family(13.5)).strong().color(kit::on_primary())), 6.0).clicked();
                     cancel = ui.add(egui::Button::new("Cancel").fill(kit::btn_fill())).clicked();
                 });
                 if go {
@@ -803,7 +804,7 @@ impl App {
         kit::section(ui, "Updates");
         kit::card(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new(format!("Poke Together Companion v{}", update::VERSION)).size(kit::fs(13.5)).strong().color(TEXT()));
+                ui.label(RichText::new(format!("Poke Together Companion v{}", update::VERSION)).size(kit::fs(13.5)).family(kit::strong_family(kit::fs(13.5))).strong().color(TEXT()));
                 let (text, kind) = match update::get(&self.updater) {
                     State::Idle => ("Not checked yet".to_string(), PillKind::Info),
                     State::Checking => ("Checking…".to_string(), PillKind::Info),
@@ -882,7 +883,7 @@ impl App {
                     update::check(self.updater.clone(), ui.ctx().clone(), self.cfg.installed_update.clone(), self.cfg.prerelease_updates);
                 }
                 if matches!(state, State::Ready { .. })
-                    && kit::accent_button(ui, egui::Button::new(RichText::new("Restart to update").strong().color(theme::button_ink())), 6.0).clicked()
+                    && kit::accent_button(ui, egui::Button::new(RichText::new("Restart to update").family(kit::strong_family(13.5)).strong().color(kit::on_primary())), 6.0).clicked()
                 {
                     let ctx = ui.ctx().clone();
                     self.restart_to_update(&ctx);
@@ -900,9 +901,10 @@ impl App {
     fn sidebar(&mut self, ui: &mut egui::Ui) {
         ui.add_space(2.0);
         // (group heading, tab, icon, label, parent: the app a page belongs to)
-        let items: [(Option<&str>, Tab, &str, &str, Option<Tab>); 13] = [
+        let items: [(Option<&str>, Tab, &str, &str, Option<Tab>); 14] = [
             (None, Tab::Home, "🏠", "Home", None),
             (None, Tab::Profile, "🏅", "Profile", None),
+            (None, Tab::Stats, "📊", "Stats", None),
             (Some("APPS"), Tab::Shiny, "✨", "Shiny Hunter", None),
             (None, Tab::Hunt, "🎯", "Hunt", Some(Tab::Shiny)),
             (None, Tab::Counting, "👁", "Counting", Some(Tab::Shiny)),
@@ -1108,7 +1110,7 @@ impl App {
     }
 
     /// Method tiles + method-specific controls.
-    fn method_picker(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn method_picker(&mut self, ui: &mut egui::Ui) {
         // Every method on offer, always shown (plus a retired one if it's
         // still selected).
         let methods: Vec<HuntMethod> = HuntMethod::ALL
@@ -1205,7 +1207,7 @@ impl App {
         }
     }
 
-    fn battle_type_picker(&mut self, ui: &mut egui::Ui) -> bool {
+    pub(super) fn battle_type_picker(&mut self, ui: &mut egui::Ui) -> bool {
         let mut changed = false;
         ui.horizontal(|ui| {
             changed = kit::segmented(
@@ -1218,7 +1220,7 @@ impl App {
         changed
     }
 
-    fn count_source_picker(&mut self, ui: &mut egui::Ui) -> bool {
+    pub(super) fn count_source_picker(&mut self, ui: &mut egui::Ui) -> bool {
         let mut changed = false;
         let w = ((ui.available_width() - 8.0) / 2.0).floor();
         ui.horizontal(|ui| {
@@ -1247,7 +1249,7 @@ impl App {
         changed
     }
 
-    fn odds_tiles(&self, ui: &mut egui::Ui) {
+    pub(super) fn odds_tiles(&self, ui: &mut egui::Ui) {
         let w = ((ui.available_width() - 16.0) / 3.0).floor();
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
@@ -1321,7 +1323,7 @@ impl App {
                                     ui.label(
                                         RichText::new(format!("{}  #{:04}", sp.name, i + 1))
                                             .size(kit::fs(16.5))
-                                            .strong()
+                                            .family(kit::strong_family(kit::fs(16.5))).strong()
                                             .color(TEXT()),
                                     );
                                 });
@@ -1528,7 +1530,7 @@ impl App {
     }
 
     /// After the game folder changes: counting and the Map look there now.
-    fn game_folder_changed(&mut self) {
+    pub(super) fn game_folder_changed(&mut self) {
         self.dirty = true;
         self.push_settings(true);
         self.gamemap = None;
@@ -1756,7 +1758,7 @@ impl App {
                     ui.label(
                         RichText::new(self.target_name(self.cfg.target.as_deref()))
                             .size(kit::fs(14.5))
-                            .strong()
+                            .family(kit::strong_family(kit::fs(14.5))).strong()
                             .color(TEXT()),
                     );
                     ui.label(
@@ -1779,7 +1781,7 @@ impl App {
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
-                        .add(egui::Button::new(RichText::new("Stats").strong()).fill(kit::btn_fill()).min_size(egui::vec2(64.0, 30.0)))
+                        .add(egui::Button::new(RichText::new("Stats").family(kit::strong_family(13.5)).strong()).fill(kit::btn_fill()).min_size(egui::vec2(64.0, 30.0)))
                         .on_hover_text("Time hunted, encounters per hour, sessions and more")
                         .clicked()
                     {
@@ -1834,7 +1836,7 @@ impl App {
                         ui.label(
                             RichText::new(self.target_name(r.target.as_deref()))
                                 .size(kit::fs(14.0))
-                                .strong()
+                                .family(kit::strong_family(kit::fs(14.0))).strong()
                                 .color(TEXT()),
                         );
                         ui.label(
@@ -1881,7 +1883,7 @@ impl App {
                             if kit::accent_button(
                                 ui,
                                 egui::Button::new(
-                                    RichText::new("▶ Resume").strong().color(theme::button_ink()),
+                                    RichText::new("▶ Resume").family(kit::strong_family(13.5)).strong().color(kit::on_primary()),
                                 )
                                 .min_size(egui::vec2(90.0, 30.0)),
                                 4.0,
@@ -2029,10 +2031,30 @@ impl App {
                 let label = |ui: &mut egui::Ui, title: &str, about: &str| {
                     ui.vertical(|ui| {
                         ui.set_max_width((ui.available_width() - 250.0).max(180.0));
-                        ui.label(RichText::new(title).size(kit::fs(13.5)).strong().color(TEXT()));
+                        ui.label(RichText::new(title).size(kit::fs(13.5)).family(kit::strong_family(kit::fs(13.5))).strong().color(TEXT()));
                         ui.label(RichText::new(about).size(kit::fs(12.0)).color(MUTED()));
                     });
                 };
+                if !legacy {
+                    kit::section(ui, "Theme");
+                    let avail = ui.available_width();
+                    let cols = ((avail + 12.0) / (158.0 + 12.0)).floor().clamp(2.0, 5.0);
+                    let tw = ((avail - 12.0 * (cols - 1.0)) / cols).floor();
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(12.0, 12.0);
+                        for t in crate::config::OverlayTheme::ALL {
+                            if super::ov_common::theme_tile(ui, t, self.cfg.overlay.theme == t, tw).clicked() && self.cfg.overlay.theme != t {
+                                self.cfg.overlay.theme = t;
+                                self.ov_size = None;
+                                self.dirty = true;
+                            }
+                        }
+                    });
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("Every theme has its own layout and works in all three sizes. Your sections and size stay the same when you switch.").size(kit::fs(11.5)).color(MUTED()));
+                    self.popup_previews(ui);
+                    kit::section(ui, "Layout");
+                }
                 kit::card(ui, |ui| {
                     // Style
                     ui.horizontal(|ui| {
@@ -2102,7 +2124,7 @@ impl App {
                     }
                     // Opacity
                     row_gap(ui);
-                    ui.label(RichText::new("Background opacity").size(kit::fs(13.5)).strong().color(TEXT()));
+                    ui.label(RichText::new("Background opacity").size(kit::fs(13.5)).family(kit::strong_family(kit::fs(13.5))).strong().color(TEXT()));
                     ui.label(RichText::new("Fade the panel so the game shows through.").size(kit::fs(12.0)).color(MUTED()));
                     ui.add_space(4.0);
                     ui.spacing_mut().slider_width = ui.available_width() - 70.0;
@@ -2132,6 +2154,7 @@ impl App {
                             let keep = self.cfg.overlay.clone();
                             self.cfg.overlay = OverlayModules {
                                 style: keep.style,
+                                theme: keep.theme,
                                 size: keep.size,
                                 click_through: keep.click_through,
                                 ..OverlayModules::default()
@@ -2409,6 +2432,9 @@ impl App {
                         );
                     }
                 });
+                if self.cfg.overlay.legacy() {
+                    self.popup_previews(ui);
+                }
             }
             OverlayTab::Sounds => self.sounds_card(ui),
         }
@@ -2501,7 +2527,7 @@ impl App {
                         ui.label(
                             RichText::new("Press new keys…  (Esc to cancel)")
                                 .size(kit::fs(13.0))
-                                .strong()
+                                .family(kit::strong_family(kit::fs(13.0))).strong()
                                 .color(GOLD),
                         );
                     } else if let Some(b) = self.cfg.keybinds.get(action) {
@@ -2579,7 +2605,30 @@ impl App {
         }
         ui.add_space(6.0);
         match self.setup.adv_tab {
-            AdvTab::Updates => self.updates_card(ui),
+            AdvTab::Updates => {
+                self.updates_card(ui);
+                kit::section(ui, "Welcome tour");
+                kit::card(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            ui.set_max_width((ui.available_width() - 190.0).max(200.0));
+                            ui.label(RichText::new("Run the tour again").size(kit::fs(13.5)).family(kit::strong_family(13.5)).strong().color(TEXT()));
+                            ui.label(
+                                RichText::new("The step-by-step setup from your first start: your game, look, overlay, target and odds. Your hunt and settings are kept.")
+                                    .size(kit::fs(12.0))
+                                    .color(MUTED()),
+                            );
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if kit::accent_button(ui, egui::Button::new(RichText::new("Start the tour").family(kit::strong_family(13.5)).strong().color(kit::on_primary())), 6.0).clicked() {
+                                self.cfg.onboarding_seen = 0;
+                                self.setup.welcome_step = 0;
+                                self.dirty = true;
+                            }
+                        });
+                    });
+                });
+            }
             AdvTab::Data => {
                 self.backup_card(ui);
                 self.data_folder_card(ui);
@@ -2657,159 +2706,16 @@ impl App {
         }
     }
 
-    fn welcome(&mut self, ctx: &egui::Context) {
-        const STEPS: usize = 3;
-        egui::CentralPanel::default()
-            .frame(egui::Frame::none().inner_margin(egui::Margin::symmetric(32.0, 24.0)))
-            .show(ctx, |ui| {
-                kit::settings_style(ui);
-                let step = self.setup.welcome_step.min(STEPS - 1);
-                ui.horizontal(|ui| {
-                    let (r, _) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), Sense::hover());
-                    ui.painter().image(
-                        self.icon_tex.id(),
-                        r,
-                        Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                        Color32::WHITE,
-                    );
-                    ui.label(
-                        RichText::new(if kit::clean() { "Welcome to Poke Together Companion" } else { "WELCOME TO THE COMPANION" })
-                            .font(if kit::clean() { crate::fonts::sans_bold_font(20.0) } else { kit::display_font(11.0) })
-                            .color(TEXT()),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .add(egui::Button::new(RichText::new("Skip").color(MUTED())).frame(false))
-                            .clicked()
-                        {
-                            self.finish_welcome();
-                        }
-                    });
-                });
-                ui.add_space(10.0);
-                kit::progress(ui, (step + 1) as f32 / STEPS as f32);
-                ui.add_space(4.0);
-                ui.label(
-                    RichText::new(format!("Step {} of {STEPS}", step + 1))
-                        .size(kit::fs(11.0))
-                        .color(MUTED()),
-                );
-                ui.add_space(14.0);
-
-                let footer_h = 52.0;
-                let body_h = (ui.available_height() - footer_h).max(120.0);
-                egui::ScrollArea::vertical()
-                    .id_salt("welcome-body")
-                    .max_height(body_h)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| match step {
-                        0 => {
-                            ui.label(
-                                RichText::new("What are you hunting?")
-                                    .size(kit::fs(18.5))
-                                    .strong()
-                                    .color(TEXT()),
-                            );
-                            ui.label(
-                                RichText::new("Pick your target. You can change it any time.")
-                                    .size(kit::fs(12.0))
-                                    .color(MUTED()),
-                            );
-                            ui.add_space(12.0);
-                            if let Some(slug) = self.target_picker(ui, body_h - 90.0) {
-                                self.set_target(slug);
-                            }
-                        }
-                        1 => {
-                            ui.label(
-                                RichText::new("How are you hunting?")
-                                    .size(kit::fs(18.5))
-                                    .strong()
-                                    .color(TEXT()),
-                            );
-                            ui.label(
-                                RichText::new("This sets your shiny odds.")
-                                    .size(kit::fs(12.0))
-                                    .color(MUTED()),
-                            );
-                            ui.add_space(12.0);
-                            self.method_picker(ui);
-                            ui.add_space(16.0);
-                            kit::section(ui, "Singles or doubles?");
-                            if self.battle_type_picker(ui) {
-                                self.push_settings(true);
-                            }
-                            ui.add_space(14.0);
-                            self.odds_tiles(ui);
-                        }
-                        _ => {
-                            ui.label(
-                                RichText::new("How should it count?")
-                                    .size(kit::fs(18.5))
-                                    .strong()
-                                    .color(TEXT()),
-                            );
-                            ui.label(
-                                RichText::new("The game log is exact and needs no setup.")
-                                    .size(kit::fs(12.0))
-                                    .color(MUTED()),
-                            );
-                            ui.add_space(12.0);
-                            self.count_source_picker(ui);
-                            if self.cfg.count_source == CountSource::Screen {
-                                ui.add_space(8.0);
-                                kit::pill(
-                                    ui,
-                                    "You'll set up the name boxes next, in the Counting page.",
-                                    PillKind::Info,
-                                );
-                            }
-                        }
-                    });
-
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    if step > 0
-                        && ui
-                            .add(
-                                egui::Button::new("Back")
-                                    .fill(kit::btn_fill())
-                                    .min_size(egui::vec2(90.0, 34.0)),
-                            )
-                            .clicked()
-                    {
-                        self.setup.welcome_step = step - 1;
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let last = step + 1 == STEPS;
-                        let label = if last { "Start hunting" } else { "Next" };
-                        let ready = step != 0 || self.cfg.target.is_some();
-                        let ink = if ready { theme::button_ink() } else { Color32::WHITE };
-                        let btn = egui::Button::new(RichText::new(label).strong().color(ink))
-                            .fill(kit::btn_fill())
-                            .min_size(egui::vec2(130.0, 34.0));
-                        let resp = if ready { kit::accent_button(ui, btn, 6.0) } else { ui.add(btn) };
-                        if !ready {
-                            resp.clone().on_hover_text("Pick a target first");
-                        }
-                        if resp.clicked() && ready {
-                            if last {
-                                self.finish_welcome();
-                            } else {
-                                self.setup.welcome_step = step + 1;
-                            }
-                        }
-                    });
-                });
-            });
-    }
-
-    fn finish_welcome(&mut self) {
+    /// End the onboarding tour: it won't open again until Advanced > Updates
+    /// asks for it (or a release raises ONBOARDING_VERSION).
+    pub(super) fn finish_welcome(&mut self) {
         self.cfg.welcome_done = true;
-        self.setup.tab = if self.cfg.count_source == CountSource::Screen {
+        self.cfg.onboarding_seen = crate::config::ONBOARDING_VERSION;
+        self.setup.welcome_step = 0;
+        self.setup.tab = if self.cfg.count_source == CountSource::Screen && self.cfg.name_regions.is_empty() {
             Tab::Counting
         } else {
-            Tab::Hunt
+            Tab::Home
         };
         self.dirty = true;
         self.push_settings(true);
@@ -2834,4 +2740,42 @@ fn clickable(ui: &mut egui::Ui, rect: Rect, id: impl std::hash::Hash) -> bool {
     r.on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text("View stats")
         .clicked()
+}
+
+impl App {
+    /// Settings > Overlay: a button for each pop-up, to see how it looks in
+    /// the chosen theme.
+    fn popup_previews(&mut self, ui: &mut egui::Ui) {
+        kit::section(ui, "Pop-ups");
+        kit::card(ui, |ui| {
+            ui.label(RichText::new("Pop-ups show just under the overlay and match its theme. Try each one:").size(kit::fs(12.0)).color(MUTED()));
+            if !self.overlay_on {
+                ui.label(RichText::new("Start the overlay to see them.").size(kit::fs(11.5)).color(theme::HP_YELLOW));
+            }
+            ui.add_space(6.0);
+            let btn = |ui: &mut egui::Ui, s: &str| ui.add(egui::Button::new(RichText::new(s).size(kit::fs(12.0))).fill(kit::btn_fill())).clicked();
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+                ui.label(RichText::new("Toasts").size(kit::fs(12.0)).family(kit::strong_family(kit::fs(12.0))).strong().color(TEXT()));
+                for (i, name) in ["🏅 Achievement", "⬆ Level up", "✔ Daily goal", "📅 Weekly challenge", "⭐ Milestone", "👋 Welcome"].into_iter().enumerate() {
+                    if btn(ui, name) {
+                        self.preview_toast(i, None);
+                        self.cfg.mini = false;
+                        self.play(if i == 4 { crate::sound::Sfx::Milestone } else { crate::sound::Sfx::Achievement });
+                    }
+                }
+            });
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+                ui.label(RichText::new("Notices").size(kit::fs(12.0)).family(kit::strong_family(kit::fs(12.0))).strong().color(TEXT()));
+                for (i, name) in ["☕ Break reminder", "⬇ Update download", "🔎 With a button"].into_iter().enumerate() {
+                    if btn(ui, name) {
+                        self.preview_notice(i);
+                        self.cfg.mini = false;
+                    }
+                }
+            });
+        });
+    }
 }

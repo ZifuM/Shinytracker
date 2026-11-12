@@ -46,7 +46,7 @@ fn cell(t: impl Into<String>) -> RichText {
 }
 
 fn head(t: &str) -> RichText {
-    RichText::new(t).size(kit::fs(11.0)).strong().color(MUTED())
+    RichText::new(t).size(kit::fs(11.0)).family(kit::strong_family(kit::fs(11.0))).strong().color(MUTED())
 }
 
 /// "MORE" / "MODERN" tag for spots that need a world option.
@@ -182,7 +182,7 @@ impl App {
                             ui.vertical(|ui| {
                                 ui.set_min_width(140.0);
                                 ui.set_max_width(220.0);
-                                let name = if same { small(place_name(&e.area)) } else { cell(place_name(&e.area)).strong() };
+                                let name = if same { small(place_name(&e.area)) } else { cell(place_name(&e.area)).family(kit::strong_family(13.5)).strong() };
                                 ui.add(egui::Label::new(name).extend());
                                 if !e.note.is_empty() {
                                     ui.add(egui::Label::new(small(&e.note)).wrap());
@@ -198,7 +198,7 @@ impl App {
                                 let t = if c == 0 { "—".to_string() } else { format!("{c}%") };
                                 let mut rt = cell(t);
                                 if c == best && c > 0 && (e.chance.morning != e.chance.day || e.chance.day != e.chance.night) {
-                                    rt = rt.strong().color(theme::LINK());
+                                    rt = rt.family(kit::strong_family(13.5)).strong().color(theme::LINK());
                                 }
                                 ui.label(rt);
                             }
@@ -245,7 +245,7 @@ impl App {
                         if o.works == Some(false) {
                             kit::pill(ui, "Doesn't work", PillKind::Bad).on_hover_text("Doesn't work in the game right now");
                         }
-                        ui.label(cell(&o.place).strong());
+                        ui.label(cell(&o.place).family(kit::strong_family(13.5)).strong());
                         if !o.level.is_empty() {
                             ui.label(small(format!("Lv. {}", o.level)));
                         }
@@ -404,7 +404,7 @@ impl App {
                         ui.horizontal(|ui| {
                             let mut rt = cell(&name);
                             if stab {
-                                rt = rt.strong();
+                                rt = rt.family(kit::strong_family(13.5)).strong();
                             }
                             let r = ui.label(rt);
                             if !mv.d.is_empty() {

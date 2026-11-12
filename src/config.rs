@@ -228,6 +228,66 @@ pub enum OverlayStyle {
     Legacy,
 }
 
+/// The modular overlay's look. Classic is the original; the others are
+/// whole redesigns with their own layouts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum OverlayTheme {
+    #[default]
+    Classic,
+    Anime,
+    Glass,
+    Retro,
+    Neon,
+    Poketch,
+    Journal,
+    Holo,
+    Broadcast,
+    Terminal,
+}
+
+impl OverlayTheme {
+    pub const ALL: [OverlayTheme; 10] = [
+        OverlayTheme::Classic,
+        OverlayTheme::Anime,
+        OverlayTheme::Glass,
+        OverlayTheme::Retro,
+        OverlayTheme::Neon,
+        OverlayTheme::Poketch,
+        OverlayTheme::Journal,
+        OverlayTheme::Holo,
+        OverlayTheme::Broadcast,
+        OverlayTheme::Terminal,
+    ];
+    pub fn name(self) -> &'static str {
+        match self {
+            OverlayTheme::Classic => "Classic",
+            OverlayTheme::Anime => "Sticker",
+            OverlayTheme::Glass => "Glass HUD",
+            OverlayTheme::Retro => "Retro DS",
+            OverlayTheme::Neon => "Stream neon",
+            OverlayTheme::Poketch => "Pokétch",
+            OverlayTheme::Journal => "Field journal",
+            OverlayTheme::Holo => "Holo card",
+            OverlayTheme::Broadcast => "Broadcast",
+            OverlayTheme::Terminal => "Terminal",
+        }
+    }
+    pub fn about(self) -> &'static str {
+        match self {
+            OverlayTheme::Classic => "The original battle-plate look in your colours.",
+            OverlayTheme::Anime => "Flat bold colours, ink outlines, a star burst and comic lettering.",
+            OverlayTheme::Glass => "A see-through frosted panel with big clean numbers.",
+            OverlayTheme::Retro => "Two DS screens: a Gen 4 battle scene and touch-screen buttons.",
+            OverlayTheme::Neon => "Dark with glowing neon edges, made for streaming.",
+            OverlayTheme::Poketch => "A wrist watch with a green LCD screen and real side buttons.",
+            OverlayTheme::Journal => "A notebook page: taped polaroid, handwriting and tally marks.",
+            OverlayTheme::Holo => "A shiny trading card with a moving foil shimmer.",
+            OverlayTheme::Broadcast => "An esports-style scoreboard with a match clock and ticker.",
+            OverlayTheme::Terminal => "A console window: log lines, ASCII bars and a blinking cursor.",
+        }
+    }
+}
+
 /// Size preset for the modular overlay.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum OverlaySize {
@@ -243,6 +303,7 @@ pub enum OverlaySize {
 #[serde(default)]
 pub struct OverlayModules {
     pub style: OverlayStyle,
+    pub theme: OverlayTheme,
     pub size: OverlaySize,
     /// Clicks go through to the game (toggle back with the hotkey).
     pub click_through: bool,
@@ -276,6 +337,7 @@ impl Default for OverlayModules {
     fn default() -> Self {
         Self {
             style: OverlayStyle::Modular,
+            theme: OverlayTheme::Classic,
             size: OverlaySize::Full,
             click_through: false,
             status_dot: true,
@@ -306,6 +368,10 @@ impl OverlayModules {
     }
 }
 
+/// The onboarding tour's version: raise it to show the tour again to
+/// everyone once (for a release with lots to show).
+pub const ONBOARDING_VERSION: u32 = 1;
+
 /// How the app looks: mode plus an accent colour, optionally a gradient.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -319,6 +385,9 @@ pub struct Appearance {
     pub button: [u8; 3],
     pub button_gradient: bool,
     pub button2: [u8; 3],
+    /// Buttons in the accent colour alone, without the gradient's second
+    /// colour (when buttons follow the header). Off by default.
+    pub solid_buttons: bool,
     /// Flat "clean" look for the settings window (neutral greys, pill
     /// buttons, system font); the default. Off = the classic look.
     pub clean_settings: bool,
@@ -340,6 +409,7 @@ impl Default for Appearance {
             button: [52, 116, 218],
             button_gradient: false,
             button2: [128, 78, 208],
+            solid_buttons: false,
             clean_settings: true,
             modern_ui: true,
             nav_compact: false,
@@ -431,6 +501,8 @@ pub struct Config {
     pub share_ask: bool,
     /// Rare grass infographic in the original sea-blue look (else the anime one).
     pub poster_classic: bool,
+    /// The rare grass poster's look (None = from `poster_classic`).
+    pub poster_look: Option<crate::card::CardStyle>,
     /// Light/dark mode and accent colours.
     pub appearance: Appearance,
     /// Trainer profile name (also used on share images).
@@ -525,6 +597,10 @@ pub struct Config {
     pub keybinds: KeyBinds,
     /// First-run welcome finished (existing users are migrated to true).
     pub welcome_done: bool,
+    /// The onboarding tour version this user has been through. Below
+    /// `ONBOARDING_VERSION` the tour opens (new users get the welcome,
+    /// people updating get "What's new" first). Advanced > Updates resets it.
+    pub onboarding_seen: u32,
     /// One-time switch-off of the experimental shiny star alert.
     pub star_alert_reset: bool,
     /// Second switch-off, when the stricter ★ detector arrived.
@@ -565,6 +641,7 @@ impl Default for Config {
             share_folder: None,
             share_ask: false,
             poster_classic: false,
+            poster_look: None,
             appearance: Appearance::default(),
             trainer_name: String::new(),
             achievements: Vec::new(),
@@ -615,6 +692,7 @@ impl Default for Config {
             history: Vec::new(),
             keybinds: KeyBinds::default(),
             welcome_done: false,
+            onboarding_seen: 0,
             star_alert_reset: false,
             star_alert_reset2: false,
             star_alert_on3: false,

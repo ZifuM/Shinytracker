@@ -160,12 +160,12 @@ impl App {
             self.mapui.spot_sets.insert(key.clone(), set);
         }
         let Some(set) = self.mapui.spot_sets.get(&key).cloned().flatten() else {
-            ui.label(RichText::new(title).size(kit::fs(12.5)).strong().color(TEXT()));
+            ui.label(RichText::new(title).size(kit::fs(12.5)).family(kit::strong_family(kit::fs(12.5))).strong().color(TEXT()));
             ui.label(RichText::new("Not on the map yet.").size(kit::fs(11.5)).color(MUTED()));
             return false;
         };
         ui.horizontal(|ui| {
-            ui.label(RichText::new(title).size(kit::fs(12.5)).strong().color(TEXT()));
+            ui.label(RichText::new(title).size(kit::fs(12.5)).family(kit::strong_family(kit::fs(12.5))).strong().color(TEXT()));
             if !set.exact {
                 kit::pill(ui, "One of several rooms", PillKind::Info).on_hover_text("This Pokémon lives in several rooms that are all alike; this is one of them.");
             }
@@ -278,7 +278,7 @@ impl App {
                             ui.label(
                                 RichText::new(format!("{zone}  ·  {} spot{}", g.len(), if g.len() == 1 { "" } else { "s" }))
                                     .size(kit::fs(12.5))
-                                    .strong()
+                                    .family(kit::strong_family(kit::fs(12.5))).strong()
                                     .color(TEXT()),
                             );
                             let (x0, y0, x1, y1) = rect;

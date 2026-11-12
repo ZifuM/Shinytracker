@@ -355,20 +355,23 @@ fn chip(ui: &mut egui::Ui, text: &str) {
     chip_col(ui, text, TEXT());
 }
 
+/// A Cirrus chip: Cloud pill with a hairline.
 fn chip_col(ui: &mut egui::Ui, text: &str, col: Color32) {
     egui::Frame::none()
-        .fill(Color32::from_black_alpha(if theme::pal().light { 14 } else { 60 }))
-        .rounding(10.0)
-        .inner_margin(egui::Margin::symmetric(9.0, 3.0))
+        .fill(kit::CARD())
+        .stroke(Stroke::new(1.0f32, kit::LINE()))
+        .rounding(14.0)
+        .inner_margin(egui::Margin::symmetric(11.0, 4.0))
         .show(ui, |ui| ui.label(RichText::new(text).size(12.0).color(col)));
 }
 
+/// A Cirrus secondary button: Cloud pill with a hairline; Sunken on hover.
 fn sec_button(ui: &mut egui::Ui, text: &str, tip: &str) -> bool {
     ui.add(
         egui::Button::new(RichText::new(text).size(13.0).color(TEXT()))
-            .fill(Color32::from_black_alpha(if theme::pal().light { 16 } else { 70 }))
-            .stroke(Stroke::new(1.0f32, Color32::from_rgba_premultiplied(18, 18, 18, 18)))
-            .rounding(10.0)
+            .fill(kit::CARD())
+            .stroke(Stroke::new(1.0f32, kit::LINE()))
+            .rounding(18.0)
             .min_size(egui::vec2(0.0, 36.0)),
     )
     .on_hover_text(tip)

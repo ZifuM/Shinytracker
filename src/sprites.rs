@@ -213,6 +213,33 @@ impl SpriteStore {
         }
     }
 
+    /// The animated Black/White back sprite (Gen 1-5 only), if it's ready;
+    /// otherwise starts loading it and returns None.
+    pub fn get_back(&mut self, sp: &Species, shiny: bool) -> Option<&Anim> {
+        let kind = if shiny { "back-shiny" } else { "back-normal" };
+        let key = format!("{kind}/{}", sp.slug);
+        if !self.slots.contains_key(&key) {
+            if sp.dex > LAST_ANIMATED_DEX {
+                self.slots.insert(key.clone(), Slot::Failed);
+            } else {
+                let urls = sp.sprite_slugs().iter().map(|s| format!("{BASE}/black-white/anim/{kind}/{s}.gif")).collect();
+                let cache = cache_dir().join("sprites").join(kind).join(format!("{}.img", sp.slug));
+                self.slots.insert(key.clone(), Slot::Loading);
+                let _ = self.req_tx.send(Request { key: key.clone(), urls, cache });
+            }
+        }
+        match self.slots.get(&key) {
+            Some(Slot::Ready(a)) => Some(a),
+            _ => None,
+        }
+    }
+
+    /// There's no back sprite for this one (or it couldn't be downloaded).
+    pub fn back_failed(&self, sp: &Species, shiny: bool) -> bool {
+        let kind = if shiny { "back-shiny" } else { "back-normal" };
+        matches!(self.slots.get(&format!("{kind}/{}", sp.slug)), Some(Slot::Failed))
+    }
+
     pub fn failed(&self, sp: &Species, shiny: bool) -> bool {
         let kind = if shiny { "shiny" } else { "normal" };
         matches!(

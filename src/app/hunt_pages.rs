@@ -5,7 +5,7 @@ use super::ui_kit::{self as kit, MUTED, PillKind, CARD, CARD_HOVER, LINE, TEXT};
 use super::{App, GifReady, RunRef, ShareView, Tab};
 use crate::card::{CardData, CardLayout, CardOptions, CardTheme};
 use crate::config::{Appearance, UiMode};
-use crate::stats::{self, fmt_date, fmt_day_short, fmt_duration, local_day, now_unix, RunStats};
+use crate::stats::{fmt_date, fmt_duration, RunStats};
 use crate::theme::{self, GOLD, RED};
 use eframe::egui::{self, Color32, Rect, RichText, Sense, Stroke};
 use std::time::{Duration, Instant};
@@ -88,7 +88,7 @@ pub(super) fn primary(ui: &mut egui::Ui, text: &str) -> egui::Response {
     let text = if kit::clean() { text.trim() } else { text };
     kit::accent_button(
         ui,
-        egui::Button::new(RichText::new(text).strong().color(theme::button_ink())).min_size(egui::vec2(0.0, 34.0)),
+        egui::Button::new(RichText::new(text).family(kit::strong_family(13.5)).strong().color(kit::on_primary())).min_size(egui::vec2(0.0, 34.0)),
         8.0,
     )
 }
@@ -295,190 +295,27 @@ impl App {
             self.setup.view_run = None;
             return;
         };
-        ui.add_space(6.0);
+        ui.add_space(4.0);
+        let st = info.stats.clone().unwrap_or_default();
+        let mut tab = if self.setup.run_tab == RunTab::Journal { RunTab::Journal } else { RunTab::Overview };
         ui.horizontal(|ui| {
-            self.run_thumb(ui, info.slug.clone());
-            ui.vertical(|ui| {
-                ui.label(RichText::new(if kit::clean() { info.name.clone() } else { info.name.to_uppercase() }).font(kit::display_font(12.0)).color(TEXT()));
-                ui.add_space(2.0);
-                let (t, k) = if info.caught {
-                    ("★ Caught", PillKind::Ok)
-                } else if info.current {
-                    ("Current run", PillKind::Info)
-                } else {
-                    ("Saved run", PillKind::Warn)
-                };
-                ui.horizontal(|ui| {
-                    kit::pill(ui, t, k);
-                    let when = match info.ended {
-                        Some(e) => format!("{} → {}", fmt_date(info.started.max(1)), fmt_date(e)),
-                        None if info.started > 0 => format!("Started {}", fmt_date(info.started)),
-                        None => String::new(),
-                    };
-                    ui.label(RichText::new(when).size(kit::fs(11.5)).color(MUTED()));
-                });
+            let w = (ui.available_width() - 210.0).max(240.0);
+            ui.allocate_ui_with_layout(egui::vec2(w, 44.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.set_width(w);
+                kit::tab_bar(ui, &mut tab, &[(RunTab::Overview, "Stats"), (RunTab::Journal, "Journal")]);
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if primary(ui, "  Make share image  ").clicked() {
+                if primary(ui, "  🖼  Make share image  ").clicked() {
                     self.open_share(run, Some(run));
                 }
             });
         });
-        ui.add_space(14.0);
-
-        let st = info.stats.clone().unwrap_or_default();
-        // Tabs keep the page tidy: headline numbers first, deeper views behind.
-        let mut tab = self.setup.run_tab;
-        kit::tab_bar(
-            ui,
-            &mut tab,
-            &[
-                (RunTab::Overview, "Overview"),
-                (RunTab::Luck, "Luck"),
-                (RunTab::Activity, "Activity"),
-                (RunTab::Encounters, "Encounters"),
-                (RunTab::Journal, "Journal"),
-            ],
-        );
         self.setup.run_tab = tab;
-        ui.add_space(16.0);
-        match tab {
-            RunTab::Overview => self.run_overview(ui, &info, &st),
-            RunTab::Luck => self.run_luck(ui, &info, &st),
-            RunTab::Activity => self.run_activity(ui, &info, &st),
-            RunTab::Encounters => self.run_encounters(ui, &info, &st),
-            RunTab::Journal => self.run_journal(ui, run, &info, &st),
-        }
-    }
-
-    /// Run stats → Overview: the headline numbers, a luck summary and the
-    /// encounters chart.
-    fn run_overview(&mut self, ui: &mut egui::Ui, info: &RunInfo, st: &RunStats) {
-        let now = now_unix();
-        let today = local_day(now);
-        let w4 = ((ui.available_width() - 24.0) / 4.0).floor();
-        let rate = st.per_hour();
-
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
-            kit::stat(ui, w4, "Encounters", &theme::thousands(info.count));
-            kit::stat(ui, w4, "Hunt time", &if st.hunt_secs >= 60 { fmt_duration(st.hunt_secs) } else { "—".into() });
-            kit::stat(ui, w4, "Per hour", &rate.map_or("—".into(), |r| theme::thousands(r.round() as u64)));
-            kit::stat(
-                ui,
-                w4,
-                "Per encounter",
-                &st.secs_per_encounter().map_or("—".into(), |s| format!("{s:.1} s")),
-            );
-        });
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
-            // Short value ("0.1×"); the word ("under odds") goes in the label
-            // so the tile never cuts off.
-            let (odds_label, odds_value) = info
-                .odds
-                .map(|o| {
-                    let m = info.count as f64 / o;
-                    let (l, _) = crate::card::luck(m);
-                    (format!("Odds · {}", l.to_lowercase()), format!("{:.1}×", m))
-                })
-                .unwrap_or_else(|| ("Odds".into(), "—".into()));
-            kit::stat(ui, w4, &odds_label, &odds_value);
-            if info.current {
-                let (n, secs) = st.today(today);
-                kit::stat(ui, w4, "Today", &format!("{} · {}", theme::thousands(n), fmt_duration(secs)));
-            } else {
-                kit::stat(ui, w4, "Battles", &theme::thousands(info.battles));
-            }
-            let (label, sess) = match st.current_session(now) {
-                Some(s) if info.current => ("This session", Some(s.clone())),
-                _ => ("Last session", st.sessions.last().cloned()),
-            };
-            kit::stat(
-                ui,
-                w4,
-                label,
-                &sess.map_or("—".into(), |s| format!("{} · {}", theme::thousands(s.encounters), fmt_duration(s.secs))),
-            );
-            kit::stat(ui, w4, "Days hunted", &st.days_hunted().to_string());
-        });
         ui.add_space(14.0);
-
-        if let Some(odds) = info.odds {
-            if self.luck_summary(ui, info, st, odds) {
-                self.setup.run_tab = RunTab::Luck;
-            }
+        match tab {
+            RunTab::Journal => self.run_journal(ui, run, &info, &st),
+            _ => self.hunt_dashboard(ui, &info, &st),
         }
-
-        // Encounters chart: per day / 6 hours / hour
-        let view = self.setup.chart_view;
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            // Chart title on the left, period switch on the right.
-            if kit::clean() {
-                ui.label(RichText::new(view.title()).font(kit::font_bold(15.0)).color(TEXT()));
-            } else {
-                ui.label(RichText::new(view.title()).size(kit::fs(11.5)).color(MUTED()));
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let mut v = view;
-                kit::segmented(
-                    ui,
-                    &mut v,
-                    &[(ChartView::Hour, " 1 hour "), (ChartView::SixHours, " 6 hours "), (ChartView::Day, " Day ")],
-                );
-                self.setup.chart_view = v;
-            });
-        });
-        ui.add_space(4.0);
-        kit::card(ui, |ui| {
-            let end_day = if info.current || st.days.is_empty() {
-                today
-            } else {
-                st.days.last().map_or(today, |d| d.day)
-            };
-            let end_hour = if info.current || st.last_unix == 0 {
-                stats::local_hour(now_unix())
-            } else {
-                stats::local_hour(st.last_unix)
-            };
-            let bars = match view {
-                ChartView::Day => day_bars(&st, end_day),
-                ChartView::SixHours => hour_bars(&st, end_hour, 6, 28),
-                ChartView::Hour => hour_bars(&st, end_hour, 1, 24),
-            };
-            bar_chart(ui, &bars, view.empty_text());
-        });
-
-        ui.add_space(4.0);
-        if info.phase {
-            kit::pill(ui, &format!("✨ A phase: {}.", info.method), PillKind::Info);
-        } else if info.stats.is_none() {
-            kit::pill(ui, "This hunt was logged before stats existed, so only the totals are known.", PillKind::Info);
-        } else if st.base_count > 0 && st.tracking_since > 0 {
-            ui.label(
-                RichText::new(format!(
-                    "Time stats started {}; the {} encounters before that only count in the totals.",
-                    fmt_date(st.tracking_since),
-                    theme::thousands(st.base_count)
-                ))
-                .size(kit::fs(11.0))
-                .color(MUTED()),
-            );
-        }
-        ui.label(
-            RichText::new(if self.cfg.idle_pause {
-                format!(
-                    "Hunt time counts the time between encounters; waits over {} minutes aren't counted (Settings > Hunt).",
-                    self.cfg.idle_minutes
-                )
-            } else {
-                "Hunt time counts the time between encounters (breaks over 30 minutes start a new session).".to_string()
-            })
-                .size(kit::fs(11.0))
-                .color(MUTED()),
-        );
     }
 
     /// Run stats → Journal: notes, milestones and phases.
@@ -516,7 +353,7 @@ impl App {
                 ui.vertical_centered(|ui| {
                     ui.add_space(10.0);
                     ui.label(RichText::new("🏆").size(kit::fs(31.5)).color(GOLD));
-                    ui.label(RichText::new("No shinies yet").size(kit::fs(14.5)).strong().color(TEXT()));
+                    ui.label(RichText::new("No shinies yet").size(kit::fs(14.5)).family(kit::strong_family(kit::fs(14.5))).strong().color(TEXT()));
                     ui.label(
                         RichText::new("When you get one, press Caught! on the overlay and it's added here.")
                             .size(kit::fs(12.0))
@@ -591,7 +428,7 @@ impl App {
                                     stats_of = Some(i);
                                 }
                                 ui.add_space(4.0);
-                                ui.label(RichText::new(&info.name).size(kit::fs(14.5)).strong().color(TEXT()));
+                                ui.label(RichText::new(&info.name).size(kit::fs(14.5)).family(kit::strong_family(kit::fs(14.5))).strong().color(TEXT()));
                                 ui.label(
                                     RichText::new(format!("{} encounters", theme::thousands(info.count)))
                                         .size(kit::fs(12.0))
@@ -614,7 +451,7 @@ impl App {
                                 );
                                 ui.add_space(6.0);
                                 ui.horizontal(|ui| {
-                                    if kit::accent_button(ui, egui::Button::new(RichText::new("Share").strong().color(theme::button_ink())), 6.0)
+                                    if kit::accent_button(ui, egui::Button::new(RichText::new("Share").family(kit::strong_family(13.5)).strong().color(kit::on_primary())), 6.0)
                                         .on_hover_text("Make a share image with your own theme and options")
                                         .clicked()
                                     {
@@ -1060,7 +897,14 @@ impl App {
         // Options
         let before = self.cfg.card.clone();
         kit::section(ui, "Style");
-        card_style_picker(ui, &mut self.cfg.card.style);
+        {
+            let has_sprite = info.slug.as_ref().is_some_and(|sl| crate::sprites::cached_file(sl, true).is_some());
+            let o = self.card_opts();
+            let key = format!("hunt|{:?}|{:?}|{}|{}|{}|{}|{:?}|{}", o.theme, o.layout, info.name, info.count, info.caught, has_sprite, o.nickname, o.trainer);
+            let ctx = ui.ctx().clone();
+            self.style_thumbs(&ctx, key, |a| (ThumbOf::Hunt(a.card_data(&info)), a.card_opts()));
+        }
+        self.card_style_picker(ui);
         kit::section(ui, "Format");
         kit::card(ui, |ui| {
             ui.horizontal(|ui| {
@@ -1318,6 +1162,17 @@ impl App {
                         &mut same,
                     );
                     a.separate_buttons = !same;
+                    if same {
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(8.0);
+                        kit::toggle_row(
+                            ui,
+                            "Solid colour buttons",
+                            "Buttons use just your main colour, without the gradient's second colour. The header keeps its gradient.",
+                            &mut a.solid_buttons,
+                        );
+                    }
                     if a.separate_buttons {
                         ui.add_space(10.0);
                         ui.separator();
@@ -1428,21 +1283,129 @@ impl App {
 }
 
 /// A clickable swatch showing a share-image theme.
-/// Anime infographic or the classic card, as two tiles.
-pub(super) fn card_style_picker(ui: &mut egui::Ui, style: &mut crate::card::CardStyle) {
-    use crate::card::CardStyle;
-    let w2 = ((ui.available_width() - 12.0) / 2.0).floor().min(360.0);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 12.0;
-        for (v, icon, title, sub, badge) in [
-            (CardStyle::Anime, "🎨", "Anime infographic", "Bold flat colours, stickers and big lettering.", "NEW"),
-            (CardStyle::Classic, "🖼", "Classic", "The original card: soft gradient and glows.", ""),
-        ] {
-            if kit::choice_tile(ui, egui::vec2(w2, 84.0), *style == v, icon, title, sub, badge).clicked() {
-                *style = v;
+/// Small pictures of the share image in each style, drawn in the
+/// background whenever what's on the image changes.
+#[derive(Default)]
+pub(super) struct StyleThumbs {
+    key: Option<String>,
+    tex: Vec<Option<egui::TextureHandle>>,
+    rx: Option<std::sync::mpsc::Receiver<(usize, usize, usize, Vec<u8>)>>,
+}
+
+/// What a style thumbnail shows.
+pub(super) enum ThumbOf {
+    Hunt(CardData),
+    Profile(crate::card::ProfileData),
+}
+
+impl App {
+    /// Make sure the thumbnails for `key` are drawn (or being drawn), and
+    /// pick up any that have finished.
+    pub(super) fn style_thumbs(&mut self, ctx: &egui::Context, key: String, what: impl FnOnce(&App) -> (ThumbOf, CardOptions)) {
+        use crate::card::CardStyle;
+        let stale = self.style_thumbs.key.as_deref() != Some(key.as_str());
+        let job = stale.then(|| what(self));
+        let th = &mut self.style_thumbs;
+        if let Some((data, opts)) = job {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let ctx2 = ctx.clone();
+            th.key = Some(key);
+            th.rx = Some(rx);
+            if th.tex.len() != CardStyle::ALL.len() {
+                th.tex = vec![None; CardStyle::ALL.len()];
+            }
+            std::thread::Builder::new()
+                .name("style-thumbs".into())
+                .spawn(move || {
+                    let fonts = crate::share::AbText::load();
+                    for (i, style) in CardStyle::ALL.into_iter().enumerate() {
+                        let o = CardOptions { style, res: 480, animated: false, ..opts.clone() };
+                        let c = match &data {
+                            ThumbOf::Hunt(d) => crate::card::render(d, &o, &fonts),
+                            ThumbOf::Profile(d) => crate::card::render_profile(d, &o, &fonts),
+                        };
+                        let tw = 400u32.min(c.w);
+                        let th = (c.h as f32 * tw as f32 / c.w as f32).round().max(1.0) as u32;
+                        let Some(big) = image::RgbaImage::from_raw(c.w, c.h, c.px) else { continue };
+                        let small = image::imageops::resize(&big, tw, th, image::imageops::FilterType::Triangle);
+                        if tx.send((i, tw as usize, th as usize, small.into_raw())).is_err() {
+                            return;
+                        }
+                        ctx2.request_repaint();
+                    }
+                })
+                .ok();
+        }
+        if let Some(rx) = &th.rx {
+            while let Ok((i, w, h, px)) = rx.try_recv() {
+                let tex = ctx.load_texture(format!("style-thumb-{i}"), egui::ColorImage::from_rgba_unmultiplied([w, h], &px), egui::TextureOptions::LINEAR);
+                if let Some(slot) = th.tex.get_mut(i) {
+                    *slot = Some(tex);
+                }
             }
         }
-    });
+    }
+
+    /// The style picker with the thumbnails.
+    pub(super) fn card_style_picker(&mut self, ui: &mut egui::Ui) {
+        let thumbs = self.style_thumbs.tex.clone();
+        card_style_picker(ui, &mut self.cfg.card.style, &thumbs);
+    }
+}
+
+/// Every share-image look as a tile with a picture of it.
+pub(super) fn card_style_picker(ui: &mut egui::Ui, style: &mut crate::card::CardStyle, thumbs: &[Option<egui::TextureHandle>]) {
+    use crate::card::CardStyle;
+    let avail = ui.available_width();
+    let gap = 10.0;
+    let per = ((avail + gap) / 200.0).floor().clamp(2.0, 5.0) as usize;
+    let w = ((avail - gap * (per as f32 - 1.0)) / per as f32).floor();
+    for (r, row) in CardStyle::ALL.chunks(per).enumerate() {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = gap;
+            for (k, &v) in row.iter().enumerate() {
+                let tex = thumbs.get(r * per + k).and_then(|t| t.as_ref());
+                if style_tile(ui, v, *style == v, w, tex).clicked() {
+                    *style = v;
+                }
+            }
+        });
+        ui.add_space(gap);
+    }
+}
+
+/// A clickable tile: a picture of the share image in this style, its name
+/// and what it is (the same look as the overlay theme tiles).
+fn style_tile(ui: &mut egui::Ui, v: crate::card::CardStyle, selected: bool, w: f32, tex: Option<&egui::TextureHandle>) -> egui::Response {
+    let pic_h = ((w - 16.0) * 9.0 / 16.0).round();
+    let h = pic_h + 78.0;
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, h), Sense::click());
+    let p = ui.painter_at(rect.expand(3.0));
+    let fill = if selected { kit::SELECTED_BG() } else if resp.hovered() { kit::CARD_HOVER() } else { kit::CARD() };
+    p.rect_filled(rect, 12.0, fill);
+    p.rect_stroke(rect, 12.0, if selected { Stroke::new(2.0f32, kit::ACCENT()) } else { Stroke::new(1.0f32, kit::LINE()) });
+    let pr = Rect::from_min_size(rect.min + egui::vec2(8.0, 8.0), egui::vec2(w - 16.0, pic_h));
+    p.rect_filled(pr, 8.0, Color32::from_rgb(20, 20, 28));
+    match tex {
+        Some(t) => {
+            let s = t.size_vec2();
+            let k = (pr.width() / s.x).min(pr.height() / s.y);
+            let ir = Rect::from_center_size(pr.center(), s * k);
+            egui::Image::new(t).rounding(if (ir.width() - pr.width()).abs() < 1.0 { 8.0 } else { 4.0 }).paint_at(ui, ir);
+        }
+        None => {
+            p.text(pr.center(), egui::Align2::CENTER_CENTER, "drawing…", crate::fonts::sans_font(11.5), MUTED());
+        }
+    }
+    p.text(egui::pos2(rect.min.x + 12.0, pr.max.y + 15.0), egui::Align2::LEFT_CENTER, format!("{} {}", v.icon(), v.name()), crate::fonts::title_font(14.0), kit::TEXT());
+    if selected {
+        let c = egui::pos2(rect.max.x - 18.0, pr.max.y + 15.0);
+        p.circle_filled(c, 8.0, kit::ACCENT());
+        p.add(egui::Shape::line(vec![c + egui::vec2(-3.5, 0.0), c + egui::vec2(-1.0, 2.8), c + egui::vec2(3.8, -2.8)], Stroke::new(1.8f32, Color32::WHITE)));
+    }
+    let galley = p.layout(v.about().to_string(), crate::fonts::sans_font(11.5), MUTED(), w - 24.0);
+    p.galley(egui::pos2(rect.min.x + 12.0, pr.max.y + 26.0), galley, MUTED());
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 pub(super) fn theme_swatch(ui: &mut egui::Ui, t: CardTheme, selected: bool) -> egui::Response {
@@ -1486,7 +1449,7 @@ pub(super) fn theme_swatch(ui: &mut egui::Ui, t: CardTheme, selected: bool) -> e
 }
 
 /// Light / semi-dark / dark choice drawn as a tiny window.
-fn mode_tile(ui: &mut egui::Ui, w: f32, mode: UiMode, label: &str, a: &Appearance) -> egui::Response {
+pub(super) fn mode_tile(ui: &mut egui::Ui, w: f32, mode: UiMode, label: &str, a: &Appearance) -> egui::Response {
     let (r, resp) = ui.allocate_exact_size(egui::vec2(w, 96.0), Sense::click());
     let p = ui.painter_at(r.expand(2.0));
     let (body, line, text) = match mode {
@@ -1529,7 +1492,7 @@ fn mode_tile(ui: &mut egui::Ui, w: f32, mode: UiMode, label: &str, a: &Appearanc
 }
 
 /// Preset colour dots plus a custom colour picker.
-fn swatch_row(ui: &mut egui::Ui, value: &mut [u8; 3], id: &str) {
+pub(super) fn swatch_row(ui: &mut egui::Ui, value: &mut [u8; 3], id: &str) {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
         for (name, c) in ACCENTS {
@@ -1593,120 +1556,6 @@ impl ChartView {
     }
 }
 
-/// One bar: count, label under it (if any), hover text, highlighted (latest).
-struct Bar {
-    count: u64,
-    label: Option<String>,
-    hover: String,
-    latest: bool,
-}
-
-/// The 14 days ending at `end`.
-fn day_bars(st: &RunStats, end: i64) -> Vec<Bar> {
-    (end - 13..=end)
-        .enumerate()
-        .map(|(i, d)| {
-            let (n, secs) = st.today(d);
-            let (_, _, dd) = stats::civil_from_days(d);
-            Bar {
-                count: n,
-                label: (i % 2 == 1 || d == end).then(|| dd.to_string()),
-                hover: if n > 0 {
-                    format!("{}: {} · {}", fmt_day_short(d), theme::thousands(n), fmt_duration(secs))
-                } else {
-                    format!("{}: none", fmt_day_short(d))
-                },
-                latest: d == end,
-            }
-        })
-        .collect()
-}
-
-/// `count` buckets of `size` hours, the last one holding `end_hour`.
-/// Buckets line up with the clock (6-hour ones start at 12am, 6am, 12pm, 6pm).
-fn hour_bars(st: &RunStats, end_hour: i64, size: i64, count: i64) -> Vec<Bar> {
-    let last_start = end_hour.div_euclid(size) * size;
-    let first = last_start - size * (count - 1);
-    let per_hour = st.hourly(first, last_start + size - 1);
-    (0..count)
-        .map(|k| {
-            let start = first + k * size;
-            let i = (k * size) as usize;
-            let n: u64 = per_hour[i..i + size as usize].iter().sum();
-            let day = start.div_euclid(24);
-            let when = if size == 1 {
-                format!("{}, {}", fmt_day_short(day), stats::fmt_hour(start))
-            } else {
-                format!("{}, {}–{}", fmt_day_short(day), stats::fmt_hour(start), stats::fmt_hour(start + size))
-            };
-            let label = if size == 1 {
-                (start.rem_euclid(3) == 0).then(|| stats::fmt_hour(start))
-            } else if start.rem_euclid(24) == 0 {
-                let (_, _, dd) = stats::civil_from_days(day);
-                Some(format!("{} {dd}", WEEKDAYS[(day + 4).rem_euclid(7) as usize]))
-            } else {
-                None
-            };
-            Bar {
-                count: n,
-                label,
-                hover: if n > 0 { format!("{when}: {}", theme::thousands(n)) } else { format!("{when}: none") },
-                latest: k == count - 1,
-            }
-        })
-        .collect()
-}
-
-const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-fn bar_chart(ui: &mut egui::Ui, bars: &[Bar], empty: &str) {
-    let max = bars.iter().map(|b| b.count).max().unwrap_or(0).max(1);
-    let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 150.0), Sense::hover());
-    let p = ui.painter_at(r);
-    let chart = Rect::from_min_max(r.min + egui::vec2(0.0, 16.0), r.max - egui::vec2(0.0, 20.0));
-    let slot = chart.width() / bars.len().max(1) as f32;
-    p.line_segment([chart.left_bottom(), chart.right_bottom()], Stroke::new(1.0f32, LINE()));
-    let hover = ui.ctx().pointer_hover_pos();
-    for (i, b) in bars.iter().enumerate() {
-        let x = chart.min.x + slot * i as f32;
-        let h = chart.height() * (b.count as f32 / max as f32);
-        let pad = if slot > 14.0 { 0.18 } else { 0.1 };
-        let bar = Rect::from_min_max(egui::pos2(x + slot * pad, chart.max.y - h), egui::pos2(x + slot * (1.0 - pad), chart.max.y));
-        let col = if b.count == 0 { LINE() } else if b.latest { GOLD } else { RED() };
-        if b.count > 0 {
-            let rr = (slot * 0.2).min(4.0);
-            p.rect_filled(bar, egui::Rounding { nw: rr, ne: rr, sw: 0.0, se: 0.0 }, col);
-        } else {
-            p.rect_filled(Rect::from_min_max(egui::pos2(bar.min.x, chart.max.y - 2.0), bar.max), 1.0, col);
-        }
-        if let Some(l) = &b.label {
-            p.text(
-                egui::pos2(x + slot / 2.0, r.max.y - 8.0),
-                egui::Align2::CENTER_CENTER,
-                l,
-                kit::font_small(10.0),
-                if b.latest { TEXT() } else { MUTED() },
-            );
-        }
-        let col_rect = Rect::from_min_max(egui::pos2(x, chart.min.y - 16.0), egui::pos2(x + slot, chart.max.y));
-        if hover.is_some_and(|h| col_rect.contains(h)) {
-            p.rect_filled(col_rect, 4.0, TEXT().gamma_multiply(0.06));
-            let tx = (x + slot / 2.0).clamp(r.min.x + 90.0, r.max.x - 90.0);
-            p.text(egui::pos2(tx, r.min.y + 6.0), egui::Align2::CENTER_CENTER, &b.hover, kit::font(11.0), TEXT());
-        } else if b.count > 0 && (b.latest || b.count == max) && slot > 18.0 {
-            p.text(
-                egui::pos2(x + slot / 2.0, bar.min.y - 8.0),
-                egui::Align2::CENTER_CENTER,
-                theme::thousands(b.count),
-                kit::font_small(9.5),
-                MUTED(),
-            );
-        }
-    }
-    if bars.iter().all(|b| b.count == 0) {
-        p.text(chart.center(), egui::Align2::CENTER_CENTER, empty, kit::font(12.0), MUTED());
-    }
-}
 
 /// Tabs on the Appearance settings page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

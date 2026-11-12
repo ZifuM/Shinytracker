@@ -165,7 +165,9 @@ impl App {
             }
         }
         let labels = place_labels();
-        let style = if self.cfg.poster_classic { PosterStyle::Classic } else { PosterStyle::Anime };
+        let look = self.poster_look();
+        let style = if look == crate::card::CardStyle::Classic { PosterStyle::Classic } else { PosterStyle::Anime };
+        let theme = self.cfg.card.theme;
         let now = crate::stats::now_unix() as i64;
         let (reset, next) = (gamemap::last_reset(now), gamemap::next_reset(now));
         let (tx, rx) = channel();
@@ -190,8 +192,10 @@ impl App {
                     })
                     .collect();
                 let data = PosterData { areas, labels, map: sinnoh_art(), reset, next };
-                let fonts = crate::poster_text::PosterFonts::load();
-                let img = poster::render(&data, mode, style, &fonts);
+                let img = match crate::card::render_poster(&data, mode, look, theme, &crate::share::AbText::load()) {
+                    Some(img) => img,
+                    None => poster::render(&data, mode, style, &crate::poster_text::PosterFonts::load()),
+                };
                 let _ = tx.send(img);
                 ctx2.request_repaint();
             })
@@ -201,6 +205,11 @@ impl App {
             v.job = Some((mode, rx));
             v.msg = None;
         }
+    }
+
+    /// The poster's look (older settings only had Sticker or Classic).
+    fn poster_look(&self) -> crate::card::CardStyle {
+        self.cfg.poster_look.unwrap_or(if self.cfg.poster_classic { crate::card::CardStyle::Classic } else { crate::card::CardStyle::Anime })
     }
 
     /// The share window, while it's open.
@@ -232,7 +241,7 @@ impl App {
 
         let mut open = true;
         let mut redo: Option<PosterMode> = None;
-        let mut classic = self.cfg.poster_classic;
+        let mut look = self.cfg.poster_look.unwrap_or(if self.cfg.poster_classic { crate::card::CardStyle::Classic } else { crate::card::CardStyle::Anime });
         let mut copy = false;
         let mut save = false;
         let mut reveal: Option<PathBuf> = None;
@@ -257,12 +266,19 @@ impl App {
                         }
                     }
                     ui.separator();
-                    for (c, label, tip) in [(false, "🎨 Anime", "Flat bold colours, stickers and big lettering"), (true, "Classic", "The original sea-blue infographic")] {
-                        if ui.selectable_label(classic == c, RichText::new(label).size(kit::fs(12.5))).on_hover_text(tip).clicked() && classic != c {
-                            classic = c;
-                            redo = Some(v.mode);
-                        }
-                    }
+                    egui::ComboBox::from_id_salt("poster-look")
+                        .selected_text(RichText::new(format!("{} {}", look.icon(), look.name())).size(kit::fs(12.5)))
+                        .show_ui(ui, |ui| {
+                            for c in crate::card::CardStyle::ALL {
+                                let tip = if c == crate::card::CardStyle::Classic { "The original sea-blue infographic" } else { c.about() };
+                                if ui.selectable_label(look == c, format!("{} {}", c.icon(), c.name())).on_hover_text(tip).clicked() && look != c {
+                                    look = c;
+                                    redo = Some(v.mode);
+                                }
+                            }
+                        })
+                        .response
+                        .on_hover_text("The poster's look");
                 });
                 ui.add_space(8.0);
                 let shown = v.image.as_ref().is_some_and(|(m, _)| *m == v.mode);
@@ -290,7 +306,7 @@ impl App {
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     let ready = shown && !busy;
-                    let b = egui::Button::new(RichText::new("  📋  Copy for Discord  ").strong().color(theme::button_ink()));
+                    let b = egui::Button::new(RichText::new("  📋  Copy for Discord  ").family(kit::strong_family(13.5)).strong().color(kit::on_primary()));
                     if ui.add_enabled_ui(ready, |ui| kit::accent_button(ui, b, 6.0)).inner.on_hover_text("Then paste it in Discord with Ctrl+V").clicked() {
                         copy = true;
                     }
@@ -348,8 +364,9 @@ impl App {
                 }
             }
         }
-        if classic != self.cfg.poster_classic {
-            self.cfg.poster_classic = classic;
+        if look != self.poster_look() {
+            self.cfg.poster_look = Some(look);
+            self.cfg.poster_classic = look == crate::card::CardStyle::Classic;
             self.dirty = true;
         }
         if let Some(m) = redo {

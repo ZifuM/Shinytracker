@@ -12,18 +12,18 @@ use eframe::egui::{self, Align2, Color32, Pos2, Rect, RichText, Sense, Stroke};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-const COMPACT_W: f32 = 236.0;
-const BAR_H: f32 = 50.0;
+pub(super) const COMPACT_W: f32 = 236.0;
+pub(super) const BAR_H: f32 = 50.0;
 /// Narrowest and widest the liquid layout goes.
-const LIQUID_MIN: f32 = 236.0;
-const LIQUID_MAX: f32 = 640.0;
+pub(super) const LIQUID_MIN: f32 = 236.0;
+pub(super) const LIQUID_MAX: f32 = 640.0;
 /// Room under the overlay for a notice or pop-up card.
-const BELOW_H: f32 = 96.0;
+pub(super) const BELOW_H: f32 = 96.0;
 /// Width of a pop-up under the bar layout.
-const BAR_POPUP_W: f32 = 250.0;
+pub(super) const BAR_POPUP_W: f32 = 250.0;
 const GAP: f32 = 8.0;
-const XP_BLUE: Color32 = Color32::from_rgb(90, 170, 255);
-const FLAME: Color32 = Color32::from_rgb(255, 140, 40);
+pub(super) const XP_BLUE: Color32 = Color32::from_rgb(90, 170, 255);
+pub(super) const FLAME: Color32 = Color32::from_rgb(255, 140, 40);
 
 /// Slow-changing numbers for the overlay, worked out about once a second.
 #[derive(Clone, Default)]
@@ -39,13 +39,13 @@ pub(super) struct OvStats {
 }
 
 /// Odds bar contents (shared by every size).
-struct Odds {
-    left: String,
-    color: Color32,
-    frac: f32,
-    right: String,
-    tip: String,
-    mult: Option<f64>,
+pub(super) struct Odds {
+    pub left: String,
+    pub color: Color32,
+    pub frac: f32,
+    pub right: String,
+    pub tip: String,
+    pub mult: Option<f64>,
 }
 
 fn tiny(p: &egui::Painter, pos: Pos2, anchor: Align2, text: &str, color: Color32) -> Rect {
@@ -89,7 +89,7 @@ impl App {
             && self.undo_caught_left().is_none()
     }
 
-    fn ov_stats(&mut self) -> OvStats {
+    pub(super) fn ov_stats(&mut self) -> OvStats {
         if let Some((at, s)) = &self.ov_cache {
             if at.elapsed() < Duration::from_secs(1) {
                 return s.clone();
@@ -145,7 +145,7 @@ impl App {
         (t, best)
     }
 
-    fn ov_odds(&self) -> Odds {
+    pub(super) fn ov_odds(&self) -> Odds {
         match self.cfg.odds_one_in() {
             None => Odds {
                 left: "ODDS: AFTER 1ST BATTLE".to_string(),
@@ -203,7 +203,7 @@ impl App {
     }
 
     /// (share of hunters who'd have found one by now, colour, tooltip).
-    fn ov_luck(&self) -> Option<(f64, Color32, String)> {
+    pub(super) fn ov_luck(&self) -> Option<(f64, Color32, String)> {
         let one_in = self.cfg.odds_one_in()?;
         let (n, what) = self.odds_count();
         let found = 1.0 - (1.0 - 1.0 / one_in).powf(n as f64);
@@ -225,7 +225,7 @@ impl App {
 
     /// Next milestone: (headline, "in N", tooltip). The nearer of the next
     /// thousand and the next whole multiple of the odds.
-    fn ov_next_milestone(&self) -> (String, String, String) {
+    pub(super) fn ov_next_milestone(&self) -> (String, String, String) {
         let count = self.cfg.count;
         let next_k = (count / 1000 + 1) * 1000;
         let mut best = (
@@ -246,7 +246,7 @@ impl App {
     }
 
     /// Encounters per minute for the last `mins` minutes (oldest first).
-    fn ov_pace(&self, mins: usize) -> Vec<u64> {
+    pub(super) fn ov_pace(&self, mins: usize) -> Vec<u64> {
         let now = now_unix();
         let mut b = vec![0u64; mins];
         for &(t, n) in &self.recent_enc {
@@ -258,7 +258,7 @@ impl App {
         b
     }
 
-    fn ov_pace_per_hour(&self) -> u64 {
+    pub(super) fn ov_pace_per_hour(&self) -> u64 {
         let now = now_unix();
         let last10: u64 = self.recent_enc.iter().filter(|(t, _)| now.saturating_sub(*t) < 600).map(|(_, n)| n).sum();
         last10 * 6
@@ -352,7 +352,7 @@ impl App {
         self.close_button(ui, ctx, p, close_r);
     }
 
-    fn close_button(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, p: &egui::Painter, close_r: Rect) {
+    pub(super) fn close_button(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, p: &egui::Painter, close_r: Rect) {
         let close = ui.interact(close_r, ui.id().with("close-app"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
         if close.hovered() {
             p.rect_filled(close_r, 5.0, Color32::from_rgb(196, 43, 28));
@@ -586,7 +586,7 @@ impl App {
         });
     }
 
-    fn counter_label(&self) -> (&'static str, Color32) {
+    pub(super) fn counter_label(&self) -> (&'static str, Color32) {
         if self.status.error.is_some() {
             ("CHECK SETUP ⚙", theme::HP_RED)
         } else if self.cfg.paused {
@@ -599,7 +599,7 @@ impl App {
     }
 
     /// Small pills: phases this run, daily streak, personal best.
-    fn ov_chips(&self, m: &OverlayModules, st: &OvStats) -> Vec<(String, Color32, bool, String)> {
+    pub(super) fn ov_chips(&self, m: &OverlayModules, st: &OvStats) -> Vec<(String, Color32, bool, String)> {
         // (text, colour, flame icon, tooltip)
         let mut chips = Vec::new();
         if m.phases {
@@ -684,19 +684,20 @@ impl App {
 
     /// The window shape a notice or pop-up card under the overlay needs:
     /// just the card itself, so the space around it stays see-through.
-    pub(super) fn popup_shape(&self, area: Rect) -> [f32; 5] {
+    pub(super) fn popup_shape(&self, area: Rect, theme: crate::config::OverlayTheme) -> [f32; 5] {
+        let rad = super::ov_toast::skin(theme).map_or(10.0, |s| s.radius);
         let h = match self.notices.first() {
             Some(n) if n.progress.is_some() || n.action.is_some() => 84.0,
             Some(_) => 64.0,
             None => {
                 // A pop-up opening or closing: just the part that's showing.
                 if let Some(r) = self.toast_now(area) {
-                    return [r.min.x, r.min.y, r.width(), r.height() + 1.0, 10.0_f32.min(r.height() / 2.0)];
+                    return [r.min.x, r.min.y, r.width(), r.height() + 1.0, rad.min(r.height() / 2.0)];
                 }
                 64.0
             }
         };
-        [area.min.x, area.min.y, area.width(), h + 1.0, 10.0]
+        [area.min.x, area.min.y, area.width(), h + 1.0, rad]
     }
 
     /// Cut the overlay window to the shape that was just drawn, so nothing of
@@ -722,6 +723,11 @@ impl App {
     // ───────────────────────────── full / compact ─────────────────────────────
 
     pub(super) fn modular_ui(&mut self, ctx: &egui::Context) {
+        let theme = self.cfg.overlay.theme;
+        if theme != crate::config::OverlayTheme::Classic {
+            self.themed_ui(ctx, theme);
+            return;
+        }
         if self.cfg.overlay.size == OverlaySize::Bar {
             self.bar_ui(ctx);
             return;
@@ -733,6 +739,7 @@ impl App {
             // still apply). Caught! / Undo and alerts still show when needed.
             m = OverlayModules {
                 style: m.style,
+                theme: m.theme,
                 size: m.size,
                 click_through: m.click_through,
                 status_dot: m.status_dot,
@@ -1123,13 +1130,13 @@ impl App {
             if below {
                 let area = Rect::from_min_max(egui::pos2(full.min.x, full.max.y + 6.0), egui::pos2(full.max.x, full.max.y + 6.0 + BELOW_H - 8.0));
                 if !self.notices.is_empty() {
-                    self.draw_notice(ui, ctx, area);
+                    self.draw_notice(ui, ctx, area, crate::config::OverlayTheme::Classic);
                 }
                 if !self.toasts.is_empty() {
                     let fg = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("toasts")));
-                    self.draw_toast(ctx, &fg, area);
+                    self.draw_toast(ctx, &fg, area, crate::config::OverlayTheme::Classic);
                 }
-                let shape = self.popup_shape(area);
+                let shape = self.popup_shape(area, crate::config::OverlayTheme::Classic);
                 self.ov_shape.push(shape);
             }
 
@@ -1443,14 +1450,14 @@ impl App {
                 // A compact card pinned under the bar's right end.
                 let right = bar.max.x.max(left + BAR_POPUP_W);
                 let area = Rect::from_min_max(egui::pos2(right - BAR_POPUP_W, bar.max.y + 6.0), egui::pos2(right, bar.max.y + 100.0));
-                let shape = self.popup_shape(area);
+                let shape = self.popup_shape(area, crate::config::OverlayTheme::Classic);
                 self.ov_shape.push(shape);
                 if !self.notices.is_empty() {
-                    self.draw_notice(ui, ctx, area);
+                    self.draw_notice(ui, ctx, area, crate::config::OverlayTheme::Classic);
                 }
                 if !self.toasts.is_empty() {
                     let fg = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("toasts")));
-                    self.draw_toast(ctx, &fg, area);
+                    self.draw_toast(ctx, &fg, area, crate::config::OverlayTheme::Classic);
                 }
                 h = BAR_H + 104.0;
             }

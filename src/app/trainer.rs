@@ -271,6 +271,25 @@ impl App {
         }
     }
 
+    /// Settings > Overlay: show one of each pop-up (`which` 0..6), even with
+    /// achievement pop-ups switched off. `age` starts it part-way through
+    /// (the screenshot rig).
+    pub(super) fn preview_toast(&mut self, which: usize, age: Option<f32>) {
+        let level = self.current_level().max(2);
+        let kind = match which {
+            0 => ToastKind::Achievement { name: "Show Off".into(), desc: "This is what a pop-up looks like".into(), tier: Tier::Gold },
+            1 => ToastKind::LevelUp { level },
+            2 => ToastKind::Goal { title: "Battle 200 Pokémon today".into(), xp: 150, weekly: false },
+            3 => ToastKind::Goal { title: "Hunt for 5 hours this week".into(), xp: 600, weekly: true },
+            4 => ToastKind::Milestone { text: "1,000 ENCOUNTERS!".into() },
+            _ => ToastKind::Welcome { count: 12, level },
+        };
+        let shown_at = age.map(|a| Instant::now() - Duration::from_secs_f32(a));
+        if self.toasts.len() < 8 {
+            self.toasts.push_back(Toast { kind, shown_at });
+        }
+    }
+
     fn push_toast(&mut self, kind: ToastKind) {
         if !self.cfg.toasts {
             return;
@@ -299,7 +318,7 @@ impl App {
         Some(toast_rect(area, toast_anim(t).0))
     }
 
-    pub(super) fn draw_toast(&mut self, ctx: &egui::Context, p: &egui::Painter, area: Rect) {
+    pub(super) fn draw_toast(&mut self, ctx: &egui::Context, p: &egui::Painter, area: Rect, theme: crate::config::OverlayTheme) {
         let Some(front) = self.toasts.front_mut() else { return };
         let at = *front.shown_at.get_or_insert_with(Instant::now);
         let t = at.elapsed().as_secs_f32();
@@ -314,6 +333,40 @@ impl App {
         // anything outside would be clipped off).
         let (scale, alpha) = toast_anim(t);
         let r = toast_rect(area, scale);
+        if let Some(sk) = super::ov_toast::skin(theme) {
+            use super::ov_toast::{ToastView, What};
+            let (what, rgb, caption, title, line, level) = match &front.kind {
+                ToastKind::Achievement { name, desc, tier } => {
+                    (What::Achievement, tier.rgb(), format!("{} achievement", tier.label()), name.clone(), format!("{desc}  ·  +{} XP", tier.xp()), 0)
+                }
+                ToastKind::LevelUp { level } => {
+                    let (_, _, light) = progress::badge_metal(*level);
+                    (What::LevelUp, light, "Level up!".to_string(), format!("Level {level}"), progress::title(*level).to_string(), *level)
+                }
+                ToastKind::Goal { title, xp, weekly } => (
+                    What::Goal,
+                    [56, 214, 90],
+                    if *weekly { "Weekly challenge".to_string() } else { "Daily goal".to_string() },
+                    title.clone(),
+                    format!("Complete  ·  +{xp} XP"),
+                    0,
+                ),
+                ToastKind::Milestone { text } => (What::Milestone, [246, 200, 66], "Milestone!".to_string(), text.clone(), "Keep going!".to_string(), 0),
+                ToastKind::Welcome { count, level } => (
+                    What::Welcome,
+                    [246, 200, 66],
+                    "Welcome, trainer!".to_string(),
+                    format!("Level {level}"),
+                    if *count > 0 { format!("{count} achievements from your hunting so far") } else { progress::title(*level).to_string() },
+                    *level,
+                ),
+            };
+            let v = ToastView { what, rgb, caption, title, line, level, t, alpha };
+            (sk.card)(p, r, v.tint());
+            let clipped = p.with_clip_rect(r.shrink(1.0));
+            (sk.toast)(&clipped, toast_rect(area, 1.0), &v);
+            return;
+        }
         let (rgb, caption, title, line) = match &front.kind {
             ToastKind::Achievement { name, desc, tier } => (
                 tier.rgb(),
@@ -442,7 +495,7 @@ impl App {
                     ui.label(
                         RichText::new(format!("Level {level} · {}", progress::title(level)))
                             .size(kit::fs(15.0))
-                            .strong()
+                            .family(kit::strong_family(kit::fs(15.0))).strong()
                             .color(TEXT()),
                     );
                     ui.label(RichText::new(format!("{metal} badge")).size(kit::fs(11.5)).color(MUTED()));
@@ -500,36 +553,20 @@ impl App {
             return;
         }
         if section == ProfileSection::Overview {
-        // Lifetime stats
-        kit::section(ui, "Lifetime");
-        let w4 = ((ui.available_width() - 24.0) / 4.0).floor();
-        let per_shiny = if l.shinies > 0 { theme::thousands(l.encounters / l.shinies) } else { "—".into() };
-        let rows = [
-            [
-                ("Encounters", theme::thousands(l.encounters)),
-                ("Hunt time", fmt_duration(l.hunt_secs)),
-                ("Shinies", l.shinies.to_string()),
-                ("Achievements", format!("{unlocked} / {}", ACHIEVEMENTS.len())),
-            ],
-            [
-                ("Best day", theme::thousands(l.best_day)),
-                ("Longest streak", format!("{} days", l.longest_streak)),
-                ("Pokémon hunted", l.targets.to_string()),
-                ("Avg per shiny", per_shiny),
-            ],
-        ];
-        let all: Vec<(&str, String)> = rows.into_iter().flatten().collect();
-        let per = if ui.available_width() >= 1500.0 { 8 } else { 4 };
-        let sw = if per == 8 { ((ui.available_width() - 56.0) / 8.0).floor() } else { w4 };
-        for row in all.chunks(per) {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 8.0;
-                for (k, v) in row {
-                    kit::stat(ui, sw, k, v);
-                }
-            });
-            ui.add_space(8.0);
-        }
+        // The stats live on their own page now: a pointer to them.
+        let w = ((ui.available_width() - 12.0) / 2.0).floor();
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 12.0;
+            if kit::stat_tile(ui, w, "📊", kit::C_CYAN, "Lifetime stats", "Luck, pace, habits, records", Some(("Open Stats ›", kit::C_CYAN))).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                self.setup.stats_tab = super::stats_life::StatsTab::Lifetime;
+                self.go_to(super::Tab::Stats);
+            }
+            if kit::stat_tile(ui, w, "🎯", kit::C_PINK, "This hunt's stats", "Luck curve, sessions, trends", Some(("Open Stats ›", kit::C_PINK))).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                self.setup.stats_tab = super::stats_life::StatsTab::Hunt;
+                self.go_to(super::Tab::Stats);
+            }
+        });
+        ui.add_space(12.0);
         ui.label(
             RichText::new(format!(
                 "XP from encounters {} · time {} · shinies {} · achievements {} · goals {}",
@@ -543,10 +580,6 @@ impl App {
             .color(MUTED()),
         );
         ui.add_space(10.0);
-
-        // Records across every hunt (luckiest catch, most seen, …)
-        self.lifetime_records(ui);
-        ui.add_space(6.0);
 
         // Options
         kit::card(ui, |ui| {
@@ -593,7 +626,7 @@ impl App {
             ui.label(
                 RichText::new(format!("{done_n} of {total_n} unlocked"))
                     .size(kit::fs(13.0))
-                    .strong()
+                    .family(kit::strong_family(kit::fs(13.0))).strong()
                     .color(TEXT()),
             );
             let (br, _) = ui.allocate_exact_size(egui::vec2(ui.available_width() - 4.0, 8.0), Sense::hover());
@@ -698,6 +731,9 @@ fn section_tabs(
     current: ProfileSection,
     tabs: &[(ProfileSection, String, Option<(usize, usize)>)],
 ) -> Option<ProfileSection> {
+    if kit::modern() {
+        return section_tabs_cirrus(ui, current, tabs);
+    }
     if kit::clean() {
         return section_tabs_clean(ui, current, tabs);
     }
@@ -738,6 +774,61 @@ fn section_tabs(
             };
             p.rect_filled(cr, 9.0, bg);
             p.text(cr.center(), Align2::CENTER_CENTER, t, kit::font(11.0), fg);
+        }
+        if resp.clicked() && !sel {
+            out = Some(*sec);
+        }
+    }
+    out
+}
+
+/// Cirrus section tabs: a Cloud pill track; the open tab is a pill in the button colour,
+/// with its count in a small chip.
+fn section_tabs_cirrus(
+    ui: &mut egui::Ui,
+    current: ProfileSection,
+    tabs: &[(ProfileSection, String, Option<(usize, usize)>)],
+) -> Option<ProfileSection> {
+    let mut out = None;
+    let h = 44.0;
+    let (bar, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), h), Sense::hover());
+    let p = ui.painter();
+    p.add(kit::shadow_tier(1).as_shape(bar, h / 2.0));
+    p.rect_filled(bar, h / 2.0, CARD());
+    p.rect_stroke(bar, h / 2.0, Stroke::new(1.0f32, LINE()));
+    let n = tabs.len() as f32;
+    let (pad, gap) = (5.0, 4.0);
+    let cw = (bar.width() - 2.0 * pad - gap * (n - 1.0)) / n;
+    for (i, (sec, label, count)) in tabs.iter().enumerate() {
+        let r = Rect::from_min_size(egui::pos2(bar.min.x + pad + (cw + gap) * i as f32, bar.min.y + pad), egui::vec2(cw, h - 2.0 * pad));
+        let resp = ui.interact(r, ui.id().with(("profile-tab", i)), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+        let sel = *sec == current;
+        let hovered = resp.hovered();
+        let p = ui.painter();
+        let rad = r.height() / 2.0;
+        if sel {
+            p.add(kit::shadow_tier(2).as_shape(r, rad));
+            p.add(kit::primary_shape(r, false));
+        } else if hovered {
+            p.rect_filled(r, rad, kit::sunken());
+        }
+        let ink = if sel { kit::on_primary() } else if hovered { TEXT() } else { MUTED() };
+        let font = crate::fonts::sans_bold_font(13.5);
+        let lw = p.layout_no_wrap(label.clone(), font.clone(), ink).size().x;
+        let chip = count.map(|(g, a)| format!("{g}/{a}"));
+        let chw = chip.as_ref().map_or(0.0, |t| p.layout_no_wrap(t.clone(), kit::font(11.0), ink).size().x + 14.0);
+        let total = lw + if chip.is_some() { chw + 8.0 } else { 0.0 };
+        let x0 = r.center().x - total / 2.0;
+        p.text(egui::pos2(x0, r.center().y), Align2::LEFT_CENTER, label, font, ink);
+        if let Some(t) = chip {
+            let cr = Rect::from_min_size(egui::pos2(x0 + lw + 8.0, r.center().y - 9.0), egui::vec2(chw, 18.0));
+            if sel {
+                p.rect_filled(cr, 9.0, kit::on_primary().gamma_multiply(0.18));
+            } else {
+                p.rect_filled(cr, 9.0, kit::sunken());
+                p.rect_stroke(cr, 9.0, Stroke::new(1.0f32, LINE()));
+            }
+            p.text(cr.center(), Align2::CENTER_CENTER, t, kit::font(11.0), if sel { ink } else { MUTED() });
         }
         if resp.clicked() && !sel {
             out = Some(*sec);
@@ -1147,6 +1238,7 @@ impl App {
         kit::page_header(ui, "TRAINER CARD", "Your level, stats, shinies and achievements in one picture.");
 
         let (data, ready) = self.profile_data();
+        let thumb_data = data.clone();
         let opts = {
             let mut o = self.cfg.card.clone();
             o.animated = false;
@@ -1292,7 +1384,14 @@ impl App {
             kit::checkbox(ui, &mut self.cfg.profile_card_achievements, "Recent achievements (your latest 6)");
         });
         kit::section(ui, "Style");
-        super::hunt_pages::card_style_picker(ui, &mut self.cfg.card.style);
+        {
+            let data = thumb_data;
+            let o = self.cfg.card.clone();
+            let key = format!("profile|{:?}|{:?}|{}|{}|{}|{}|{}|{}", o.theme, o.layout, data.level, data.xp_into, ready, self.cfg.trainer_name, self.cfg.profile_card_shinies, self.cfg.profile_card_achievements);
+            let ctx = ui.ctx().clone();
+            self.style_thumbs(&ctx, key, |_| (super::hunt_pages::ThumbOf::Profile(data), o));
+        }
+        self.card_style_picker(ui);
         kit::section(ui, "Theme (pick a type)");
         kit::card(ui, |ui| {
             ui.horizontal_wrapped(|ui| {

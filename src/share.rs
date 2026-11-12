@@ -19,6 +19,14 @@ pub struct AbText {
     bold: Option<FontArc>,
     /// Segoe UI Black Italic, for the anime style's titles and numbers.
     display: Option<FontArc>,
+    /// Segoe UI Black, Light, Consolas (+ bold), Ink Free and Impact for
+    /// the themed styles.
+    black: Option<FontArc>,
+    light: Option<FontArc>,
+    mono: Option<FontArc>,
+    mono_bold: Option<FontArc>,
+    hand: Option<FontArc>,
+    impact: Option<FontArc>,
 }
 
 impl AbText {
@@ -41,7 +49,13 @@ impl AbText {
         };
         let bold = read("segoeuib.ttf").or_else(|| read("seguisb.ttf"));
         let display = read("seguibli.ttf").or_else(|| read("seguibl.ttf")).or_else(|| bold.clone());
-        Self { pixel, body, bold, display }
+        let black = read("seguibl.ttf").or_else(|| bold.clone());
+        let light = read("segoeuil.ttf").or_else(|| read("segoeui.ttf"));
+        let mono = read("consola.ttf").or_else(|| read("cour.ttf"));
+        let mono_bold = read("consolab.ttf").or_else(|| read("courbd.ttf")).or_else(|| mono.clone());
+        let hand = read("Inkfree.ttf").or_else(|| read("segoepr.ttf")).or_else(|| read("segoesc.ttf"));
+        let impact = read("impact.ttf").or_else(|| black.clone());
+        Self { pixel, body, bold, display, black, light, mono, mono_bold, hand, impact }
     }
 
     pub fn has_pixel(&self) -> bool {
@@ -54,6 +68,12 @@ impl AbText {
             Face::Body => self.body.as_ref().or(self.pixel.as_ref()),
             Face::Bold => self.bold.as_ref().or(self.body.as_ref()).or(self.pixel.as_ref()),
             Face::Display => self.display.as_ref().or(self.bold.as_ref()).or(self.body.as_ref()),
+            Face::Black => self.black.as_ref().or(self.bold.as_ref()).or(self.body.as_ref()),
+            Face::Light => self.light.as_ref().or(self.body.as_ref()),
+            Face::Mono => self.mono.as_ref().or(self.body.as_ref()),
+            Face::MonoBold => self.mono_bold.as_ref().or(self.mono.as_ref()).or(self.bold.as_ref()),
+            Face::Hand => self.hand.as_ref().or(self.body.as_ref()),
+            Face::Impact => self.impact.as_ref().or(self.black.as_ref()).or(self.bold.as_ref()),
         }
     }
 }

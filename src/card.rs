@@ -6,6 +6,8 @@ use crate::canvas::{crop, Canvas, Col, Img, Rng};
 
 #[path = "card/anime.rs"]
 mod anime;
+#[path = "card/skin.rs"]
+mod skin;
 use crate::stats::{fmt_duration, thousands};
 
 #[cfg(not(offline_test))]
@@ -319,6 +321,79 @@ pub enum CardStyle {
     Anime,
     /// The original look: dark gradient panels and the pixel font.
     Classic,
+    /// Frosted glass panels on a dark glow, light numbers.
+    Glass,
+    /// A Gen 4 battle screen: text boxes, an HP-bar gauge, pixel font.
+    Retro,
+    /// Dark synthwave grid with glowing neon edges.
+    Neon,
+    /// A red watch with a green LCD screen and dot-matrix digits.
+    Poketch,
+    /// A notebook page: polaroid, handwriting, sticky notes.
+    Journal,
+    /// A gold-bordered collectible card with a foil shimmer.
+    Holo,
+    /// An esports scoreboard with slanted plates and a ticker.
+    Broadcast,
+    /// A console window: log lines and ASCII bars.
+    Terminal,
+}
+
+impl CardStyle {
+    pub const ALL: [CardStyle; 10] = [
+        CardStyle::Anime,
+        CardStyle::Classic,
+        CardStyle::Glass,
+        CardStyle::Retro,
+        CardStyle::Neon,
+        CardStyle::Poketch,
+        CardStyle::Journal,
+        CardStyle::Holo,
+        CardStyle::Broadcast,
+        CardStyle::Terminal,
+    ];
+    pub fn name(self) -> &'static str {
+        match self {
+            CardStyle::Anime => "Sticker",
+            CardStyle::Classic => "Classic",
+            CardStyle::Glass => "Glass",
+            CardStyle::Retro => "Retro DS",
+            CardStyle::Neon => "Neon",
+            CardStyle::Poketch => "Pokétch",
+            CardStyle::Journal => "Field journal",
+            CardStyle::Holo => "Holo card",
+            CardStyle::Broadcast => "Broadcast",
+            CardStyle::Terminal => "Terminal",
+        }
+    }
+    pub fn about(self) -> &'static str {
+        match self {
+            CardStyle::Anime => "Bold flat colours, stickers and big lettering.",
+            CardStyle::Classic => "The original card: soft gradient and glows.",
+            CardStyle::Glass => "Frosted panels on a dark glow, big light numbers.",
+            CardStyle::Retro => "A Gen 4 battle screen with an HP-bar gauge.",
+            CardStyle::Neon => "Synthwave grid and glowing neon edges.",
+            CardStyle::Poketch => "A green LCD watch screen with dot-matrix digits.",
+            CardStyle::Journal => "A notebook page: polaroid and handwriting.",
+            CardStyle::Holo => "A gold collectible card with a foil shimmer.",
+            CardStyle::Broadcast => "An esports scoreboard with a ticker.",
+            CardStyle::Terminal => "A console window with log lines.",
+        }
+    }
+    pub fn icon(self) -> &'static str {
+        match self {
+            CardStyle::Anime => "🎨",
+            CardStyle::Classic => "🖼",
+            CardStyle::Glass => "💎",
+            CardStyle::Retro => "🎮",
+            CardStyle::Neon => "🌃",
+            CardStyle::Poketch => "⌚",
+            CardStyle::Journal => "📓",
+            CardStyle::Holo => "🃏",
+            CardStyle::Broadcast => "📺",
+            CardStyle::Terminal => "⌨",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -464,6 +539,17 @@ pub enum Face {
     Bold,
     /// Black italic display face for big titles and numbers (anime style).
     Display,
+    /// Segoe UI Black (upright).
+    Black,
+    /// Segoe UI Light.
+    Light,
+    /// Consolas.
+    Mono,
+    MonoBold,
+    /// Ink Free (handwriting).
+    Hand,
+    /// Impact.
+    Impact,
 }
 
 pub trait TextDraw {
@@ -713,6 +799,9 @@ pub fn render_base(o: &CardOptions) -> Canvas {
     if o.style == CardStyle::Anime {
         return anime::base(o);
     }
+    if let Some(sk) = skin::of(o.style) {
+        return skin::base(sk, o);
+    }
     let (w, h, s) = o.output_size();
     let (dw, dh) = o.layout.size();
     let p = o.theme.palette();
@@ -732,6 +821,10 @@ pub fn render_on(base: Canvas, d: &CardData, o: &CardOptions, t: &dyn TextDraw, 
     let mut pen = Pen { c: base, t, p, phase, s, w: dw as f32, h: dh as f32 };
     if o.style == CardStyle::Anime {
         anime::hunt(&mut pen, d, o);
+        return pen.c;
+    }
+    if let Some(sk) = skin::of(o.style) {
+        skin::hunt(sk, &mut pen, d, o);
         return pen.c;
     }
     background_decor(&mut pen, o);
@@ -1280,6 +1373,10 @@ pub fn render_profile(d: &ProfileData, o: &CardOptions, t: &dyn TextDraw) -> Can
         anime::profile(&mut pen, d, o);
         return pen.c;
     }
+    if let Some(sk) = skin::of(o.style) {
+        skin::profile(sk, &mut pen, d, o);
+        return pen.c;
+    }
     background_decor(&mut pen, o);
     match o.layout {
         CardLayout::Wide => profile_wide(&mut pen, d),
@@ -1475,4 +1572,14 @@ fn profile_square(pen: &mut Pen, d: &ProfileData) {
         recent_achievements(pen, d, m, y, cw, ah);
     }
     profile_footer(pen, d, m, w - m, h - m - 20.0);
+}
+
+// ───────────────────────────── themed rare grass poster ─────────────────────────────
+
+/// The rare grass infographic in one of the share-image themes (Glass,
+/// Retro DS, …); Anime and Classic are drawn by `poster::render`. `theme`
+/// picks the type colour where a theme uses one.
+pub fn render_poster(data: &crate::poster::PosterData, mode: crate::poster::PosterMode, style: CardStyle, theme: CardTheme, t: &dyn TextDraw) -> Option<Canvas> {
+    let sk = skin::of(style)?;
+    Some(skin::poster(sk, data, mode, theme, t))
 }

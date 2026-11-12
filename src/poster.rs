@@ -455,7 +455,7 @@ fn poly_with(c: &mut Canvas, pts: &[(f32, f32)], paint: impl Fn(i32, i32) -> Col
 }
 
 /// "Route 210 (south)" → 210.
-fn route_no(name: &str) -> Option<u32> {
+pub(crate) fn route_no(name: &str) -> Option<u32> {
     let rest = name.strip_prefix("Route ")?;
     let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
     digits.parse().ok()
@@ -471,7 +471,7 @@ pub fn date_label(reset: i64) -> String {
 }
 
 /// "Thu 12 Nov" (server calendar).
-fn short_date(t: i64) -> String {
+pub(crate) fn short_date(t: i64) -> String {
     let (_, m, d, wd) = worldclock::server_date(t);
     format!("{wd} {d} {}", &worldclock::MONTHS[(m - 1) as usize][..3])
 }
@@ -505,7 +505,7 @@ struct Entry<'d> {
 /// Areas in route order (Pokémon by name), how many areas each Pokémon is
 /// in, and the top 3 by that (ties share a place).
 #[allow(clippy::type_complexity)]
-fn prepare(data: &PosterData) -> (Vec<PosterArea>, Vec<(String, usize)>, Vec<(usize, Vec<String>)>) {
+pub(crate) fn prepare(data: &PosterData) -> (Vec<PosterArea>, Vec<(String, usize)>, Vec<(usize, Vec<String>)>) {
     // areas in route order, Pokémon by name
     let mut areas: Vec<PosterArea> = data.areas.iter().filter(|a| !a.mons.is_empty()).cloned().collect();
     for a in &mut areas {
@@ -793,20 +793,20 @@ fn lists_header(p: &mut Pen, data: &PosterData, zone: &str, w: f32, m: f32, head
 /// A pin on the map: one rare grass patch (an area's tiles that lie close
 /// together). (ox, oy) is where the patch really is, (x, y) where the pin
 /// went after being nudged clear of the others; `r` its room.
-struct Pin {
-    mons: Vec<usize>,
-    area: usize,
-    ox: f32,
-    oy: f32,
-    x: f32,
-    y: f32,
-    r: f32,
+pub(crate) struct Pin {
+    pub mons: Vec<usize>,
+    pub area: usize,
+    pub ox: f32,
+    pub oy: f32,
+    pub x: f32,
+    pub y: f32,
+    pub r: f32,
 }
 
 /// Pins for every patch, nudged apart and off the place names (`taken`),
 /// kept inside left..right, top..bottom. Also returns the sprite size.
 #[allow(clippy::too_many_arguments)]
-fn place_pins(
+pub(crate) fn place_pins(
     areas: &[PosterArea],
     to_px: &dyn Fn(f32, f32) -> (f32, f32),
     taken: &[(f32, f32, f32, f32)],

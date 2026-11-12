@@ -18,9 +18,23 @@ mod dex_tabs;
 mod extras;
 mod home;
 mod hunt_pages;
-mod insights;
 mod notices;
+mod onboarding;
 mod launcher;
+mod charts;
+mod stats_hunt;
+mod stats_life;
+mod ov_anime;
+mod ov_common;
+mod ov_glass;
+mod ov_neon;
+mod ov_poketch;
+mod ov_journal;
+mod ov_holo;
+mod ov_broadcast;
+mod ov_terminal;
+mod ov_retro;
+mod ov_toast;
 mod map;
 mod overlay_mod;
 mod pokedex;
@@ -55,6 +69,7 @@ enum Tab {
     Pokedex,
     Map,
     Profile,
+    Stats,
     Dex,
     Hunt,
     Counting,
@@ -116,6 +131,9 @@ struct Setup {
     chart_view: hunt_pages::ChartView,
     /// Which tab of a run's stats page is open.
     run_tab: hunt_pages::RunTab,
+    pace_view: stats_hunt::PaceView,
+    top_view: stats_life::TopView,
+    stats_tab: stats_life::StatsTab,
     overlay_tab: settings::OverlayTab,
     hunt_tab: settings::HuntTab,
     pokedex: pokedex::DexState,
@@ -220,6 +238,8 @@ pub struct App {
     celebrate: Option<(Instant, String)>,
     /// Fonts for drawing share images (loaded when first needed).
     card_text: Option<crate::share::AbText>,
+    /// Small pictures of the share image in every style (for the style picker).
+    style_thumbs: hunt_pages::StyleThumbs,
     applied_appearance: Option<crate::config::Appearance>,
     settings_rounded: bool,
     /// Encounters added by the last battle (for the undo hotkey).
@@ -357,6 +377,7 @@ impl App {
             cfg.welcome_done = true;
         }
         let show_setup = !cfg.welcome_done
+            || cfg.onboarding_seen < crate::config::ONBOARDING_VERSION
             || (cfg.count_source == CountSource::Screen && cfg.name_regions.is_empty());
         if cfg.run_id == 0 {
             cfg.run_id = new_run_id();
@@ -438,6 +459,9 @@ impl App {
                 view_run: None,
                 chart_view: Default::default(),
                 run_tab: Default::default(),
+                pace_view: Default::default(),
+                top_view: Default::default(),
+                stats_tab: Default::default(),
                 overlay_tab: Default::default(),
                 hunt_tab: Default::default(),
                 pokedex: Default::default(),
@@ -476,6 +500,7 @@ impl App {
             game_check: Instant::now() - Duration::from_secs(10),
             celebrate: None,
             card_text: None,
+            style_thumbs: Default::default(),
             applied_appearance: Some(cfg.appearance.clone()),
             settings_rounded: false,
             last_added: None,
@@ -886,6 +911,40 @@ impl App {
         self.draw_sprite_tinted(p, sp, shiny, foot, max, Color32::WHITE)
     }
 
+    /// Draw the animated back sprite standing on `foot`, fitting in `max`.
+    /// Returns false while it loads or when there isn't one.
+    fn draw_back_sprite(&mut self, p: &egui::Painter, sp: &Species, shiny: bool, foot: Pos2, max: Vec2) -> bool {
+        let t = self.t_ms();
+        let Some(anim) = self.sprites.get_back(sp, shiny) else { return false };
+        let s = anim.size;
+        let fit = (max.x / s.x).min(max.y / s.y);
+        let k = if fit >= 1.0 { fit.floor() } else { fit };
+        let size = s * k;
+        let rect = Rect::from_min_size(foot - egui::vec2(size.x / 2.0, size.y), size);
+        p.image(anim.frame(t).id(), rect, Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+        true
+    }
+
+    /// Draw a sprite centred on `center`, fitting in `max`.
+    fn draw_sprite_centered(&mut self, p: &egui::Painter, sp: &Species, shiny: bool, center: Pos2, max: Vec2) -> bool {
+        let h = self.sprites.get(sp, shiny).map(|anim| {
+            let s = anim.size;
+            let fit = (max.x / s.x).min(max.y / s.y);
+            let k = if anim.still {
+                (fit * 0.8).min(3.0)
+            } else if fit >= 1.0 {
+                fit.floor()
+            } else {
+                fit
+            };
+            s.y * k
+        });
+        match h {
+            Some(h) => self.draw_sprite(p, sp, shiny, center + egui::vec2(0.0, (h / 2.0).round()), max),
+            None => self.draw_sprite(p, sp, shiny, center + egui::vec2(0.0, max.y / 2.0), max),
+        }
+    }
+
     /// Like `draw_sprite`, multiplied by `tint` (black = silhouette).
     fn draw_sprite_tinted(
         &mut self,
@@ -934,6 +993,10 @@ impl App {
     // ───────────────────────────── overlay ─────────────────────────────
 
     fn mini_ui(&mut self, ctx: &egui::Context) {
+        let theme = if self.cfg.overlay.legacy() { crate::config::OverlayTheme::Classic } else { self.cfg.overlay.theme };
+        if self.themed_mini(ctx, theme) {
+            return;
+        }
         egui::CentralPanel::default()
             .frame(egui::Frame::none())
             .show(ctx, |ui| {
@@ -1054,7 +1117,7 @@ impl App {
                 self.ov_shape.push([full.min.x, full.min.y, full.width(), full.height(), 12.0]);
                 if below {
                     let under = Rect::from_min_max(egui::pos2(full.min.x, full.max.y + 6.0), egui::pos2(full.max.x, full.max.y + LEGACY_BELOW - 2.0));
-                    let shape = self.popup_shape(under);
+                    let shape = self.popup_shape(under, crate::config::OverlayTheme::Classic);
                     self.ov_shape.push(shape);
                 }
                 let p = ui.painter().clone();
@@ -1594,7 +1657,7 @@ impl App {
                         Rect::from_min_max(egui::pos2(row.min.x + w * a, row.min.y), egui::pos2(row.min.x + w * b, row.max.y))
                     };
                     if ui
-                        .put(at(0.52, 0.84), egui::Button::new(RichText::new(format!("Undo ({left})")).strong().color(Color32::WHITE)).fill(theme::PLATE()))
+                        .put(at(0.52, 0.84), egui::Button::new(RichText::new(format!("Undo ({left})")).family(ui_kit::strong_family(13.5)).strong().color(Color32::WHITE)).fill(theme::PLATE()))
                         .on_hover_text("Pressed Caught! by mistake? Put everything back")
                         .clicked()
                     {
@@ -1623,7 +1686,7 @@ impl App {
                     if many {
                         // Three or more targets: pick in the Companion.
                         if ui
-                            .put(at(0.22, 0.74), egui::Button::new(RichText::new("Choose…").strong().color(Color32::WHITE)).fill(theme::GREEN.gamma_multiply(0.7)))
+                            .put(at(0.22, 0.74), egui::Button::new(RichText::new("Choose…").family(ui_kit::strong_family(13.5)).strong().color(Color32::WHITE)).fill(theme::GREEN.gamma_multiply(0.7)))
                             .on_hover_text("Pick which of your targets it was")
                             .clicked()
                         {
@@ -1635,7 +1698,7 @@ impl App {
                         let short = |n: &str| if n.chars().count() > 8 { format!("{}…", n.chars().take(7).collect::<String>()) } else { n.to_string() };
                         let name1 = self.target_idx().map(|i| self.species[i].name.to_string()).unwrap_or_default();
                         if ui
-                            .put(at(0.22, 0.47), egui::Button::new(RichText::new(short(&name1)).strong().color(Color32::WHITE)).fill(theme::GREEN.gamma_multiply(0.7)))
+                            .put(at(0.22, 0.47), egui::Button::new(RichText::new(short(&name1)).family(ui_kit::strong_family(13.5)).strong().color(Color32::WHITE)).fill(theme::GREEN.gamma_multiply(0.7)))
                             .on_hover_text(format!("Shiny {name1}! Logs this hunt and starts fresh"))
                             .clicked()
                         {
@@ -1643,7 +1706,7 @@ impl App {
                             self.confirm_caught = false;
                         }
                         if ui
-                            .put(at(0.49, 0.74), egui::Button::new(RichText::new(short(&name2)).strong().color(Color32::WHITE)).fill(theme::GREEN.gamma_multiply(0.7)))
+                            .put(at(0.49, 0.74), egui::Button::new(RichText::new(short(&name2)).family(ui_kit::strong_family(13.5)).strong().color(Color32::WHITE)).fill(theme::GREEN.gamma_multiply(0.7)))
                             .on_hover_text(format!("Shiny {name2}! Logs this hunt and starts fresh"))
                             .clicked()
                         {
@@ -1653,7 +1716,7 @@ impl App {
                     } else if ui
                         .put(
                             at(0.36, 0.62),
-                            egui::Button::new(RichText::new("Target").strong().color(Color32::WHITE))
+                            egui::Button::new(RichText::new("Target").family(ui_kit::strong_family(13.5)).strong().color(Color32::WHITE))
                                 .fill(theme::GREEN.gamma_multiply(0.7)),
                         )
                         .on_hover_text("Your target! Logs this hunt and starts fresh")
@@ -1665,7 +1728,7 @@ impl App {
                     if ui
                         .put(
                             at(phase_a, phase_b),
-                            egui::Button::new(RichText::new("Phase").strong().color(Color32::WHITE)).fill(GOLD.gamma_multiply(0.55)),
+                            egui::Button::new(RichText::new("Phase").family(ui_kit::strong_family(13.5)).strong().color(Color32::WHITE)).fill(GOLD.gamma_multiply(0.55)),
                         )
                         .on_hover_text("A shiny of a different Pokémon: pick which, and this hunt keeps going")
                         .clicked()
@@ -1722,7 +1785,7 @@ impl App {
                         let caught_btn = i == 3;
                         let ink = if caught_btn { theme::button_ink() } else { Color32::WHITE };
                         let slot = ui.painter().add(egui::Shape::Noop);
-                        let btn = egui::Button::new(RichText::new(label).strong().color(ink))
+                        let btn = egui::Button::new(RichText::new(label).family(ui_kit::strong_family(13.5)).strong().color(ink))
                             .fill(if caught_btn { Color32::TRANSPARENT } else { fill })
                             .rounding(6.0);
                         let resp = ui.put(r, btn);
@@ -1747,14 +1810,14 @@ impl App {
                     egui::pos2(full.max.x, full.max.y + LEGACY_BELOW - 2.0),
                 );
                 if !self.notices.is_empty() {
-                    self.draw_notice(ui, ctx, under);
+                    self.draw_notice(ui, ctx, under, crate::config::OverlayTheme::Classic);
                 }
 
                 // Achievement / level-up pop-up, in the same spot.
                 if !self.toasts.is_empty() {
                     let area = under;
                     let fg = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("toasts")));
-                    self.draw_toast(ctx, &fg, area);
+                    self.draw_toast(ctx, &fg, area, crate::config::OverlayTheme::Classic);
                 }
             });
     }
@@ -1960,7 +2023,7 @@ impl App {
                 ui.label(
                     RichText::new(title)
                         .size(ui_kit::fs(17.0))
-                        .strong()
+                        .family(ui_kit::strong_family(ui_kit::fs(17.0))).strong()
                         .color(theme::pal().text),
                 );
                 if !body.is_empty() {
@@ -2103,7 +2166,7 @@ impl App {
                             ui.label(
                                 RichText::new(format!("📸 Click on the game now… {left}"))
                                     .size(ui_kit::fs(15.0))
-                                    .strong()
+                                    .family(ui_kit::strong_family(ui_kit::fs(15.0))).strong()
                                     .color(GOLD),
                             );
                         }
@@ -2115,8 +2178,8 @@ impl App {
                             };
                             if ui
                                 .add(
-                                    egui::Button::new(RichText::new(label).size(ui_kit::fs(15.0)).strong().color(theme::button_ink()))
-                                        .fill(theme::BUTTON()).rounding(ui_kit::primary_round()),
+                                    egui::Button::new(RichText::new(label).size(ui_kit::fs(15.0)).family(ui_kit::strong_family(ui_kit::fs(15.0))).strong().color(ui_kit::on_primary()))
+                                        .fill(ui_kit::primary()).rounding(ui_kit::primary_round()),
                                 )
                                 .clicked()
                             {
@@ -2145,7 +2208,7 @@ impl App {
                     ui.horizontal(|ui| {
                         ui.label(
                             RichText::new(format!("Boxes drawn: {n_boxes}"))
-                                .strong()
+                                .family(ui_kit::strong_family(13.5)).strong()
                                 .color(theme::REGION),
                         );
                         if n_boxes > 0 {
@@ -2194,7 +2257,7 @@ impl App {
                 if ui
                     .add_enabled(
                         ready,
-                        egui::Button::new(RichText::new("🔎 Test").size(ui_kit::fs(15.0)).strong().color(theme::button_ink())).fill(theme::BUTTON()).rounding(ui_kit::primary_round()),
+                        egui::Button::new(RichText::new("🔎 Test").size(ui_kit::fs(15.0)).family(ui_kit::strong_family(ui_kit::fs(15.0))).strong().color(ui_kit::on_primary())).fill(ui_kit::primary()).rounding(ui_kit::primary_round()),
                     )
                     .on_disabled_hover_text("Do steps 2 and 3 first")
                     .clicked()
@@ -2209,7 +2272,7 @@ impl App {
                 ui.label(
                     RichText::new("🎉 All set! Name reading is working.")
                         .size(ui_kit::fs(16.0))
-                        .strong()
+                        .family(ui_kit::strong_family(ui_kit::fs(16.0))).strong()
                         .color(theme::GREEN),
                 );
             }
@@ -2411,7 +2474,7 @@ impl App {
                 theme::HP_RED,
                 RichText::new("✖ Couldn't find a Pokémon name in your boxes.")
                     .size(ui_kit::fs(15.0))
-                    .strong(),
+                    .family(ui_kit::strong_family(ui_kit::fs(15.0))).strong(),
             );
             ui.label("• Make sure the picture shows a battle with the enemy names visible.");
             ui.label("• Each box should cover just the name, with a little space around it.");
@@ -2427,7 +2490,7 @@ impl App {
                     t.names.join(" + ").to_uppercase()
                 ))
                 .size(ui_kit::fs(16.0))
-                .strong(),
+                .family(ui_kit::strong_family(ui_kit::fs(16.0))).strong(),
             );
             ui.label(
                 RichText::new(format!("A battle like this adds {per} to your count.")).color(ui_kit::MUTED()),
@@ -2565,9 +2628,40 @@ impl eframe::App for App {
             self.show_setup = false;
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-            if !self.setup.phase_pick && !launcher::is_shiny_tab(self.setup.tab) && self.cfg.welcome_done {
+            if !self.setup.phase_pick && !launcher::is_shiny_tab(self.setup.tab) && !self.onboarding_open() {
                 self.setup.tab = Tab::Shiny;
             }
+        }
+        // Screenshot rig only (never on Windows): draw the overlay in the
+        // main window, over a stand-in game picture.
+        #[cfg(not(windows))]
+        if std::env::var_os("SHOT_OVERLAY").is_some() {
+            let r = ctx.screen_rect();
+            ctx.layer_painter(egui::LayerId::background()).add(crate::app::ov_common::shot_backdrop(r));
+            if std::env::var_os("SHOT_ALERT").is_some() {
+                self.shiny_alert = Some(0);
+            }
+            if std::env::var_os("SHOT_CONFIRM").is_some() {
+                self.confirm_caught = true;
+            }
+            if std::env::var_os("SHOT_CELEBRATE").is_some() && self.celebrate.is_none() {
+                self.celebrate = Some((Instant::now() - Duration::from_millis(1500), "2,000 encounters".to_string()));
+            }
+            if let Some(i) = std::env::var("SHOT_TOAST").ok().and_then(|v| v.parse::<usize>().ok()) {
+                let age = std::env::var("SHOT_TOAST_T").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(2.0);
+                self.toasts.clear();
+                self.preview_toast(i, Some(age));
+            }
+            if let Some(i) = std::env::var("SHOT_NOTICE").ok().and_then(|v| v.parse::<usize>().ok()) {
+                self.preview_notice(i);
+            }
+            if self.cfg.mini {
+                self.mini_ui(ctx);
+            } else {
+                self.modular_ui(ctx);
+            }
+            ctx.request_repaint_after(Duration::from_millis(40));
+            return;
         }
         // The launcher is the main window.
         self.launcher_ui(ctx);

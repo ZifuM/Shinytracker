@@ -2,7 +2,6 @@
 //! journal, sound effects, today's timer and undo.
 
 use super::ui_kit::{self as kit, MUTED, CARD, CARD_HOVER, LINE, TEXT};
-use super::hunt_pages::RunInfo;
 use super::{App, RunRef, Tab};
 use crate::config::{GoalDone, HuntRecord};
 use crate::goals::{self, WeekStats};
@@ -302,7 +301,7 @@ impl App {
                         self.draw_sprite(&p, &sp, true, r.center_bottom(), egui::vec2(40.0, 36.0));
                     }
                     ui.vertical(|ui| {
-                        ui.label(RichText::new(format!("✨ Shiny {}", h.target)).size(kit::fs(13.5)).strong().color(GOLD));
+                        ui.label(RichText::new(format!("✨ Shiny {}", h.target)).size(kit::fs(13.5)).family(kit::strong_family(kit::fs(13.5))).strong().color(GOLD));
                         ui.label(
                             RichText::new(format!("at {} encounters · {}", theme::thousands(h.encounters), fmt_date(h.when_unix)))
                                 .size(kit::fs(11.5))
@@ -324,140 +323,6 @@ impl App {
 
     // ───────────────────────────── encounter breakdown ─────────────────────────────
 
-    /// Run stats: which Pokémon you've been running into.
-    pub(super) fn breakdown_section(&mut self, ui: &mut egui::Ui, info: &RunInfo, st: &RunStats) {
-        let total: u64 = st.species.values().sum();
-        if total == 0 {
-            return;
-        }
-        kit::section(ui, "What you're running into");
-        let target_dex = self.species_of(info.slug.as_deref()).map(|(i, _)| i as u32 + 1);
-        let mut rows: Vec<(u32, u64)> = st.species.iter().map(|(d, n)| (*d, *n)).collect();
-        rows.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-        const COLS: [[u8; 3]; 7] = [
-            [246, 200, 66],
-            [96, 165, 250],
-            [244, 114, 182],
-            [52, 211, 153],
-            [251, 146, 60],
-            [167, 139, 250],
-            [148, 163, 184],
-        ];
-        kit::card(ui, |ui| {
-            // target summary
-            if let Some(td) = target_dex {
-                let seen = st.species.get(&td).copied().unwrap_or(0);
-                let name = info.name.clone();
-                let pct = seen as f64 * 100.0 / total as f64;
-                let mut line = format!("{} {name} seen · {:.0}% of encounters", theme::thousands(seen), pct);
-                if seen > 0 && info.odds.is_some() {
-                    line.push_str(&format!("  ·  odds from {name} only: {:.2}×", seen as f64 / info.odds.unwrap_or(1.0)));
-                }
-                ui.label(RichText::new(line).size(kit::fs(13.5)).strong().color(TEXT()));
-                if !info.caught {
-                    let w = TargetWatch::new(info.count, info.target_seen, st.target_last);
-                    if let (Some(n), true) = (w.since, w.seen > 0) {
-                        let t = if n == 0 { "Just seen".to_string() } else { format!("Last seen {} encounters ago", theme::thousands(n)) };
-                        ui.label(RichText::new(t).size(kit::fs(11.5)).color(MUTED()));
-                    }
-                    if w.dry {
-                        kit::pill(
-                            ui,
-                            &format!("⚠ {name} hasn't turned up for a while. Is it on this route, at this time of day, with this method?"),
-                            kit::PillKind::Warn,
-                        );
-                    }
-                }
-                ui.add_space(8.0);
-            }
-            // stacked bar: top 6 + others
-            let (bar, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 14.0), Sense::hover());
-            let p = ui.painter();
-            p.rect_filled(bar, 7.0, CARD_HOVER());
-            let mut x = bar.min.x;
-            let segs: Vec<(u64, [u8; 3])> = rows
-                .iter()
-                .take(6)
-                .enumerate()
-                .map(|(k, (d, n))| (*n, if Some(*d) == target_dex { COLS[0] } else { COLS[1 + k % 5] }))
-                .chain(std::iter::once((rows.iter().skip(6).map(|r| r.1).sum::<u64>(), COLS[6])))
-                .collect();
-            let clip = p.with_clip_rect(bar);
-            for (n, c) in &segs {
-                let w = bar.width() * *n as f32 / total as f32;
-                if w > 0.0 {
-                    clip.rect_filled(
-                        Rect::from_min_size(egui::pos2(x, bar.min.y), egui::vec2(w, bar.height())),
-                        0.0,
-                        Color32::from_rgb(c[0], c[1], c[2]),
-                    );
-                    x += w;
-                }
-            }
-            ui.add_space(8.0);
-            // rows
-            let colw = if ui.available_width() > 640.0 { (ui.available_width() - 16.0) / 2.0 } else { ui.available_width() };
-            let per_row = if colw < ui.available_width() { 2 } else { 1 };
-            let shown: Vec<(usize, (u32, u64))> = rows.iter().copied().take(12).enumerate().collect();
-            for chunk in shown.chunks(per_row) {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 16.0;
-                    for (k, (d, n)) in chunk {
-                        let (r, _) = ui.allocate_exact_size(egui::vec2(colw, 32.0), Sense::hover());
-                        let is_target = Some(*d) == target_dex;
-                        let c = if is_target { COLS[0] } else if *k < 6 { COLS[1 + k % 5] } else { COLS[6] };
-                        let p = ui.painter_at(r);
-                        if is_target {
-                            p.rect_filled(r, 8.0, GOLD.gamma_multiply(0.12));
-                        }
-                        p.circle_filled(egui::pos2(r.min.x + 8.0, r.center().y), 4.0, Color32::from_rgb(c[0], c[1], c[2]));
-                        if let Some(sp) = self.species.get((*d as usize).saturating_sub(1)).cloned() {
-                            let ic = Rect::from_min_size(egui::pos2(r.min.x + 16.0, r.min.y), egui::vec2(34.0, 32.0));
-                            self.draw_sprite(&p, &sp, false, ic.center_bottom(), egui::vec2(34.0, 30.0));
-                            p.text(
-                                egui::pos2(r.min.x + 56.0, r.center().y),
-                                Align2::LEFT_CENTER,
-                                sp.name,
-                                kit::font(13.0),
-                                if is_target { GOLD } else { TEXT() },
-                            );
-                        }
-                        let pct = *n as f32 / total as f32;
-                        p.text(
-                            egui::pos2(r.max.x - 6.0, r.center().y),
-                            Align2::RIGHT_CENTER,
-                            format!("{}  ·  {:.0}%", theme::thousands(*n), pct * 100.0),
-                            kit::font(12.0),
-                            MUTED(),
-                        );
-                        let bw = (r.width() * 0.25).max(40.0);
-                        let bar = Rect::from_min_size(egui::pos2(r.max.x - 110.0 - bw, r.center().y - 3.0), egui::vec2(bw, 6.0));
-                        p.rect_filled(bar, 3.0, LINE());
-                        p.rect_filled(
-                            Rect::from_min_size(bar.min, egui::vec2((bw * pct).max(3.0), 6.0)),
-                            3.0,
-                            Color32::from_rgb(c[0], c[1], c[2]),
-                        );
-                    }
-                });
-            }
-            if rows.len() > 12 {
-                ui.label(RichText::new(format!("…and {} more", rows.len() - 12)).size(kit::fs(11.5)).color(MUTED()));
-            }
-            if total < info.count {
-                ui.add_space(4.0);
-                ui.label(
-                    RichText::new(format!(
-                        "Counted from when this was added: {} of this run's {} encounters.",
-                        theme::thousands(total),
-                        theme::thousands(info.count)
-                    ))
-                    .size(kit::fs(11.0))
-                    .color(MUTED()),
-                );
-            }
-        });
-    }
 
     // ───────────────────────────── shiny dex ─────────────────────────────
 
@@ -821,7 +686,7 @@ impl App {
                             )
                         }
                     };
-                    ui.label(RichText::new(line).size(kit::fs(14.0)).strong().color(TEXT()));
+                    ui.label(RichText::new(line).size(kit::fs(14.0)).family(kit::strong_family(kit::fs(14.0))).strong().color(TEXT()));
                 });
             });
         });
@@ -1003,7 +868,7 @@ impl App {
                     ui.label(
                         RichText::new(if done { "Daily goal reached! ✔" } else { "Today's goal" })
                             .size(kit::fs(15.0))
-                            .strong()
+                            .family(kit::strong_family(kit::fs(15.0))).strong()
                             .color(if done { theme::GREEN } else { TEXT() }),
                     );
                     ui.label(
@@ -1028,7 +893,7 @@ impl App {
                             "Streak: start one today!".to_string()
                         })
                         .size(kit::fs(12.5))
-                        .strong()
+                        .family(kit::strong_family(kit::fs(12.5))).strong()
                         .color(GOLD),
                     );
                 });
@@ -1062,7 +927,7 @@ impl App {
                     let (r, _) = ui.allocate_exact_size(egui::vec2(26.0, 26.0), Sense::hover());
                     theme::medal(ui.painter(), r.center() - egui::vec2(0.0, 3.0), 9.0, [246, 200, 66], !done);
                     ui.vertical(|ui| {
-                        ui.label(RichText::new(c.title).size(kit::fs(13.5)).strong().color(if done { TEXT() } else { MUTED() }));
+                        ui.label(RichText::new(c.title).size(kit::fs(13.5)).family(kit::strong_family(kit::fs(13.5))).strong().color(if done { TEXT() } else { MUTED() }));
                         let (br, _) = ui.allocate_exact_size(egui::vec2(ui.available_width().min(420.0), 6.0), Sense::hover());
                         let pp = ui.painter();
                         pp.rect_filled(br, 3.0, LINE());

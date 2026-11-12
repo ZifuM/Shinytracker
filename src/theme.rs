@@ -228,17 +228,19 @@ const MODERN_SEMI: Surf = Surf {
     field: rgb(31, 34, 48),
 };
 
+/// Light mode follows the Cirrus tokens: Sky page, Cloud cards and fields,
+/// Edge hairlines, Sunken hovers, Ink text and Mist secondary text.
 const MODERN_LIGHT: Surf = Surf {
     sidebar: rgb(255, 255, 255),
-    page: rgb(243, 244, 248),
+    page: rgb(237, 242, 247),
     card: rgb(255, 255, 255),
-    card_hover: rgb(245, 246, 250),
-    line: rgb(228, 230, 238),
-    control: rgb(204, 208, 220),
-    selected: rgb(236, 238, 246),
-    text: rgb(24, 27, 40),
-    muted: rgb(100, 106, 128),
-    field: rgb(247, 248, 251),
+    card_hover: rgb(243, 246, 250),
+    line: rgb(227, 232, 238),
+    control: rgb(200, 207, 217),
+    selected: rgb(236, 240, 245),
+    text: rgb(14, 17, 22),
+    muted: rgb(91, 100, 114),
+    field: rgb(255, 255, 255),
 };
 
 /// The clean style's surface colours for the current mode.
@@ -284,7 +286,7 @@ pub fn set_appearance(ctx: &egui::Context, a: &crate::config::Appearance) {
         p.button2 = if a.button_gradient { c3(a.button2) } else { p.button };
     } else {
         p.button = p.accent;
-        p.button2 = p.accent2;
+        p.button2 = if a.solid_buttons { p.accent } else { p.accent2 };
     }
     if let Ok(mut w) = PAL.write() {
         *w = p;

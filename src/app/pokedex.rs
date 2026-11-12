@@ -572,7 +572,7 @@ impl App {
                 ui.add_space(14.0);
                 ui.vertical(|ui| {
                     ui.label(RichText::new(format!("#{:04}", m.dex)).size(kit::fs(13.0)).color(MUTED()));
-                    ui.label(RichText::new(&m.name).size(kit::fs(24.0)).strong().color(TEXT()));
+                    ui.label(RichText::new(&m.name).size(kit::fs(24.0)).family(kit::strong_family(kit::fs(24.0))).strong().color(TEXT()));
                     if let Some(e) = extra.filter(|e| !e.category.is_empty()) {
                         ui.label(RichText::new(&e.category).size(kit::fs(12.5)).color(MUTED()));
                     }
@@ -602,7 +602,7 @@ impl App {
                     ui.horizontal(|ui| {
                         if let Some(sp) = sp {
                             let label = if hunting { "Go to my hunt" } else { "Hunt this shiny" };
-                            let b = egui::Button::new(RichText::new(label).strong().color(theme::button_ink()));
+                            let b = egui::Button::new(RichText::new(label).family(kit::strong_family(13.5)).strong().color(kit::on_primary()));
                             let tip = if hunting {
                                 format!("You're hunting {} now", m.name)
                             } else {
@@ -651,10 +651,10 @@ impl App {
                             ui.label(
                                 RichText::new(format!("✨ On rare grass today: {}", super::rare::places_text(&rare_spots)))
                                     .size(kit::fs(12.5))
-                                    .strong()
+                                    .family(kit::strong_family(kit::fs(12.5))).strong()
                                     .color(GOLD),
                             );
-                            let b = egui::Button::new(RichText::new("Hunt on rare grass").strong().color(Color32::from_rgb(40, 30, 6)))
+                            let b = egui::Button::new(RichText::new("Hunt on rare grass").family(kit::strong_family(13.5)).strong().color(Color32::from_rgb(40, 30, 6)))
                                 .fill(GOLD)
                                 .rounding(kit::btn_round(6.0));
                             if ui
@@ -906,7 +906,7 @@ impl App {
                         ui.label(
                             RichText::new(format!("{}  →  {}", name(&e.from), name(&e.species)))
                                 .size(kit::fs(12.5))
-                                .strong()
+                                .family(kit::strong_family(kit::fs(12.5))).strong()
                                 .color(if mine { TEXT() } else { MUTED() }),
                         );
                         ui.label(RichText::new(short_method(&e.method)).size(kit::fs(11.0)).color(theme::LINK()));
@@ -1001,7 +1001,7 @@ const EVO_TILE_W: f32 = 120.0;
 const EVO_CHIP: f32 = 24.0;
 
 pub(super) fn card_title(ui: &mut egui::Ui, title: &str) {
-    ui.label(RichText::new(title).size(kit::fs(13.5)).strong().color(TEXT()));
+    ui.label(RichText::new(title).size(kit::fs(13.5)).family(kit::strong_family(kit::fs(13.5))).strong().color(TEXT()));
     ui.add_space(6.0);
 }
 
@@ -1059,7 +1059,7 @@ fn stats_card(ui: &mut egui::Ui, m: &crate::wiki::Mon, e: Option<&crate::dexextr
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.label(RichText::new("Total").size(kit::fs(12.0)).color(MUTED()));
-            ui.label(RichText::new(e.total.to_string()).size(kit::fs(14.0)).strong().color(TEXT()));
+            ui.label(RichText::new(e.total.to_string()).size(kit::fs(14.0)).family(kit::strong_family(kit::fs(14.0))).strong().color(TEXT()));
         });
         let note = if !e.modern_stats.is_empty() {
             let old: u32 = e.modern_stats.iter().sum();
