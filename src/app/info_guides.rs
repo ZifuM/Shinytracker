@@ -924,8 +924,10 @@ impl App {
 
     /// Contents beside the guide; the part you're reading is lit.
     fn toc_panel(&mut self, ui: &mut egui::Ui, w: &Arc<Wiki>, g: &Guide, doc: &Doc, shown: &md::Shown, folded: bool) {
-        let clip_top = ui.clip_rect().min.y;
-        let active = shown.heads.iter().filter(|(_, y)| *y <= clip_top + 140.0).map(|(s, _)| *s).last().or(shown.heads.first().map(|h| h.0));
+        // the section whose heading has passed the top third of the window
+        let clip = ui.clip_rect();
+        let line = clip.min.y + (clip.height() * 0.3).max(120.0);
+        let active = shown.heads.iter().filter(|(_, y)| *y <= line).map(|(s, _)| *s).last().or(shown.heads.first().map(|h| h.0));
         let many = doc.sections.len() > 24 || folded;
         // the lit row: the section you're in, or the listed one it sits under
         let shows = |s: &md::Section| s.level <= 3 && !(many && s.level > 2);
