@@ -884,6 +884,8 @@ impl App {
                             self.cfg.daily_goal = g as u64 * 100;
                             self.dirty = true;
                         }
+                        // the stepper counts in hundreds: say what that means
+                        ui.label(RichText::new(format!("{} encounters a day", theme::thousands(self.cfg.daily_goal))).size(kit::fs(12.0)).color(MUTED()));
                     });
                     let streak = self.daily_streak();
                     ui.label(
@@ -1045,11 +1047,9 @@ impl App {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Volume").size(kit::fs(13.0)).color(TEXT()));
-                ui.spacing_mut().slider_width = (ui.available_width() - 70.0).max(80.0);
-                self.dirty |= ui
-                    .add(egui::Slider::new(&mut self.cfg.sounds.volume, 0.0..=1.0).show_value(false))
-                    .changed();
-                ui.label(RichText::new(format!("{:.0}%", self.cfg.sounds.volume * 100.0)).size(kit::fs(12.5)).color(MUTED()));
+                ui.spacing_mut().slider_width = (ui.available_width() - kit::SLIDER_VALUE_W - 16.0).max(80.0);
+                let text = format!("{:.0}%", self.cfg.sounds.volume * 100.0);
+                self.dirty |= kit::slider(ui, egui::Slider::new(&mut self.cfg.sounds.volume, 0.0..=1.0), &text).changed();
             });
             ui.add_space(6.0);
             ui.horizontal(|ui| {

@@ -60,7 +60,6 @@ impl App {
     /// Jump straight to the target picker on the Hunt page.
     pub(super) fn open_target_picker(&mut self) {
         self.setup.tab = Tab::Hunt;
-        self.setup.hunt_tab = super::settings::HuntTab::Target;
         self.setup.picking_target = true;
         self.setup.search.clear();
         self.setup.nav_collapsed.retain(|t| *t != Tab::Shiny);

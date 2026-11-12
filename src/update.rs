@@ -220,6 +220,16 @@ fn run(shared: &Shared, ctx: &eframe::egui::Context, installed: Option<&str>, pr
 /// Swap in the downloaded build and start it. The caller saves settings
 /// first and closes this copy right after this returns Ok.
 pub fn install(new_exe: &std::path::Path) -> Result<(), String> {
+    // Keep a copy of the saves exactly as they are before anything changes.
+    let dir = crate::config::data_dir();
+    if let Ok(raw) = std::fs::read_to_string(dir.join("config.json")) {
+        let bk = dir.join("backups");
+        let _ = std::fs::create_dir_all(&bk);
+        let name = format!("before-update-{VERSION}-{}.json", crate::config::now_unix());
+        if std::fs::write(bk.join(name), raw).is_err() {
+            return Err("Couldn't back up your saves before updating, so the update was not installed".into());
+        }
+    }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let old = exe.with_extension("old.exe");
     let _ = std::fs::remove_file(&old);

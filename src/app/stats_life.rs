@@ -51,10 +51,6 @@ impl Catch {
 }
 
 /// Encounters as a multiple of the odds where a share `f` of hunters have it.
-fn mult_at(f: f64) -> f64 {
-    -(1.0 - f.min(0.999)).ln()
-}
-
 fn month_of(day: i64) -> (i64, u32) {
     let (y, m, _) = stats::civil_from_days(day);
     (y, m)
@@ -323,25 +319,15 @@ impl App {
                 Some(("→ Steady".to_string(), MUTED()))
             }
         });
-        let bands: Vec<(f64, f64, Color32)> = {
-            let mut lo = 0.0;
-            ch::LUCK_BANDS
-                .iter()
-                .map(|(f, _, c)| {
-                    let top = if *f >= 1.0 { hi } else { mult_at(*f) };
-                    let r = (lo, top, *c);
-                    lo = top;
-                    r
-                })
-                .collect()
-        };
+        let bands = ch::luck_zones_mult(hi);
         let ticks: Vec<(f64, String)> = (0..=hi as u32).map(|k| (k as f64, format!("{k}×"))).collect();
+        // right axis: the share of hunters at each band edge, at its true height
+        let right_ticks: Vec<(f64, String)> = ch::LUCK_BANDS.iter().take(4).map(|(f, _, _)| (ch::mult_at(*f), format!("{:.0}%", f * 100.0))).collect();
         let labels: Vec<String> = shown.iter().map(|c| MONTHS[(month_of(local_day(c.when)).1 as usize + 11) % 12].to_string()).collect();
         let hovers: Vec<String> = shown
             .iter()
             .map(|c| format!("{} · {}\n{} encounters at 1 in {} ({:.2}× the odds)\nLuckier than {} of hunters", c.name, fmt_day_short(local_day(c.when)), theme::thousands(c.encounters), theme::thousands(c.odds.round() as u64), c.mult(), pct(1.0 - c.found())))
             .collect();
-        let found: Vec<f64> = shown.iter().map(|c| c.found()).collect();
         let sprites: Vec<Option<crate::species::Species>> = shown.iter().map(|c| self.species_of(c.slug.as_deref()).map(|(_, s)| s)).collect();
         ch::card(ui, "🍀", "Shiny luck", right.as_ref().map(|(t, c)| (t.as_str(), *c)), |ui| {
             ui.label(egui::RichText::new("Each shiny: how many encounters it took, as a multiple of its odds. Lower is luckier.").size(kit::fs(12.5)).color(MUTED()));
@@ -360,7 +346,8 @@ impl App {
                     lo: 0.0,
                     hi,
                     ticks: &ticks,
-                    col: &|i, _| ch::luck_col(found[i]),
+                    right_ticks: &right_ticks,
+                    col: &|_, v| ch::zone_at(&bands, v).unwrap_or(MUTED()),
                     trend: shown.len() >= 3,
                     hovers: &hovers,
                     height: 300.0,
@@ -449,6 +436,7 @@ impl App {
                     lo: 0.0,
                     hi,
                     ticks: &ticks,
+                    right_ticks: &[],
                     col: &|_, _| BLUE,
                     trend: true,
                     hovers: &hovers,

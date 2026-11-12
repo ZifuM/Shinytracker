@@ -108,7 +108,7 @@ impl App {
             y += 24.0;
             let bar = Rect::from_min_size(pos2(x, y), vec2(rect.width() - 44.0, 6.0));
             p.rect_filled(bar, 3.0, kit::sunken());
-            let f = (at + 1) as f32 / n as f32;
+            let f = kit::glide(ui.ctx(), egui::Id::new("tour-progress"), (at + 1) as f32 / n as f32, Some(0.0), kit::ENTER);
             p.add(theme::button_shape(Rect::from_min_size(bar.min, vec2((bar.width() * f).max(6.0), 6.0)), 3.0, false));
             y += 26.0;
         } else {
@@ -116,6 +116,12 @@ impl App {
         }
         let row_h = if wide { 58.0 } else { 54.0 };
         let chip = 34.0;
+        // The current step's pill, sliding from row to row.
+        if wide {
+            let r = Rect::from_min_size(pos2(rect.min.x + 10.0, y + at as f32 * row_h), vec2(rect.width() - 20.0, row_h - 6.0));
+            let g = kit::glide_rect(ui.ctx(), egui::Id::new("tour-rail-pill"), r, rect.min, kit::BASE);
+            p.rect_filled(g, g.height() / 2.0, kit::sunken());
+        }
         for (k, s) in steps.iter().enumerate() {
             let row = if wide {
                 Rect::from_min_size(pos2(rect.min.x + 10.0, y), vec2(rect.width() - 20.0, row_h - 6.0))
@@ -131,10 +137,9 @@ impl App {
             let reachable = k <= at || (k == at + 1 && self.tour_can_continue(steps[at]));
             let resp = ui.interact(row, ui.id().with(("tour-step", k)), Sense::click());
             let hovered = resp.hovered() && reachable && k != at;
-            if k == at && wide {
-                p.rect_filled(row, row.height() / 2.0, kit::sunken());
-            } else if hovered && wide {
-                p.rect_filled(row, row.height() / 2.0, theme::blend(CARD(), TEXT(), 0.03));
+            let ht = kit::anim(ui.ctx(), ui.id().with(("tour-step-hover", k)), hovered && wide, kit::QUICK);
+            if ht > 0.0 {
+                p.rect_filled(row, row.height() / 2.0, theme::blend(CARD(), TEXT(), 0.03).gamma_multiply(ht));
             }
             let (icon, name, about) = s.meta();
             let cr = Rect::from_center_size(c, vec2(chip, chip));
@@ -204,6 +209,9 @@ impl App {
                 .max_height(body.height())
                 .show(ui, |ui| {
                     ui.set_width(body.width() - 14.0);
+                    // Each step fades in and lifts into place.
+                    let t = kit::entering(ui.ctx(), egui::Id::new("tour-step-enter"), at as u64, kit::ENTER);
+                    kit::enter_ui(ui, t, 16.0);
                     match step {
                         Step::Welcome => self.tour_welcome(ui),
                         Step::WhatsNew => self.tour_whats_new(ui),
@@ -223,13 +231,15 @@ impl App {
         let cy = foot.center().y + 2.0;
         let dots_w = n as f32 * 14.0;
         // (The last step's two buttons need the room; the rail shows where you are.)
-        for k in (0..n).filter(|_| step != Step::Done) {
-            let c = pos2(foot.center().x - dots_w / 2.0 + 7.0 + k as f32 * 14.0, cy);
-            if k == at {
-                p.add(theme::button_shape(Rect::from_center_size(c + vec2(0.0, 0.0), vec2(20.0, 6.0)), 3.0, false));
-            } else {
+        if step != Step::Done {
+            for k in 0..n {
+                let c = pos2(foot.center().x - dots_w / 2.0 + 7.0 + k as f32 * 14.0, cy);
                 p.circle_filled(c, 3.0, if k < at { theme::BUTTON().gamma_multiply(0.55) } else { LINE() });
             }
+            // the current step's dash, sliding along the dots
+            let c = pos2(foot.center().x - dots_w / 2.0 + 7.0 + at as f32 * 14.0, cy);
+            let r = kit::glide_rect(ui.ctx(), egui::Id::new("tour-dot"), Rect::from_center_size(c, vec2(20.0, 6.0)), foot.min, kit::BASE);
+            p.add(theme::button_shape(r, 3.0, false));
         }
         ui.allocate_new_ui(egui::UiBuilder::new().max_rect(Rect::from_center_size(pos2(foot.center().x, cy), vec2(foot.width(), 44.0))), |ui| {
             ui.horizontal_centered(|ui| {

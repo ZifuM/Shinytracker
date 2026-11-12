@@ -244,6 +244,10 @@ impl App {
         ui.style_mut().spacing.scroll = egui::style::ScrollStyle::floating();
         egui::ScrollArea::vertical().id_salt("modern-nav").max_height(list_h).auto_shrink([false, true]).scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(ui, |ui| {
             ui.add_space(6.0);
+            // One pill for the open page, sliding between rows as you go.
+            let pill_slot = ui.painter().add(egui::Shape::Noop);
+            let nav_anchor = ui.cursor().min;
+            let mut open_rect: Option<egui::Rect> = None;
             for (group, tab, parent) in NAV {
                 if let Some(g) = group {
                     if compact {
@@ -274,8 +278,11 @@ impl App {
                     })
                     .inner
                 } else {
-                    modern::nav_item(ui, icon, label, selected, color, compact)
+                    modern::nav_item(ui, icon, label, selected, color, compact, false)
                 };
+                if selected || (parent.is_some() && current == tab) {
+                    open_rect = Some(resp.rect);
+                }
                 // Chevron on an app with pages; a dot while the overlay runs.
                 if !compact && has_children {
                     let c = egui::pos2(resp.rect.max.x - 14.0, resp.rect.center().y);
@@ -296,6 +303,10 @@ impl App {
                     go = Some(tab);
                 }
                 ui.add_space(2.0);
+            }
+            if let Some(r) = open_rect {
+                let g = kit::glide_rect(ui.ctx(), egui::Id::new("nav-pill"), r, nav_anchor, kit::BASE);
+                ui.painter().set(pill_slot, egui::Shape::rect_filled(g, g.height() / 2.0, modern::nav_selected_fill()));
             }
             ui.add_space(6.0);
         });
@@ -359,10 +370,10 @@ fn sub_item(ui: &mut egui::Ui, icon: &str, label: &str, selected: bool, color: C
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 32.0), Sense::click());
     let p = ui.painter();
     let hovered = resp.hovered();
-    if selected {
-        p.rect_filled(rect, 9.0, theme::blend(SIDEBAR(), color, if theme::pal().light { 0.1 } else { 0.16 }));
-    } else if hovered {
-        p.rect_filled(rect, 9.0, theme::blend(SIDEBAR(), TEXT(), 0.05));
+    // (The open page's pill is painted by the sidebar, sliding between rows.)
+    let ht = kit::anim(ui.ctx(), resp.id.with("hover"), hovered && !selected, kit::QUICK);
+    if ht > 0.0 {
+        p.rect_filled(rect, rect.height() / 2.0, theme::blend(SIDEBAR(), TEXT(), 0.04).gamma_multiply(ht));
     }
     p.text(rect.left_center() + egui::vec2(14.0, 0.0), Align2::CENTER_CENTER, icon, egui::FontId::proportional(13.0), if selected { color } else { MUTED() });
     p.text(

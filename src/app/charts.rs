@@ -78,6 +78,58 @@ pub(super) fn luck_col(found: f64) -> Color32 {
     LUCK_BANDS[luck_band(found)].2
 }
 
+/// The luck bands as chart zones on a 0–100 % scale: (from, to, colour).
+/// The same thresholds as `luck_band`, so a zone's colour is always the
+/// colour `luck_col` gives any value inside it.
+pub(super) fn luck_zones_pct() -> Vec<(f64, f64, Color32)> {
+    let mut lo = 0.0;
+    LUCK_BANDS
+        .iter()
+        .map(|(hi, _, c)| {
+            let hi = hi.min(1.0);
+            let r = (lo * 100.0, hi * 100.0, *c);
+            lo = hi;
+            r
+        })
+        .collect()
+}
+
+/// The multiple of the odds by which a share `f` of hunters have found it.
+pub(super) fn mult_at(f: f64) -> f64 {
+    -(1.0 - f.min(0.999)).ln()
+}
+
+/// The luck bands as zones on a "multiple of the odds" scale up to `hi`.
+pub(super) fn luck_zones_mult(hi: f64) -> Vec<(f64, f64, Color32)> {
+    let mut lo = 0.0;
+    LUCK_BANDS
+        .iter()
+        .map(|(f, _, c)| {
+            let top = if *f >= 1.0 { hi.max(lo) } else { mult_at(*f) };
+            let r = (lo, top, *c);
+            lo = top;
+            r
+        })
+        .collect()
+}
+
+/// The zone a value falls in: zones start at their `from` (a value exactly
+/// on a boundary belongs to the zone above, like `luck_band`), and the last
+/// zone keeps its top edge.
+pub(super) fn zone_at(zones: &[(f64, f64, Color32)], v: f64) -> Option<Color32> {
+    if zones.is_empty() {
+        return None;
+    }
+    let i = zones.iter().rposition(|(a, _, _)| v >= *a).unwrap_or(0);
+    Some(zones[i].2)
+}
+
+/// The colour for an axis number: the zone it sits in, or for a number on a
+/// boundary, the zone it is the top of (0 takes the first zone).
+fn tick_zone(zones: &[(f64, f64, Color32)], v: f64) -> Option<Color32> {
+    zones.iter().find(|(a, b, _)| v > *a && v <= *b).or(zones.first().filter(|z| v <= z.0)).map(|z| z.2)
+}
+
 // ───────────────────────────── cards ─────────────────────────────
 
 /// A dashboard card: an emoji and a title, an optional coloured note on
@@ -243,6 +295,8 @@ pub(super) fn bars(ui: &mut egui::Ui, b: &Bars) -> Response {
     let slot = plot.width() / n as f32;
     let bw = (slot * 0.68).clamp(2.0, 46.0);
     let hover_i = ui.input(|i| i.pointer.hover_pos()).filter(|h| plot.expand2(egui::vec2(0.0, top_h)).contains(*h)).map(|h| (((h.x - plot.min.x) / slot).floor() as usize).min(n - 1));
+    // The bars rise from the baseline each time the page opens.
+    let rise = super::ui_kit::grow(ui.ctx(), resp.id, 1.0);
     for (i, &v) in b.values.iter().enumerate() {
         let cx = plot.min.x + slot * (i as f32 + 0.5);
         let col = b.cols.map_or(b.col, |f| f(i));
@@ -251,7 +305,7 @@ pub(super) fn bars(ui: &mut egui::Ui, b: &Bars) -> Response {
         if !b.axis {
             p.rect_filled(full, (bw / 2.0).min(6.0), track());
         }
-        let h = (v / max) as f32 * plot.height();
+        let h = (v / max) as f32 * plot.height() * rise;
         if v > 0.0 {
             let r = Rect::from_min_max(egui::pos2(full.min.x, plot.max.y - h.max(3.0)), full.max);
             p.rect_filled(r, (bw / 2.0).min(6.0), if hot { col } else { faint(col, 0.45) });
@@ -286,6 +340,9 @@ pub(super) struct Line<'a> {
     pub hi: f64,
     /// Ticks on the left: (value, text).
     pub ticks: &'a [(f64, String)],
+    /// Ticks on the right, drawn in the colour of the zone they top
+    /// (e.g. the luck thresholds): (value, text).
+    pub right_ticks: &'a [(f64, String)],
     pub col: &'a dyn Fn(usize, f64) -> Color32,
     /// A dashed straight-line trend.
     pub trend: bool,
@@ -326,7 +383,10 @@ pub(super) fn line_chart(ui: &mut egui::Ui, l: &mut Line) -> Response {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), l.height), Sense::hover());
     let p = ui.painter_at(rect.expand(4.0));
     let pic_h = if l.pic.is_some() { 44.0 } else { 0.0 };
-    let plot = Rect::from_min_max(rect.min + egui::vec2(if l.ticks.is_empty() { 14.0 } else { 40.0 }, 14.0), rect.max - egui::vec2(14.0, 26.0 + pic_h));
+    let plot = Rect::from_min_max(
+        rect.min + egui::vec2(if l.ticks.is_empty() { 14.0 } else { 40.0 }, 14.0),
+        rect.max - egui::vec2(if l.right_ticks.is_empty() { 14.0 } else { 44.0 }, 26.0 + pic_h),
+    );
     let span = (l.hi - l.lo).max(1e-9);
     let to_y = |v: f64| plot.max.y - ((v - l.lo) / span).clamp(0.0, 1.0) as f32 * plot.height();
     let n = l.values.len().max(1);
@@ -335,11 +395,30 @@ pub(super) fn line_chart(ui: &mut egui::Ui, l: &mut Line) -> Response {
         let r = Rect::from_min_max(egui::pos2(plot.min.x, to_y(b.min(l.hi))), egui::pos2(plot.max.x, to_y(a.max(l.lo))));
         p.rect_filled(r, 0.0, faint(c, if theme::pal().light { 0.14 } else { 0.11 }));
     }
+    // zone edges: a crisp line in the colour of the zone below
+    for w in l.bands.windows(2) {
+        let v = w[1].0;
+        if v > l.lo && v < l.hi {
+            let y = to_y(v);
+            p.line_segment([egui::pos2(plot.min.x, y), egui::pos2(plot.max.x, y)], Stroke::new(1.0f32, faint(w[0].2, 0.55)));
+        }
+    }
     for (v, t) in l.ticks {
         let y = to_y(*v);
-        p.add(Shape::dashed_line(&[egui::pos2(plot.min.x, y), egui::pos2(plot.max.x, y)], Stroke::new(1.0f32, grid()), 5.0, 4.0));
-        let c = l.bands.iter().find(|(a, b, _)| *v >= *a && *v < *b).map_or(MUTED(), |b| ink(b.2));
+        if !l.bands.windows(2).any(|w| (w[1].0 - *v).abs() < 1e-9) {
+            p.add(Shape::dashed_line(&[egui::pos2(plot.min.x, y), egui::pos2(plot.max.x, y)], Stroke::new(1.0f32, grid()), 5.0, 4.0));
+        }
+        let c = tick_zone(l.bands, *v).map_or(MUTED(), ink);
         p.text(egui::pos2(plot.min.x - 6.0, y), Align2::RIGHT_CENTER, t, reg(11.5), c);
+    }
+    for (v, t) in l.right_ticks {
+        if *v < l.lo || *v > l.hi {
+            continue;
+        }
+        let y = to_y(*v);
+        let c = tick_zone(l.bands, *v).map_or(MUTED(), ink);
+        p.line_segment([egui::pos2(plot.max.x, y), egui::pos2(plot.max.x + 4.0, y)], Stroke::new(1.5f32, c));
+        p.text(egui::pos2(plot.max.x + 7.0, y), Align2::LEFT_CENTER, t, reg(11.0), c);
     }
     let pts: Vec<Pos2> = l.values.iter().enumerate().map(|(i, v)| egui::pos2(to_x(i), to_y(*v))).collect();
     if let (Some(ac), true) = (l.area, pts.len() > 1) {
@@ -363,17 +442,42 @@ pub(super) fn line_chart(ui: &mut egui::Ui, l: &mut Line) -> Response {
         }
     }
     if pts.len() > 1 {
-        // each segment in its start point's colour
         for i in 1..pts.len() {
-            let c = l.line.unwrap_or_else(|| (l.col)(i - 1, l.values[i - 1]));
-            p.line_segment([pts[i - 1], pts[i]], Stroke::new(3.0f32, c));
+            let (v0, v1) = (l.values[i - 1], l.values[i]);
+            match (l.line, l.bands.is_empty()) {
+                (Some(c), _) => {
+                    p.line_segment([pts[i - 1], pts[i]], Stroke::new(3.0f32, c));
+                }
+                (None, true) => {
+                    p.line_segment([pts[i - 1], pts[i]], Stroke::new(3.0f32, (l.col)(i - 1, v0)));
+                }
+                (None, false) => {
+                    // Split the segment where it crosses a zone edge, so the
+                    // line changes colour exactly on the boundary.
+                    let mut cuts: Vec<f64> = vec![0.0, 1.0];
+                    for z in l.bands.iter().skip(1) {
+                        let e = z.0;
+                        if (v0 - e) * (v1 - e) < 0.0 {
+                            cuts.push((e - v0) / (v1 - v0));
+                        }
+                    }
+                    cuts.sort_by(f64::total_cmp);
+                    for w in cuts.windows(2) {
+                        let at = |t: f64| pts[i - 1] + (pts[i] - pts[i - 1]) * t as f32;
+                        let mid = v0 + (v1 - v0) * (w[0] + w[1]) / 2.0;
+                        let c = zone_at(l.bands, mid).unwrap_or(MUTED());
+                        p.line_segment([at(w[0]), at(w[1])], Stroke::new(3.0f32, c));
+                    }
+                }
+            }
         }
     }
     let hover_i = ui.input(|i| i.pointer.hover_pos()).filter(|h| rect.contains(*h)).map(|h| {
         pts.iter().enumerate().min_by(|a, b| (a.1.x - h.x).abs().total_cmp(&(b.1.x - h.x).abs())).map_or(0, |(i, _)| i)
     });
     for (i, q) in pts.iter().enumerate() {
-        let c = (l.col)(i, l.values[i]);
+        // On a zoned chart a point always takes the colour of the zone it sits in.
+        let c = zone_at(l.bands, l.values[i]).unwrap_or_else(|| (l.col)(i, l.values[i]));
         if l.dots || hover_i == Some(i) {
             let r = if hover_i == Some(i) { 8.0 } else { 6.5 };
             p.circle_filled(*q, r + 2.5, faint(c, 0.35));
@@ -655,6 +759,7 @@ pub(super) fn rank_row(ui: &mut egui::Ui, rank: usize, title: &str, sub: &str, s
 #[allow(clippy::too_many_arguments)]
 pub(super) fn hbar_row(ui: &mut egui::Ui, name: &str, value: &str, frac: f32, col: Color32, highlight: bool, pic: &mut dyn FnMut(&egui::Painter, Rect)) {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 40.0), Sense::hover());
+    let frac = super::ui_kit::grow(ui.ctx(), resp.id, frac);
     let p = ui.painter_at(rect.expand(2.0));
     if resp.hovered() || highlight {
         p.rect_filled(rect, 10.0, if highlight { faint(GOLD, 0.12) } else { CARD_HOVER() });
@@ -678,7 +783,9 @@ pub(super) fn hbar_row(ui: &mut egui::Ui, name: &str, value: &str, frac: f32, co
 /// The luck scale: the five bands sized by how many hunters land in each,
 /// with "you" marked. `found` = share of hunters who'd have it by now.
 pub(super) fn luck_scale(ui: &mut egui::Ui, found: f64, you: &str) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 74.0), Sense::hover());
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 90.0), Sense::hover());
+    // The "you" marker slides along the scale to its place.
+    let found = super::ui_kit::grow(ui.ctx(), resp.id, found.clamp(0.0, 1.0) as f32) as f64;
     let p = ui.painter_at(rect.expand(4.0));
     let bar = Rect::from_min_max(egui::pos2(rect.min.x, rect.min.y + 30.0), egui::pos2(rect.max.x, rect.min.y + 52.0));
     let mut lo = 0.0;
@@ -691,6 +798,13 @@ pub(super) fn luck_scale(ui: &mut egui::Ui, found: f64, you: &str) {
         p.rect_filled(r, 7.0, *c);
         p.text(egui::pos2(r.center().x, bar.max.y + 12.0), Align2::CENTER_CENTER, *name, reg(11.0), MUTED());
         lo = hi;
+    }
+    // the share of hunters at each boundary, to scale under the gaps
+    for (i, (hi, _, c)) in LUCK_BANDS.iter().enumerate().take(4) {
+        let x = bar.min.x + bar.width() * *hi as f32;
+        p.line_segment([egui::pos2(x, bar.max.y + 22.0), egui::pos2(x, bar.max.y + 27.0)], Stroke::new(1.5f32, ink(*c)));
+        let _ = i;
+        p.text(egui::pos2(x, bar.max.y + 30.0), Align2::CENTER_TOP, format!("{:.0}%", hi * 100.0), reg(10.5), ink(*c));
     }
     let x = bar.min.x + bar.width() * found.clamp(0.0, 1.0) as f32;
     let c = luck_col(found);
@@ -727,3 +841,45 @@ pub(super) fn tile_w(ui: &egui::Ui, n: usize) -> f32 {
     ((ui.available_width() - 12.0 * (n as f32 - 1.0)) / n as f32).floor()
 }
 
+
+#[cfg(test)]
+mod zone_tests {
+    use super::*;
+
+    /// Every zoned chart must colour a value the same way `luck_col` does,
+    /// and the zone edges must sit exactly on the luck thresholds.
+    #[test]
+    fn zones_match_luck_bands() {
+        let z = luck_zones_pct();
+        let edges: Vec<f64> = z.iter().map(|b| b.0).collect();
+        assert_eq!(edges, vec![0.0, 20.0, 45.0, 70.0, 90.0]);
+        assert_eq!(z.last().unwrap().1, 100.0);
+        for k in 0..=1000 {
+            let v = k as f64 / 10.0;
+            assert_eq!(zone_at(&z, v), Some(luck_col(v / 100.0)), "pct {v}");
+        }
+        let hi = 4.0;
+        let zm = luck_zones_mult(hi);
+        for (i, (hi_f, _, _)) in LUCK_BANDS.iter().enumerate().take(4) {
+            assert!((zm[i].1 - mult_at(*hi_f)).abs() < 1e-12);
+            assert!((zm[i + 1].0 - zm[i].1).abs() < 1e-12);
+        }
+        for k in 0..=4000 {
+            let m = k as f64 / 1000.0;
+            // the continuous curve the multiple scale is drawn on
+            let f = 1.0 - (-m).exp();
+            assert_eq!(zone_at(&zm, m), Some(luck_col(f)), "mult {m}");
+        }
+    }
+
+    #[test]
+    fn boundary_ticks_take_the_zone_below() {
+        let z = luck_zones_pct();
+        assert_eq!(tick_zone(&z, 0.0), Some(BLUE));
+        assert_eq!(tick_zone(&z, 20.0), Some(BLUE));
+        assert_eq!(tick_zone(&z, 45.0), Some(GREEN));
+        assert_eq!(tick_zone(&z, 70.0), Some(YELLOW));
+        assert_eq!(tick_zone(&z, 90.0), Some(ORANGE));
+        assert_eq!(tick_zone(&z, 100.0), Some(RED));
+    }
+}

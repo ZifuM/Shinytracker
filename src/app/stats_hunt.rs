@@ -3,7 +3,7 @@
 //! habits (days of the week, a 24-hour clock), trends, sessions with a
 //! calendar, what you're running into, and fun facts.
 
-use super::charts::{self as ch, Bars, Line, Ring, BLUE, CYAN, GOLD, GREEN, LIME, ORANGE, PINK, PURPLE, RED, YELLOW};
+use super::charts::{self as ch, Bars, Line, Ring, BLUE, CYAN, GOLD, GREEN, LIME, ORANGE, PINK, PURPLE, YELLOW};
 use super::hunt_pages::RunInfo;
 use super::ui_kit::{self as kit, CARD_HOVER, MUTED, TEXT};
 use super::App;
@@ -221,7 +221,9 @@ impl App {
             let rr = Rect::from_min_max(egui::pos2(rect.max.x - rings_w, rect.min.y), rect.max);
             let size = (rr.height() - 44.0).min(180.0);
             let c = egui::pos2(rr.min.x + size / 2.0 + 6.0, rr.center().y);
-            let list: Vec<Ring> = rings.iter().map(|r| Ring { frac: r.0.frac, col: r.0.col }).collect();
+            // The rings sweep round to their place as the page opens.
+            let k = super::ui_kit::grow(ui.ctx(), egui::Id::new("hunt-rings"), 1.0);
+            let list: Vec<Ring> = rings.iter().map(|r| Ring { frac: r.0.frac * k, col: r.0.col }).collect();
             ch::rings(&p, c, size / 2.0, 20.0, 4.0, &list);
             let lx = c.x + size / 2.0 + 18.0;
             let mut ly = rr.center().y - rings.len() as f32 * 26.0;
@@ -270,24 +272,17 @@ impl App {
             // the curve: share of hunters with it by each multiple of the odds
             ui.label(egui::RichText::new("When hunters find this shiny").font(ch::bold(14.0)).color(TEXT()));
             let x_max = (m * 1.15).max(3.0).ceil();
-            let steps = (x_max * 4.0) as usize;
-            let vals: Vec<f64> = (0..=steps).map(|i| stats::found_by((i as f64 / 4.0 * odds) as u64, odds) * 100.0).collect();
-            let labels: Vec<String> = (0..=steps).map(|i| if i % 4 == 0 { format!("{}×", i / 4) } else { String::new() }).collect();
+            // 20 samples per multiple: smooth, and the "You" point lands on the curve
+            const PER: f64 = 20.0;
+            let steps = (x_max * PER) as usize;
+            let vals: Vec<f64> = (0..=steps).map(|i| stats::found_by((i as f64 / PER * odds) as u64, odds) * 100.0).collect();
+            let labels: Vec<String> = (0..=steps).map(|i| if i % PER as usize == 0 { format!("{}×", i / PER as usize) } else { String::new() }).collect();
             let hovers: Vec<String> = (0..=steps)
-                .map(|i| format!("{} encounters ({}): {} of hunters", theme::thousands((i as f64 / 4.0 * odds) as u64), mult(i as f64 / 4.0), pct(vals[i] / 100.0)))
+                .map(|i| format!("{} encounters ({}): {} of hunters", theme::thousands((i as f64 / PER * odds) as u64), mult(i as f64 / PER), pct(vals[i] / 100.0)))
                 .collect();
-            let bands: Vec<(f64, f64, Color32)> = {
-                let mut lo = 0.0;
-                ch::LUCK_BANDS
-                    .iter()
-                    .map(|(hi, _, c)| {
-                        let r = (lo * 100.0, hi.min(1.0) * 100.0, *c);
-                        lo = hi.min(1.0);
-                        r
-                    })
-                    .collect()
-            };
-            let ticks: Vec<(f64, String)> = [0.0, 25.0, 50.0, 75.0, 100.0].iter().map(|v| (*v, format!("{v:.0}%"))).collect();
+            let bands = ch::luck_zones_pct();
+            // the axis numbers are the band edges, so every number lines up with a colour change
+            let ticks: Vec<(f64, String)> = std::iter::once(0.0).chain(bands.iter().map(|b| b.1)).map(|v| (v, format!("{v:.0}%"))).collect();
             let you = if info.caught { "Caught" } else { "You" };
             ch::line_chart(
                 ui,
@@ -298,13 +293,14 @@ impl App {
                     lo: 0.0,
                     hi: 100.0,
                     ticks: &ticks,
+                    right_ticks: &[],
                     col: &|_, v| ch::luck_col(v / 100.0),
                     trend: false,
                     hovers: &hovers,
-                    height: 200.0,
+                    height: 230.0,
                     area: None,
                     stars: &[],
-                    you: Some(((m * 4.0) as f32, found * 100.0, you)),
+                    you: Some(((m * PER) as f32, found * 100.0, you)),
                     pic: None,
                     dots: false,
                     line: None,
@@ -315,7 +311,8 @@ impl App {
                 let w = ch::tile_w(ui, 4);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 12.0;
-                    for (q, c) in [(0.5, GREEN), (0.75, YELLOW), (0.9, ORANGE), (0.99, RED)] {
+                    for q in [0.5, 0.75, 0.9, 0.99] {
+                        let c = ch::luck_col(q);
                         let n = stats::encounters_for(q, odds);
                         let v = theme::thousands(n);
                         let note = time_for(n, rate).map_or("more encounters".into(), |t| format!("more · about {t}"));

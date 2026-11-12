@@ -353,7 +353,7 @@ mod tests {
 
     #[test]
     fn hints_from_battles() {
-        let mut t = LogTail::new(std::env::temp_dir());
+        let mut t = LogTail::new(std::env::temp_dir(), None);
         let now = Instant::now();
         let rare = parse_wild("07:07:16 INFO  WILD     shiny chance 4 in 8192 for species 448 at level 24 (sweet scent on rare grass)").unwrap();
         let plain = parse_wild("16:54:24 INFO  WILD     shiny chance 2 in 8192 for species 399 at level 4").unwrap();
@@ -442,7 +442,7 @@ mod tests {
         let path = dir.join("session-20261109-070656.log");
         // Old battle already in the log before the tracker starts: not counted.
         std::fs::write(&path, SAMPLE).unwrap();
-        let mut t = LogTail::new(dir.clone());
+        let mut t = LogTail::new(dir.clone(), None);
         assert!(t.poll().unwrap().is_empty());
         // A new battle written in two chunks (line split mid-way).
         let mut f = std::fs::OpenOptions::new()

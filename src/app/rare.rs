@@ -76,12 +76,14 @@ impl App {
 
     /// Open the Map at a rare-grass spot, a ring pinging on it.
     pub(super) fn go_to_rare(&mut self, spot: &RareSpot) {
+        self.add_event("touch_grass");
         let Some(map) = self.game_map() else { return };
         self.show_rare_spot(&map, spot.matrix, spot.x, spot.y, format!("{} on rare grass", spot.species.name));
     }
 
     /// Open a Pokémon's Pokédex entry.
     pub(super) fn open_dex_entry(&mut self, wiki_id: &str) {
+        self.add_event("researcher");
         self.setup.tab = Tab::Pokedex;
         self.setup.pokedex.open = Some(wiki_id.to_string());
         self.setup.pokedex.tab = super::pokedex::EntryTab::Overview;
@@ -175,68 +177,6 @@ impl App {
             self.go_to_rare(&s);
         } else if close {
             self.setup.rare_offer = None;
-        }
-    }
-
-    /// The list of today's rare-grass Pokémon. `height` caps the list
-    /// (it scrolls past that).
-    pub(super) fn rare_list(&mut self, ui: &mut egui::Ui, spots: &[RareSpot], height: f32) {
-        let mut go: Option<RareSpot> = None;
-        let mut open: Option<String> = None;
-        egui::ScrollArea::vertical()
-            .id_salt(("rare-list", ui.id()))
-            .max_height(height)
-            .auto_shrink([false, true])
-            .show(ui, |ui| {
-                for s in spots {
-                    let row_w = ui.available_width();
-                    ui.horizontal(|ui| {
-                        ui.set_width(row_w);
-                        // sprite, clickable to the Pokédex
-                        let (r, resp) = ui.allocate_exact_size(Vec2::splat(44.0), Sense::click());
-                        let p = ui.painter_at(r);
-                        p.rect_filled(r, kit::r(8.0), if resp.hovered() { CARD_HOVER() } else { CARD_HOVER().gamma_multiply(0.7) });
-                        p.rect_stroke(r, kit::r(8.0), Stroke::new(1.0f32, if resp.hovered() { GOLD } else { LINE() }));
-                        let sp = s.species.clone();
-                        self.draw_sprite(&p, &sp, false, r.center_bottom() - Vec2::new(0.0, 3.0), Vec2::splat(40.0));
-                        if resp.on_hover_text("Open in the Pokédex").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                            open = s.wiki_id.clone();
-                        }
-                        ui.vertical(|ui| {
-                            // Keep the text clear of the button: anything too long
-                            // is cut with "…" (hover shows it in full).
-                            ui.set_max_width((row_w - 44.0 - 124.0).max(60.0));
-                            if ui
-                                .add(
-                                    egui::Label::new(RichText::new(s.species.name).size(kit::fs(12.5)).family(kit::strong_family(kit::fs(12.5))).strong().color(TEXT()))
-                                        .truncate()
-                                        .sense(Sense::click()),
-                                )
-                                .on_hover_text("Open in the Pokédex")
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .clicked()
-                            {
-                                open = s.wiki_id.clone();
-                            }
-                            let tiles = if s.tiles > 1 { format!("  ·  {} spots", s.tiles) } else { String::new() };
-                            let place = format!("{}{tiles}", s.place);
-                            ui.add(egui::Label::new(RichText::new(&place).size(kit::fs(11.0)).color(MUTED())).truncate())
-                                .on_hover_text(&place);
-                        });
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("Show on map").on_hover_text("Open the Map zoomed in on this spot").clicked() {
-                                go = Some(s.clone());
-                            }
-                        });
-                    });
-                    ui.add_space(4.0);
-                }
-            });
-        if let Some(id) = open {
-            self.open_dex_entry(&id);
-        }
-        if let Some(s) = go {
-            self.go_to_rare(&s);
         }
     }
 

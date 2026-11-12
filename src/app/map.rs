@@ -133,6 +133,15 @@ struct DoorHit {
     dest: Option<Pos2>,
 }
 
+/// One area's tiles (on its own map).
+pub(super) fn zones_rect_pub(map: &GameMap, z: u16) -> Option<Rect> {
+    zones_rect(map, &[z])
+}
+
+pub(super) fn float_shadow_pub() -> egui::epaint::Shadow {
+    float_shadow()
+}
+
 /// The tiles a set of areas covers (on their own map).
 fn zones_rect(map: &GameMap, zones: &[u16]) -> Option<Rect> {
     let mut cells: Vec<(usize, usize)> = Vec::new();
@@ -183,17 +192,23 @@ pub(super) struct MapState {
     pub search: String,
     pub show_rare: bool,
     pub labels: bool,
-    /// The rare grass list beside the map is folded away.
-    pub rare_collapsed: bool,
-    /// The selected area's card is folded down to its name.
-    pub card_folded: bool,
     /// What the key shows: ways in, doors, item balls, hidden items.
     pub show_entrances: bool,
     pub show_doors: bool,
     pub show_items: bool,
     pub show_hidden: bool,
-    /// The key is folded away to a tab.
-    pub key_collapsed: bool,
+    /// The map key popover is open.
+    pub key_open: bool,
+    /// The side panel is hidden (the map gets the room).
+    pub panel_closed: bool,
+    pub panel_tab: super::map_panel::MapTab,
+    /// Filter for the rare grass list.
+    pub rare_query: String,
+    /// The panel asked for the infographic / the shared list file.
+    pub want_poster: bool,
+    pub want_export: bool,
+    /// "Fit" was pressed (done on the next frame, before drawing).
+    pub want_fit: bool,
     /// Caves or side areas laid over the Sinnoh map.
     pub layer: Layer,
     /// Their pictures, by map, with the part of the map each covers (tiles).
@@ -260,22 +275,6 @@ fn float_shadow() -> egui::epaint::Shadow {
 /// Height of the controls along the top of the map (the search box's).
 const TOP_H: f32 = kit::CONTROL_H + 4.0;
 
-/// The Map's "Experimental" tag: a Cirrus chip (Cloud pill, hairline, a
-/// Citrus dot) exactly as tall as the search box and the layer tabs.
-fn map_tag(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    let font = kit::font(12.5);
-    let galley = ui.painter().layout_no_wrap(text.to_string(), font, TEXT());
-    let (r, resp) = ui.allocate_exact_size(Vec2::new(galley.size().x + 40.0, TOP_H), Sense::hover());
-    let p = ui.painter();
-    let rad = r.height() / 2.0;
-    p.add(float_shadow().as_shape(r, rad));
-    p.rect_filled(r, rad, kit::CARD());
-    p.rect_stroke(r, rad, Stroke::new(1.0f32, LINE()));
-    p.circle_filled(Pos2::new(r.left() + 17.0, r.center().y), 4.0, Color32::from_rgb(255, 122, 61));
-    p.galley(Pos2::new(r.left() + 28.0, r.center().y - galley.size().y / 2.0), galley, TEXT());
-    resp
-}
-
 /// The Map's layer tabs: a Cirrus pill track (Cloud, hairline, soft
 /// shadow) as tall as the search box; the layer showing is a pill in the
 /// button colour.
@@ -311,6 +310,77 @@ fn map_tabs<T: PartialEq + Copy>(ui: &mut egui::Ui, value: &mut T, options: &[(T
         }
     }
     changed
+}
+
+/// A pill button in the command bar: an icon drawn on the left, then its
+/// label (on = pressed in).
+fn bar_button(ui: &mut egui::Ui, label: &str, on: bool, tip: &str, icon: impl FnOnce(&egui::Painter, Rect, Color32)) -> bool {
+    let font = kit::font_bold(13.0);
+    let g = ui.painter().layout_no_wrap(label.to_string(), font, TEXT());
+    let w = if label.is_empty() { TOP_H } else { g.size().x + 44.0 };
+    let (r, resp) = ui.allocate_exact_size(Vec2::new(w, TOP_H), Sense::click());
+    let t = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered(), kit::QUICK);
+    let p = ui.painter();
+    let rad = r.height() / 2.0;
+    p.add(float_shadow().as_shape(r, rad));
+    if on {
+        p.add(kit::primary_shape(r, false));
+    } else {
+        p.rect_filled(r, rad, theme::blend(kit::CARD(), kit::CARD_HOVER(), t));
+        p.rect_stroke(r, rad, Stroke::new(1.0f32, LINE()));
+    }
+    let ink = if on { kit::on_primary() } else { theme::blend(MUTED(), TEXT(), t.max(0.6)) };
+    let ir = Rect::from_center_size(Pos2::new(r.left() + 20.0, r.center().y), Vec2::splat(18.0));
+    icon(p, ir, ink);
+    if !label.is_empty() {
+        p.galley(Pos2::new(r.left() + 34.0, r.center().y - g.size().y / 2.0), g, ink);
+    }
+    resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+}
+
+/// A command bar pill led by a sprite (your target).
+fn bar_sprite_button(ui: &mut egui::Ui, label: &str, tip: &str, sprite: impl FnOnce(&egui::Painter, Rect)) -> bool {
+    let font = kit::font_bold(13.0);
+    let g = ui.painter().layout_no_wrap(label.to_string(), font, TEXT());
+    let w = if label.is_empty() { TOP_H + 6.0 } else { g.size().x + 50.0 };
+    let (r, resp) = ui.allocate_exact_size(Vec2::new(w, TOP_H), Sense::click());
+    let t = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered(), kit::QUICK);
+    let p = ui.painter();
+    let rad = r.height() / 2.0;
+    p.add(float_shadow().as_shape(r, rad));
+    p.rect_filled(r, rad, theme::blend(kit::CARD(), kit::CARD_HOVER(), t));
+    p.rect_stroke(r, rad, Stroke::new(1.0f32, theme::blend(LINE(), GOLD, 0.5 + 0.5 * t)));
+    let sr = Rect::from_center_size(Pos2::new(r.left() + 20.0, r.center().y), Vec2::splat(28.0));
+    p.circle_filled(sr.center(), 13.0, theme::blend(kit::CARD_HOVER(), GOLD, 0.18));
+    sprite(p, sr);
+    if !label.is_empty() {
+        p.galley(Pos2::new(r.left() + 40.0, r.center().y - g.size().y / 2.0), g, TEXT());
+    }
+    resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+}
+
+fn result_head(ui: &mut egui::Ui, t: &str) {
+    ui.add_space(2.0);
+    ui.label(RichText::new(t).font(kit::font_bold(10.5)).color(MUTED()));
+    ui.add_space(2.0);
+}
+
+/// A search result: an icon, its name and a note on the right.
+fn result_row(ui: &mut egui::Ui, label: &str, note: &str, icon: impl FnOnce(&egui::Painter, Rect)) -> bool {
+    let w = ui.available_width();
+    let (r, resp) = ui.allocate_exact_size(Vec2::new(w, 34.0), Sense::click());
+    let t = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered(), kit::QUICK);
+    let p = ui.painter();
+    if t > 0.0 {
+        p.rect_filled(r, 10.0, theme::blend(kit::CARD(), kit::CARD_HOVER(), t));
+    }
+    icon(p, Rect::from_center_size(Pos2::new(r.left() + 18.0, r.center().y), Vec2::splat(28.0)));
+    let ng = p.layout_no_wrap(note.to_string(), kit::font(11.5), MUTED());
+    let nx = r.right() - 8.0 - ng.size().x;
+    p.galley(Pos2::new(nx, r.center().y - ng.size().y / 2.0), ng, MUTED());
+    let g = p.layout_no_wrap(label.to_string(), kit::font_bold(12.5), TEXT());
+    p.with_clip_rect(Rect::from_min_max(r.min, Pos2::new(nx - 6.0, r.max.y))).galley(Pos2::new(r.left() + 40.0, r.center().y - g.size().y / 2.0), g, TEXT());
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }
 
 /// Outline pieces between map squares that belong to different areas.
@@ -744,32 +814,6 @@ fn layer_layout(pieces: &[gamemap::Overlay], tex: &HashMap<usize, Option<(Textur
     out
 }
 
-/// The button that folds a floating panel open or shut: a chevron in a
-/// disc (down: opens, up: folds) and the panel's name, so it plainly reads
-/// as a menu. True when clicked.
-fn fold_tab(ui: &mut egui::Ui, label: &str, open: bool, tip: &str) -> bool {
-    let font = kit::font_bold(kit::fs(12.5));
-    let g = ui.painter().layout_no_wrap(label.to_string(), font, TEXT());
-    let size = Vec2::new(g.size().x + 46.0, 32.0);
-    let (r, resp) = ui.allocate_exact_size(size, Sense::click());
-    let hot = resp.hovered();
-    let p = ui.painter();
-    let rad = r.height() / 2.0;
-    if hot {
-        p.rect_filled(r, rad, kit::sunken());
-    }
-    // the chevron in a small pill disc
-    let c = Pos2::new(r.left() + 16.0, r.center().y);
-    p.circle_filled(c, 11.0, if hot { kit::primary() } else { kit::sunken() });
-    p.circle_stroke(c, 11.0, Stroke::new(1.0f32, LINE()));
-    let d = if open { -1.0 } else { 1.0 };
-    let st = Stroke::new(1.8f32, if hot { kit::on_primary() } else { TEXT() });
-    p.line_segment([c + Vec2::new(-4.0, -2.0 * d), c + Vec2::new(0.0, 2.0 * d)], st);
-    p.line_segment([c + Vec2::new(0.0, 2.0 * d), c + Vec2::new(4.0, -2.0 * d)], st);
-    p.galley(Pos2::new(r.left() + 34.0, r.center().y - g.size().y / 2.0), g, TEXT());
-    resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
-}
-
 /// The icon for a way into a cave, ruin or side area: a coloured disc with
 /// a little doorway.
 fn entrance_icon(p: &egui::Painter, c: Pos2, r0: f32, col: Color32, hot: bool) {
@@ -785,7 +829,7 @@ fn entrance_icon(p: &egui::Painter, c: Pos2, r0: f32, col: Color32, hot: bool) {
 }
 
 /// An item ball (hidden: faded, with a dashed ring).
-fn item_icon(p: &egui::Painter, c: Pos2, r: f32, hidden: bool) {
+pub(super) fn item_icon(p: &egui::Painter, c: Pos2, r: f32, hidden: bool) {
     let a = if hidden { 0.55 } else { 1.0 };
     let red = Color32::from_rgb(226, 62, 62).gamma_multiply(a);
     let white = Color32::from_rgb(240, 240, 240).gamma_multiply(a);
@@ -885,9 +929,9 @@ impl MapState {
         self.show_doors = true;
         self.show_items = true;
         self.show_hidden = true;
-        // The rare grass list and the key start folded away.
-        self.rare_collapsed = true;
-        self.key_collapsed = true;
+        // The side panel starts folded away (the pill at the top right, or
+        // clicking a place, opens it).
+        self.panel_closed = true;
         if self.zoom <= 0.0 {
             self.zoom = 1.0;
         }
@@ -981,6 +1025,18 @@ impl MapState {
 
     pub(super) fn crop_failed(&self, key: &str) -> bool {
         matches!(self.crops.get(key), Some(None))
+    }
+
+    pub(super) fn export_msg(&self) -> Option<String> {
+        self.export_msg.clone()
+    }
+
+    pub(super) fn overview_tex(&self) -> Option<egui::TextureId> {
+        self.overview.as_ref().map(|t| t.id())
+    }
+
+    pub(super) fn stop_flying(&mut self) {
+        self.flying = None;
     }
 
     pub(super) fn fly_to(&mut self, center: Pos2, zoom: f32) {
@@ -1218,16 +1274,19 @@ impl App {
         }
 
         // ── the whole pane is the map; everything else floats on top of it
-        let rect = ui.max_rect();
+        // The side panel docks on the right of wide windows (the map is the
+        // rest); on narrow ones it floats over the map.
+        let full = ui.max_rect();
+        let pad = 12.0;
+        let narrow = full.width() < 860.0;
+        let panel_w = if narrow { (full.width() - 2.0 * pad).min(340.0) } else { (full.width() * 0.27).clamp(330.0, 390.0) };
+        let docked = !narrow && !self.mapui.panel_closed;
+        let rect = if docked { Rect::from_min_max(full.min, Pos2::new(full.max.x - panel_w, full.max.y)) } else { full };
+        ui.allocate_rect(full, Sense::hover());
         let resp = ui.interact(rect, ui.id().with("map-canvas"), Sense::click_and_drag());
-        ui.allocate_rect(rect, Sense::hover());
         self.mapui.canvas = rect.size();
         let ctx = ui.ctx().clone();
-        let pad = 12.0;
-        let spots = if self.mapui.show_rare { self.rare_spots_today() } else { Vec::new() };
-        let panel_w = 360.0f32.min(rect.width() - 2.0 * pad);
-        let panel_open = !spots.is_empty() && !self.mapui.rare_collapsed;
-        let right_inset = if panel_open { panel_w + pad } else { 0.0 };
+        let spots = self.rare_spots_today();
 
         let mut go_zone: Option<u16> = None;
         let mut go_hit: Option<u16> = None;
@@ -1235,7 +1294,7 @@ impl App {
         let mut leave_inside = false;
         let mut clear_hl = false;
         let mut zoom_by: Option<f32> = None;
-        let mut fit_all = false;
+        let mut fit_all = std::mem::take(&mut self.mapui.want_fit);
         let floors: Vec<(u16, String)> = match area {
             Area::Inside(z) => {
                 let name = map.zone(z).map(|z| z.name.clone()).unwrap_or_default();
@@ -1266,7 +1325,7 @@ impl App {
         }
         // Pokémon by name or National Dex number ("25", "#025"), those that
         // live in the wild somewhere.
-        let mut mon_hits: Vec<(String, String, Vec<String>)> = Vec::new();
+        let mut mon_hits: Vec<(String, String, Vec<String>, u32)> = Vec::new();
         if let (false, Some(w)) = (q.is_empty(), self.wiki.clone()) {
             let num: Option<u32> = q.trim_start_matches('#').trim().parse().ok();
             for m in &w.data.species {
@@ -1283,7 +1342,7 @@ impl App {
                         places.push(e.area.clone());
                     }
                 }
-                mon_hits.push((format!("#{:03}  {}", m.dex, m.name), m.name.clone(), places));
+                mon_hits.push((format!("#{:03}  {}", m.dex, m.name), m.name.clone(), places, m.dex));
             }
             // Names that start with what's typed first.
             mon_hits.sort_by_key(|h| (!h.1.to_lowercase().starts_with(&q), h.0.clone()));
@@ -1292,63 +1351,98 @@ impl App {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
         let left = (gamemap::next_reset(now) - now).max(0);
 
-        // ── floating: search, layers (top left)
-        // Where the row along the top ends (the rare grass panel drops under
-        // it when the window is too narrow for both).
-        let mut top_right = rect.min.x;
+        // ── keys (when nothing is being typed in)
+        let sid = egui::Id::new("map-search-id");
+        if ctx.memory(|m| m.focused().is_none()) {
+            let (zin, zout, fk, esc, slash) = ctx.input(|i| {
+                (
+                    i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals),
+                    i.key_pressed(egui::Key::Minus),
+                    i.key_pressed(egui::Key::F),
+                    i.key_pressed(egui::Key::Escape),
+                    i.key_pressed(egui::Key::Slash),
+                )
+            });
+            if zin {
+                zoom_by = Some(1.4);
+            }
+            if zout {
+                zoom_by = Some(1.0 / 1.4);
+            }
+            if fk {
+                fit_all = true;
+            }
+            if esc {
+                self.mapui.selected = None;
+                self.mapui.highlight = None;
+                self.mapui.key_open = false;
+            }
+            if slash {
+                if let Some(id) = ctx.data(|d| d.get_temp::<egui::Id>(sid)) {
+                    ctx.memory_mut(|m| m.request_focus(id));
+                }
+            }
+        }
+
+        // ── floating: the command bar (top left of the map)
+        let narrow_bar = rect.width() < 900.0;
+        let target = self.target_places();
+        let mut show_target = false;
+        let mut enter = false;
         egui::Area::new(egui::Id::new("map-float-top"))
             .order(egui::Order::Middle)
             .fixed_pos(rect.min + Vec2::splat(pad))
             .show(&ctx, |ui| {
                 kit::settings_style(ui);
-                // Each control sits straight on the map with just its own
-                // background (no panel around them); top aligned so search
-                // results can drop down.
-                top_right = ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
                     if let Area::Inside(z) = area {
-                        egui::Frame::none().show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.set_min_height(kit::CONTROL_H);
-                                if ui.button("‹  Outdoors").on_hover_text("Back to the Sinnoh map").clicked() {
-                                    leave_inside = true;
-                                }
-                                // Other floors / rooms of the same place.
-                                if floors.len() > 1 {
-                                    egui::ComboBox::from_id_salt("map-floor").selected_text(floor_now.as_str()).width(200.0).show_ui(ui, |ui| {
+                        if bar_button(ui, "Outdoors", false, "Back to the Sinnoh map", |p, r, ink| {
+                            super::map_panel::chevron(p, r.center(), Vec2::new(-1.0, 0.0), 5.0, Stroke::new(1.8f32, ink));
+                        }) {
+                            leave_inside = true;
+                        }
+                        // other floors / rooms of the same place
+                        if floors.len() > 1 {
+                            egui::Frame::none()
+                                .fill(kit::CARD())
+                                .stroke(Stroke::new(1.0f32, LINE()))
+                                .rounding(TOP_H / 2.0)
+                                .inner_margin(egui::Margin::symmetric(8.0, 2.0))
+                                .shadow(float_shadow())
+                                .show(ui, |ui| {
+                                    egui::ComboBox::from_id_salt("map-floor").selected_text(floor_now.as_str()).width(190.0).show_ui(ui, |ui| {
                                         for (f, label) in &floors {
                                             if ui.selectable_label(*f == z, label.as_str()).clicked() {
                                                 go_zone = Some(*f);
                                             }
                                         }
                                     });
-                                }
-                            });
-                        });
+                                });
+                        }
                     }
-                    // the search box on its own; results drop down in a card under it
+                    // search, its results dropping down under it
                     ui.vertical(|ui| {
-                        ui.set_max_width(260.0);
-                        kit::search_box(ui, &mut self.mapui.search, "Find a place or Pokémon…", 210.0);
-                            if !q.is_empty() {
-                                ui.add_space(4.0);
-                                float_frame().show(ui, |ui| {
-                                ui.set_width(236.0);
+                        let sw = if narrow_bar { 170.0 } else { 230.0 };
+                        let r = kit::search_box(ui, &mut self.mapui.search, "Find a place or Pokémon…", sw).on_hover_text("Press / to search");
+                        ui.ctx().data_mut(|d| d.insert_temp(sid, r.id));
+                        enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        if !q.is_empty() {
+                            ui.add_space(6.0);
+                            float_frame().inner_margin(egui::Margin::same(8.0)).show(ui, |ui| {
+                                ui.set_width(300.0);
+                                ui.spacing_mut().item_spacing.y = 2.0;
                                 if hits.is_empty() && mon_hits.is_empty() {
-                                    ui.label(RichText::new("No place or Pokémon by that name.").size(kit::fs(12.0)).color(MUTED()));
+                                    ui.add_space(6.0);
+                                    ui.label(RichText::new("No place or Pokémon by that name.").size(12.0).color(MUTED()));
+                                    ui.add_space(6.0);
                                 }
-                                let head = |ui: &mut egui::Ui, t: &str| {
-                                    ui.label(RichText::new(t).size(kit::fs(10.5)).family(kit::strong_family(kit::fs(10.5))).strong().color(MUTED()));
-                                };
                                 if !hits.is_empty() {
-                                    head(ui, "PLACES");
+                                    result_head(ui, "PLACES");
                                 }
-                                for (label, id) in hits.iter().take(if mon_hits.is_empty() { 10 } else { 6 }) {
-                                    if ui
-                                        .add(egui::Button::new(RichText::new(label).size(kit::fs(12.5))).frame(false))
-                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                        .clicked()
-                                    {
+                                for (label, id) in hits.iter().take(if mon_hits.is_empty() { 8 } else { 5 }) {
+                                    let (icon, col, kind) = super::map_panel::zone_kind(&map, *id);
+                                    if result_row(ui, label, kind, |p, r| kit::icon_chip(p, r.shrink(2.0), icon, col, false)) {
                                         go_hit = Some(*id);
                                     }
                                 }
@@ -1356,211 +1450,91 @@ impl App {
                                     if !hits.is_empty() {
                                         ui.add_space(4.0);
                                     }
-                                    head(ui, "POKÉMON");
+                                    result_head(ui, "POKÉMON");
                                 }
-                                for (label, name, places) in mon_hits.iter().take(if hits.is_empty() { 10 } else { 6 }) {
-                                    let wild = !places.is_empty();
-                                    let b = egui::Button::new(RichText::new(label).size(kit::fs(12.5)).color(if wild { TEXT() } else { MUTED() })).frame(false);
-                                    let r = ui
-                                        .add_enabled(wild, b)
-                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                        .on_hover_text("Show everywhere it lives in the wild")
-                                        .on_disabled_hover_text("Not found in the wild");
-                                    if r.clicked() {
+                                for (label, name, places, dex) in mon_hits.iter().take(if hits.is_empty() { 8 } else { 5 }) {
+                                    let sp = self.species.get((*dex as usize).wrapping_sub(1)).cloned();
+                                    let sub = match places.len() {
+                                        0 => "Not in the wild".to_string(),
+                                        1 => "1 place".to_string(),
+                                        n => format!("{n} places"),
+                                    };
+                                    let mut sprite = |p: &egui::Painter, r: Rect| {
+                                        if let Some(sp) = &sp {
+                                            self.draw_sprite(p, sp, false, r.center_bottom(), Vec2::splat(30.0));
+                                        }
+                                    };
+                                    if result_row(ui, label, &sub, &mut sprite) && !places.is_empty() {
                                         go_mon = Some((name.clone(), places.clone()));
                                     }
                                 }
-                                });
-                            }
+                            });
+                        }
                     });
-                    // the "Experimental" tag, floating on its own
-                    map_tag(ui, "Experimental")
-                        .on_hover_text("The Map is still being built: some things may be missing or wrong. Tell the dev if you spot something.");
-                    // layers (outdoors only)
                     if area == Area::World {
-                        {
-                            {
-                                let mut layer = self.mapui.layer;
-                                if map_tabs(
-                                    ui,
-                                    &mut layer,
-                                    &[
-                                        (Layer::Overworld, "Overworld"),
-                                        (Layer::Caves, "Caves"),
-                                        (Layer::Ruins, "Ruins"),
-                                        (Layer::Side, "Side areas"),
-                                    ],
-                                ) {
-                                    self.mapui.layer = layer;
-                                    self.mapui.layer_fit = true;
-                                    self.mapui.selected = None;
-                                }
+                        let mut layer = self.mapui.layer;
+                        if map_tabs(ui, &mut layer, &[(Layer::Overworld, "Overworld"), (Layer::Caves, "Caves"), (Layer::Ruins, "Ruins"), (Layer::Side, "Side areas")]) {
+                            self.mapui.layer = layer;
+                            self.mapui.layer_fit = true;
+                            self.mapui.selected = None;
+                        }
+                    }
+                    let key_open = self.mapui.key_open;
+                    if bar_button(ui, "Map key", key_open, "What's shown on the map: rare grass, ways in, doors, items and names", |p, r, ink| {
+                        for (i, c) in [GOLD, Color32::from_rgb(214, 150, 84), Color32::from_rgb(120, 205, 255)].into_iter().enumerate() {
+                            let y = r.center().y - 5.0 + 5.0 * i as f32;
+                            p.circle_filled(Pos2::new(r.center().x - 4.0, y), 2.0, c);
+                            p.line_segment([Pos2::new(r.center().x, y), Pos2::new(r.center().x + 6.0, y)], Stroke::new(1.5f32, ink));
+                        }
+                    }) {
+                        self.mapui.key_open = !key_open;
+                    }
+                    if let Some((sp, places)) = &target {
+                        if !places.is_empty() {
+                            let label = if narrow_bar { String::new() } else { sp.name.to_string() };
+                            let sp2 = sp.clone();
+                            let tip = format!("Show where {} (your target) lives", sp.name);
+                            if bar_sprite_button(ui, &label, &tip, |p, r| {
+                                self.draw_sprite(p, &sp2, true, r.center_bottom() + Vec2::new(0.0, 2.0), Vec2::splat(30.0));
+                            }) {
+                                show_target = true;
                             }
                         }
                     }
-                }).response.rect.max.x;
+                });
+                // under the bar: what's highlighted, and the key
                 if let Some(title) = &showing {
-                    ui.add_space(6.0);
-                    float_pill().show(ui, |ui| {
+                    ui.add_space(8.0);
+                    float_pill().fill(theme::blend(kit::CARD(), GOLD, 0.16)).show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new(format!("Showing: {title}")).size(kit::fs(12.0)).color(theme::LINK()));
-                            if ui
-                                .add(egui::Button::new(RichText::new("✖").size(kit::fs(11.0))).frame(false))
-                                .on_hover_text("Stop the highlight")
-                                .clicked()
-                            {
+                            ui.label(RichText::new(format!("Showing: {title}")).size(12.5).color(TEXT()));
+                            if super::map_panel::round_button(ui, 20.0, "Stop the highlight (Esc)", |p, r, ink| {
+                                let c = r.center();
+                                let st = Stroke::new(1.6f32, ink);
+                                p.line_segment([c + Vec2::new(-3.5, -3.5), c + Vec2::new(3.5, 3.5)], st);
+                                p.line_segment([c + Vec2::new(3.5, -3.5), c + Vec2::new(-3.5, 3.5)], st);
+                            }) {
                                 clear_hl = true;
                             }
                         });
                     });
                 }
-                // The key, under the search bar; folds to a tab.
-                ui.add_space(6.0);
-                if self.map_key(ui, left) {
-                    self.mapui.key_collapsed = !self.mapui.key_collapsed;
+                if self.mapui.key_open {
+                    ui.add_space(8.0);
+                    self.map_key(ui, left);
                 }
             });
-
-        // ── floating: zoom (bottom right)
-        egui::Area::new(egui::Id::new("map-float-zoom"))
-            .order(egui::Order::Middle)
-            .pivot(Align2::RIGHT_BOTTOM)
-            .fixed_pos(rect.max - Vec2::new(pad, pad))
-            .show(&ctx, |ui| {
-                kit::settings_style(ui);
-                // A Cirrus icon rail: a vertical Cloud pill holding round
-                // buttons; the one under the pointer fills with the button colour.
-                ui.spacing_mut().item_spacing.y = 4.0;
-                let b = |ui: &mut egui::Ui, t: &str, tip: &str| {
-                    // Drawn by hand so every button is the same size and
-                    // the label never wraps.
-                    let (r, resp) = ui.allocate_exact_size(Vec2::splat(38.0), Sense::click());
-                    let p = ui.painter();
-                    let down = resp.is_pointer_button_down_on();
-                    let ink = if resp.hovered() {
-                        p.add(kit::primary_shape(r.shrink(if down { 1.0 } else { 0.0 }), false));
-                        kit::on_primary()
-                    } else {
-                        TEXT()
-                    };
-                    let size = if t.chars().count() > 1 { 12.0 } else { 17.0 };
-                    p.text(r.center(), Align2::CENTER_CENTER, t, kit::font_bold(kit::fs(size)), ink);
-                    resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
-                };
-                let rail = egui::Frame::none()
-                    .fill(kit::CARD())
-                    .stroke(Stroke::new(1.0f32, LINE()))
-                    .rounding(30.0)
-                    .inner_margin(egui::Margin::same(5.0))
-                    .shadow(float_shadow());
-                rail.show(ui, |ui| {
-                if b(ui, "+", "Zoom in") {
-                    zoom_by = Some(1.4);
-                }
-                if b(ui, "−", "Zoom out") {
-                    zoom_by = Some(1.0 / 1.4);
-                }
-                if b(ui, "Fit", "Show the whole map") {
-                    fit_all = true;
-                }
-                });
-            });
-
-        // ── floating: today's rare grass (right), folds away to a tab
-        let mut open_poster = false;
-        if !spots.is_empty() {
-            let mut toggle = false;
-            let mut at = rect.right_top() + Vec2::new(-pad, pad);
-            let rare_w = if self.mapui.rare_collapsed { 280.0 } else { panel_w };
-            if at.x - rare_w < top_right + 8.0 {
-                at.y += TOP_H + 8.0;
-            }
-            if self.mapui.rare_collapsed {
-                egui::Area::new(egui::Id::new("map-float-rare-tab"))
-                    .order(egui::Order::Middle)
-                    .pivot(Align2::RIGHT_TOP)
-                    .fixed_pos(at)
-                    .show(&ctx, |ui| {
-                        kit::settings_style(ui);
-                        float_frame().rounding(40.0).inner_margin(egui::Margin::same(4.0)).show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                if fold_tab(ui, &format!("✨ Rare grass today ({})", spots.len()), false, "Show today's rare grass list") {
-                                    toggle = true;
-                                }
-                                if ui
-                                    .add(egui::Button::new(RichText::new("📷").size(kit::fs(13.0))).fill(kit::btn_fill()).min_size(Vec2::new(32.0, 32.0)))
-                                    .on_hover_text("Share today's rare grass as an image (the infographic)")
-                                    .clicked()
-                                {
-                                    open_poster = true;
-                                }
-                            });
-                        });
-                    });
-            } else {
-                // About half the pane tall, and never down into the zoom buttons.
-                let list_h = (rect.height() * 0.5).clamp(240.0, 560.0).min((rect.height() - 2.0 * pad - 84.0 - 126.0).max(120.0));
-                egui::Area::new(egui::Id::new("map-float-rare"))
-                    .order(egui::Order::Middle)
-                    .pivot(Align2::RIGHT_TOP)
-                    .fixed_pos(at)
-                    .show(&ctx, |ui| {
-                        kit::settings_style(ui);
-                        float_frame().show(ui, |ui| {
-                            ui.set_width(panel_w - 22.0);
-                            // (A floating panel is capped at a default height
-                            // unless told how tall it may grow.)
-                            ui.set_max_height(list_h + 84.0);
-                            ui.horizontal(|ui| {
-                                if fold_tab(ui, &format!("✨ Rare grass today ({})", spots.len()), true, "Fold this list away") {
-                                    toggle = true;
-                                }
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    // Save today's list as the shared file (for the dev to
-                                    // put on GitHub so everyone gets it).
-                                    if ui
-                                        .add(
-                                            egui::Button::new(RichText::new("📷  Infographic").size(kit::fs(12.0)))
-                                                .fill(kit::btn_fill())
-                                                .min_size(Vec2::new(28.0, 26.0)),
-                                        )
-                                        .on_hover_text("Share today's rare grass as an image: the map with every spot, the reset time around the world, the top 3 and where to find them")
-                                        .clicked()
-                                    {
-                                        open_poster = true;
-                                    }
-                                    if ui
-                                        .add(
-                                            egui::Button::new(RichText::new("⬇").size(kit::fs(13.0)))
-                                                .fill(kit::btn_fill())
-                                                .min_size(Vec2::new(28.0, 26.0)),
-                                        )
-                                        .on_hover_text("Save today's list as rare-today.json for sharing (into the GitHub folder if you have one)")
-                                        .clicked()
-                                    {
-                                        self.mapui.export_msg = Some(export_shared_rare(&self.mapui.rare));
-                                    }
-                                });
-                            });
-                            ui.label(
-                                RichText::new("Pokémon met on rare grass today: yours plus the shared list.")
-                                    .size(kit::fs(11.0))
-                                    .color(MUTED()),
-                            );
-                            if let Some(m) = &self.mapui.export_msg {
-                                ui.label(RichText::new(m).size(kit::fs(11.0)).color(theme::LINK()));
-                            }
-                            ui.add_space(6.0);
-                            self.rare_list(ui, &spots, list_h);
-                        });
-                    });
-            }
-            if toggle {
-                self.mapui.rare_collapsed = !self.mapui.rare_collapsed;
+        if enter {
+            if let Some((_, id)) = hits.first() {
+                go_hit = Some(*id);
+            } else if let Some((_, name, places, _)) = mon_hits.iter().find(|h| !h.2.is_empty()) {
+                go_mon = Some((name.clone(), places.clone()));
             }
         }
-        if open_poster {
-            self.open_rare_poster(&ctx);
+        if show_target {
+            if let Some((sp, places)) = &target {
+                self.show_on_map(places, format!("Where {} lives", sp.name), None);
+            }
         }
 
         if clear_hl {
@@ -2203,8 +2177,11 @@ impl App {
             } else if let Some(id) = rare_hit.take() {
                 self.open_dex_entry(&id);
             } else if let Some(z) = hover_zone {
-                // Pick it and glide in on it (no further out than now).
+                // Pick it and glide in on it (no further out than now); the
+                // panel shows what's there.
                 self.mapui.selected = Some(z);
+                self.mapui.panel_tab = super::map_panel::MapTab::Area;
+                self.mapui.panel_closed = false;
                 let tr = if layered {
                     over_rects.iter().find(|(o, _)| *o == z).map(|(_, r)| Rect::from_min_max(to_tile(r.min), to_tile(r.max)))
                 } else {
@@ -2228,36 +2205,163 @@ impl App {
                 }
             }
         }
-        // ── floating: about the selected area (bottom left)
-        let at = rect.left_bottom() + Vec2::new(pad, -pad);
-        if let Some(z) = self.mapui.selected {
-            let w = (rect.width() - 2.0 * pad - right_inset - 60.0).clamp(220.0, 340.0);
-            let max_h = (rect.height() * 0.24).max(90.0);
-            egui::Area::new(egui::Id::new("map-float-zone"))
+        // ── floating: zoom buttons and, beside them, the minimap (bottom right)
+        // (not under the floating panel on narrow windows)
+        let covered = !docked && !self.mapui.panel_closed;
+        let mini = area == Area::World && !layered && !covered && rect.width() >= 720.0 && rect.height() >= 460.0;
+        let rail = egui::Area::new(egui::Id::new("map-float-zoom"))
+            .order(egui::Order::Middle)
+            .pivot(Align2::RIGHT_BOTTOM)
+            .fixed_pos(rect.max - Vec2::new(pad, pad))
+            .show(&ctx, |ui| {
+                kit::settings_style(ui);
+                let b = |ui: &mut egui::Ui, t: &str, tip: &str| {
+                    let (r, resp) = ui.allocate_exact_size(Vec2::splat(38.0), Sense::click());
+                    let p = ui.painter();
+                    let down = resp.is_pointer_button_down_on();
+                    let ink = if resp.hovered() {
+                        p.add(kit::primary_shape(r.shrink(if down { 1.0 } else { 0.0 }), false));
+                        kit::on_primary()
+                    } else {
+                        TEXT()
+                    };
+                    let size = if t.chars().count() > 1 { 12.0 } else { 17.0 };
+                    p.text(r.center(), Align2::CENTER_CENTER, t, kit::font_bold(kit::fs(size)), ink);
+                    resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+                };
+                egui::Frame::none()
+                    .fill(kit::CARD())
+                    .stroke(Stroke::new(1.0f32, LINE()))
+                    .rounding(30.0)
+                    .inner_margin(egui::Margin::same(5.0))
+                    .shadow(float_shadow())
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 4.0;
+                        if b(ui, "+", "Zoom in (+)") {
+                            self.mapui.fly_to(self.mapui.center, (self.mapui.zoom * 1.4).clamp(MIN_ZOOM, MAX_ZOOM));
+                        }
+                        if b(ui, "−", "Zoom out (−)") {
+                            self.mapui.fly_to(self.mapui.center, (self.mapui.zoom / 1.4).clamp(MIN_ZOOM, MAX_ZOOM));
+                        }
+                        if b(ui, "Fit", "Show the whole map (F)") {
+                            self.mapui.want_fit = true;
+                            ui.ctx().request_repaint();
+                        }
+                    });
+            })
+            .response
+            .rect;
+        if mini {
+            egui::Area::new(egui::Id::new("map-float-mini"))
                 .order(egui::Order::Middle)
-                .pivot(Align2::LEFT_BOTTOM)
-                .fixed_pos(at)
+                .pivot(Align2::RIGHT_BOTTOM)
+                .fixed_pos(Pos2::new(rail.min.x - 10.0, rect.max.y - pad))
                 .show(&ctx, |ui| {
                     kit::settings_style(ui);
-                    self.map_zone_card(ui, &map, z, w, max_h);
-                });
-        } else {
-            egui::Area::new(egui::Id::new("map-float-hint"))
-                .order(egui::Order::Middle)
-                .pivot(Align2::LEFT_BOTTOM)
-                .fixed_pos(at)
-                .interactable(false)
-                .show(&ctx, |ui| {
-                    kit::settings_style(ui);
-                    float_pill().show(ui, |ui| {
-                        ui.label(
-                            RichText::new("Scroll to zoom, drag to move. Click an area to see what lives there; double-click to go inside.")
-                                .size(kit::fs(11.5))
-                                .color(MUTED()),
-                        );
+                    float_frame().inner_margin(egui::Margin::same(6.0)).rounding(16.0).show(ui, |ui| {
+                        self.map_minimap(ui, &map, rect, (rect.width() * 0.17).clamp(150.0, 210.0));
                     });
                 });
         }
+
+        // ── floating: where you are and help (bottom left of the map)
+        egui::Area::new(egui::Id::new("map-float-status"))
+            .order(egui::Order::Middle)
+            .pivot(Align2::LEFT_BOTTOM)
+            .fixed_pos(rect.left_bottom() + Vec2::new(pad, -pad))
+            .show(&ctx, |ui| {
+                kit::settings_style(ui);
+                let layer = self.mapui.layer;
+                self.map_status(ui, &map, area, layer);
+            });
+
+        // ── the side panel: the picked area, today's rare grass
+        let mut acts = super::map_panel::PanelActs::default();
+        if !self.mapui.panel_closed {
+            let (pos, size) = if docked {
+                (Pos2::new(full.max.x - panel_w, full.min.y), Vec2::new(panel_w, full.height()))
+            } else {
+                let top = rect.min.y + pad + TOP_H + 10.0;
+                // ends above the zoom buttons
+                (Pos2::new(full.max.x - pad - panel_w, top), Vec2::new(panel_w, (full.max.y - top - pad - 150.0).clamp(200.0, 620.0)))
+            };
+            egui::Area::new(egui::Id::new("map-panel"))
+                .order(egui::Order::Middle)
+                .fixed_pos(pos)
+                .constrain(false)
+                .show(&ctx, |ui| {
+                    kit::settings_style(ui);
+                    let (frame, margin) = if docked {
+                        (egui::Frame::none().fill(kit::CARD()).inner_margin(egui::Margin { left: 16.0, right: 14.0, top: 14.0, bottom: 0.0 }), 30.0)
+                    } else {
+                        (float_frame().inner_margin(egui::Margin::same(12.0)), 24.0)
+                    };
+                    let h = size.y - if docked { 14.0 } else { 24.0 };
+                    frame.show(ui, |ui| {
+                        ui.set_width(size.x - margin);
+                        ui.set_min_height(h);
+                        ui.set_max_height(h);
+                        acts = self.map_panel(ui, &map, &spots, left, h);
+                    });
+                    if docked {
+                        ui.painter().line_segment([pos, Pos2::new(pos.x, full.max.y)], Stroke::new(1.0f32, LINE()));
+                    }
+                });
+        } else {
+            // folded away: a pill to bring it back
+            let rare_n = spots.len();
+            let mut open = false;
+            egui::Area::new(egui::Id::new("map-panel-tab"))
+                .order(egui::Order::Middle)
+                .pivot(Align2::RIGHT_TOP)
+                .fixed_pos(Pos2::new(rect.max.x - pad, rect.min.y + pad))
+                .show(&ctx, |ui| {
+                    kit::settings_style(ui);
+                    let label = if rare_n > 0 { format!("Rare grass {rare_n}") } else { "Panel".to_string() };
+                    if bar_button(ui, &label, false, "Show the side panel: the place you picked and today's rare grass", |p, r, ink| {
+                        super::map_panel::chevron(p, r.center() - Vec2::new(3.0, 0.0), Vec2::new(-1.0, 0.0), 6.0, Stroke::new(1.8f32, ink));
+                        super::map_panel::chevron(p, r.center() + Vec2::new(3.0, 0.0), Vec2::new(-1.0, 0.0), 6.0, Stroke::new(1.8f32, ink));
+                    }) {
+                        open = true;
+                    }
+                });
+            if open {
+                self.mapui.panel_closed = false;
+            }
+        }
+        if acts.collapse {
+            self.mapui.panel_closed = true;
+        }
+        if acts.close {
+            self.mapui.selected = None;
+        }
+        if let Some(z) = acts.go_inside {
+            self.open_zone(&map, z);
+        }
+        if let Some(z) = acts.zoom_to {
+            self.map_fit(&map, &[z], false);
+        }
+        if std::mem::take(&mut self.mapui.want_poster) {
+            self.open_rare_poster(&ctx);
+        }
+        if std::mem::take(&mut self.mapui.want_export) {
+            self.mapui.export_msg = Some(export_shared_rare(&self.mapui.rare));
+        }
+    }
+
+    /// Your target and the wiki places it lives in (the command bar's
+    /// "where's my target" button).
+    fn target_places(&self) -> Option<(crate::species::Species, Vec<String>)> {
+        let sp = self.species.get(self.target_idx()?)?.clone();
+        let w = self.wiki.as_ref()?;
+        let mon = w.by_dex(sp.dex)?;
+        let mut places: Vec<String> = Vec::new();
+        for e in w.wild(&mon.id) {
+            if e.setting.is_empty() && !places.contains(&e.area) {
+                places.push(e.area.clone());
+            }
+        }
+        Some((sp, places))
     }
 
     /// Doors, stairs and exits on the map showing: a marker on their tiles
@@ -2360,29 +2464,22 @@ impl App {
     }
 
     /// The map key: what each kind of pin and icon is, with a switch for
-    /// each. Folds down to a tab. True when it was folded or opened.
-    fn map_key(&mut self, ui: &mut egui::Ui, left: i64) -> bool {
-        let mut fold = false;
-        if self.mapui.key_collapsed {
-            float_frame().rounding(40.0).inner_margin(egui::Margin::same(4.0)).show(ui, |ui| {
-                if fold_tab(ui, "Map key", false, "Show the map key: turn pins and icons on or off") {
-                    fold = true;
-                }
-            });
-            return fold;
-        }
-        float_frame().inner_margin(egui::Margin::symmetric(10.0, 8.0)).show(ui, |ui| {
-            ui.set_width(186.0);
-            ui.spacing_mut().item_spacing.y = 5.0;
-            if fold_tab(ui, "Map key", true, "Fold the key away") {
-                fold = true;
-            }
+    /// each (opens from the command bar).
+    fn map_key(&mut self, ui: &mut egui::Ui, left: i64) {
+        float_frame().inner_margin(egui::Margin::same(14.0)).show(ui, |ui| {
+            ui.set_width(250.0);
+            ui.label(RichText::new("Map key").font(kit::font_bold(14.0)).color(TEXT()));
+            ui.label(RichText::new("Turn things on or off on the map.").size(11.5).color(MUTED()));
+            ui.add_space(8.0);
             let row = |ui: &mut egui::Ui, on: &mut bool, label: &str, tip: &str, icon: &dyn Fn(&egui::Painter, Pos2)| {
                 ui.horizontal(|ui| {
-                    let (r, _) = ui.allocate_exact_size(Vec2::splat(18.0), Sense::hover());
-                    let pt = ui.painter();
-                    icon(pt, r.center());
-                    kit::checkbox(ui, on, label).on_hover_text(tip);
+                    ui.set_min_height(28.0);
+                    let (r, _) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::hover());
+                    icon(ui.painter(), r.center());
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(label).size(13.0).color(TEXT())).on_hover_text(tip);
+                    ui.add_space((ui.available_width() - 44.0).max(4.0));
+                    kit::toggle(ui, on).on_hover_text(tip);
                 });
             };
             let reset = format!(
@@ -2395,45 +2492,21 @@ impl App {
                 p.circle_stroke(c, 7.0, Stroke::new(1.5f32, GOLD));
                 theme::sparkle(p, c, 4.0, GOLD);
             });
-            row(
-                ui,
-                &mut self.mapui.show_entrances,
-                "Ways in",
-                "Icons where you can go into a cave, ruin or side area (click one to go in)",
-                &|p, c| {
-                    entrance_icon(p, c, 7.0, Color32::from_rgb(214, 150, 84), false);
-                },
-            );
-            row(
-                ui,
-                &mut self.mapui.show_doors,
-                "Doors and exits",
-                "Doors, stairs and exits on the layers and inside, with lines between linked doors",
-                &|p, c| {
-                    for (i, col) in [Color32::from_rgb(120, 205, 255), Color32::from_rgb(130, 230, 140), Color32::from_rgb(255, 182, 92)]
-                        .into_iter()
-                        .enumerate()
-                    {
-                        let r = Rect::from_center_size(c + Vec2::new(-5.0 + 5.0 * i as f32, 0.0), Vec2::splat(4.5));
-                        p.rect_filled(r, 1.0, col);
-                    }
-                },
-            );
-            row(ui, &mut self.mapui.show_items, "Item balls", "Items lying on the ground", &|p, c| {
-                item_icon(p, c, 6.0, false)
+            row(ui, &mut self.mapui.show_entrances, "Ways in", "Icons where you can go into a cave, ruin or side area (click one to go in)", &|p, c| {
+                entrance_icon(p, c, 7.0, Color32::from_rgb(214, 150, 84), false);
             });
-            row(
-                ui,
-                &mut self.mapui.show_hidden,
-                "Hidden items",
-                "Items hidden in the ground (find them with the Dowsing Machine)",
-                &|p, c| item_icon(p, c, 6.0, true),
-            );
+            row(ui, &mut self.mapui.show_doors, "Doors and exits", "Doors, stairs and exits on the layers and inside, with lines between linked doors", &|p, c| {
+                for (i, col) in [Color32::from_rgb(120, 205, 255), Color32::from_rgb(130, 230, 140), Color32::from_rgb(255, 182, 92)].into_iter().enumerate() {
+                    let r = Rect::from_center_size(c + Vec2::new(-5.0 + 5.0 * i as f32, 0.0), Vec2::splat(4.5));
+                    p.rect_filled(r, 1.0, col);
+                }
+            });
+            row(ui, &mut self.mapui.show_items, "Item balls", "Items lying on the ground", &|p, c| item_icon(p, c, 6.0, false));
+            row(ui, &mut self.mapui.show_hidden, "Hidden items", "Items hidden in the ground (find them with the Dowsing Machine)", &|p, c| item_icon(p, c, 6.0, true));
             row(ui, &mut self.mapui.labels, "Names", "Area and room names", &|p, c| {
                 p.text(c, Align2::CENTER_CENTER, "Aa", kit::font_bold(11.0), TEXT());
             });
         });
-        fold
     }
 
     /// A part's name within its place ("B1F", "Room 3").
@@ -2535,120 +2608,4 @@ impl App {
         }
     }
 
-    /// Card under the map: the selected area's wild Pokémon, kept small
-    /// (folds down to just its name).
-    fn map_zone_card(&mut self, ui: &mut egui::Ui, map: &GameMap, z: u16, width: f32, max_h: f32) {
-        let Some(w) = self.wiki.clone() else { return };
-        let label = self.zone_label(map, z);
-        let places = map.zone_places(z);
-        let mut open: Option<String> = None;
-        let mut go_inside: Option<u16> = None;
-        let mut close = false;
-        let mut fold = false;
-        let folded = self.mapui.card_folded;
-        let inside = map
-            .zone(z)
-            .filter(|zone| zone.matrix == 0)
-            .and_then(|zone| map.zones.iter().find(|o| o.matrix != 0 && o.name == zone.name).map(|o| o.id));
-        let stage = places.first().and_then(|p| w.place(p)).map(|pl| pl.stage.clone()).filter(|s| !s.is_empty());
-        float_frame().inner_margin(egui::Margin::symmetric(10.0, 7.0)).show(ui, |ui| {
-            ui.set_width(width - 20.0);
-            ui.spacing_mut().item_spacing = Vec2::new(6.0, 2.0);
-            // Header: name, then small buttons on the right.
-            ui.horizontal(|ui| {
-                let chev = if folded { "▸" } else { "▾" };
-                if ui
-                    .add(egui::Button::new(RichText::new(format!("{chev}  {label}")).size(kit::fs(13.0)).family(kit::strong_family(kit::fs(13.0))).strong().color(TEXT())).frame(false))
-                    .on_hover_text(if folded { "Show what lives here" } else { "Fold this away" })
-                    .clicked()
-                {
-                    fold = true;
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .add(egui::Button::new(RichText::new("✖").size(kit::fs(10.0))).frame(false))
-                        .on_hover_text("Close")
-                        .clicked()
-                    {
-                        close = true;
-                    }
-                    ui.add(egui::Label::new(RichText::new("?").size(kit::fs(11.0)).color(MUTED())).sense(Sense::hover()))
-                        .on_hover_text("Pokémon only added by MORE POKéMON or MODERN POKéMON aren't listed here; see the Pokédex for those.");
-                    if let Some(first) = inside {
-                        if ui
-                            .add(egui::Button::new(RichText::new("Go inside").size(kit::fs(11.5))).fill(kit::btn_fill()).min_size(Vec2::new(0.0, 24.0)))
-                            .clicked()
-                        {
-                            go_inside = Some(first);
-                        }
-                    }
-                });
-            });
-            if folded {
-                return;
-            }
-            if let Some(st) = &stage {
-                ui.label(RichText::new(format!("Reach it: {st}")).size(kit::fs(10.5)).color(MUTED()));
-            }
-            ui.add_space(3.0);
-            // wild Pokémon living here, by how
-            let mut by_method: Vec<(String, Vec<(String, String)>)> = Vec::new();
-            for e in &w.data.wild {
-                if !places.contains(&e.area.as_str()) || !e.setting.is_empty() {
-                    continue;
-                }
-                let how = super::dex_tabs::method_label(&e.method).to_string();
-                let name = w.mon(&e.species).map(|m| m.name.clone()).unwrap_or_else(|| e.species.clone());
-                let entry = match by_method.iter_mut().find(|(m, _)| *m == how) {
-                    Some(x) => x,
-                    None => {
-                        by_method.push((how.clone(), Vec::new()));
-                        by_method.last_mut().unwrap()
-                    }
-                };
-                if !entry.1.iter().any(|(id, _)| *id == e.species) {
-                    entry.1.push((e.species.clone(), name));
-                }
-            }
-            if by_method.is_empty() {
-                ui.label(RichText::new("No wild Pokémon here.").size(kit::fs(11.5)).color(MUTED()));
-                return;
-            }
-            egui::ScrollArea::vertical()
-                .id_salt("map-zone-list")
-                .max_height(max_h)
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    // Method in a narrow column, names wrapping beside it.
-                    let col = 70.0;
-                    for (how, mons) in &by_method {
-                        ui.horizontal_top(|ui| {
-                            let (r, _) = ui.allocate_exact_size(Vec2::new(col, 16.0), Sense::hover());
-                            ui.painter().text(r.left_center(), Align2::LEFT_CENTER, how, kit::font_bold(kit::fs(10.5)), MUTED());
-                            ui.horizontal_wrapped(|ui| {
-                                ui.spacing_mut().item_spacing.x = 7.0;
-                                for (id, name) in mons {
-                                    if ui.link(RichText::new(name).size(kit::fs(11.5))).on_hover_text("Open in the Pokédex").clicked() {
-                                        open = Some(id.clone());
-                                    }
-                                }
-                            });
-                        });
-                    }
-                });
-        });
-        if fold {
-            self.mapui.card_folded = !self.mapui.card_folded;
-        }
-        if close {
-            self.mapui.selected = None;
-        }
-        if let Some(id) = open {
-            self.setup.tab = Tab::Pokedex;
-            self.setup.pokedex.open = Some(id);
-        }
-        if let Some(f) = go_inside {
-            self.open_zone(map, f);
-        }
-    }
 }

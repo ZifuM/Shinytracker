@@ -36,9 +36,18 @@ mod ov_terminal;
 mod ov_retro;
 mod ov_toast;
 mod map;
+mod map_panel;
 mod overlay_mod;
 mod pokedex;
 mod rare;
+mod runs_page;
+mod hunt_page;
+mod counting_page;
+mod overlay_page;
+mod profile_page;
+mod appearance_page;
+mod hotkeys_page;
+mod advanced_page;
 mod rare_poster;
 mod settings;
 mod shell;
@@ -105,10 +114,16 @@ struct Setup {
     zoom_fit: bool,
     test: Option<TestRead>,
     confirm_reset: bool,
-    confirm_delete_run: Option<u64>,
+    /// Runs page: filter (0 all, 1 in progress, 2 caught, 3 phases) and search.
+    runs_filter: u8,
+    runs_query: String,
+    /// A run just deleted, kept a few seconds so it can be undone.
+    runs_undo: Option<(runs_page::Undo, f64)>,
     capture_at: Option<Instant>,
     recording: Option<HotAction>,
     bind_msg: Option<(bool, String)>,
+    /// A key that's already used: (for this action, the keys, used by).
+    hk_swap: Option<(HotAction, crate::hotkeys::KeyBind, HotAction)>,
     picking_target: bool,
     /// Picking the optional second target.
     /// Picking an extra target: Some(i) replaces the i-th, Some(len) adds one.
@@ -121,6 +136,8 @@ struct Setup {
     restore_pending: Option<(std::path::PathBuf, Box<Config>)>,
     /// Last backup/restore result (ok?, message).
     backup_msg: Option<(bool, String)>,
+    /// When the last automatic copy was checked (one an hour while open).
+    auto_backup_at: Option<std::time::Instant>,
     /// "Move data folder" box while it's open, and the last result.
     data_picker: Option<Receiver<Option<std::path::PathBuf>>>,
     data_msg: Option<(bool, String)>,
@@ -134,15 +151,19 @@ struct Setup {
     pace_view: stats_hunt::PaceView,
     top_view: stats_life::TopView,
     stats_tab: stats_life::StatsTab,
-    overlay_tab: settings::OverlayTab,
-    hunt_tab: settings::HuntTab,
     pokedex: pokedex::DexState,
     /// "Hunt it on rare grass?" after picking a target that's there today.
     rare_offer: Option<rare::RareOffer>,
     /// Apps in the sidebar whose pages are folded away.
     nav_collapsed: Vec<Tab>,
-    appear_tab: hunt_pages::AppearTab,
-    adv_tab: settings::AdvTab,
+    /// Advanced page: scroll to this section once.
+    adv_jump: Option<settings::AdvTab>,
+    /// Appearance page: a look code being pasted, and the last result.
+    look_code: String,
+    look_msg: Option<(bool, String)>,
+    /// The look when the Appearance page was opened (page visit, look), for
+    /// "Undo changes".
+    look_start: Option<(u64, crate::config::Appearance)>,
     /// "Choose…" box for a sound file while it's open: which sound it's for
     /// (None = the alert song) and where the answer arrives.
     song_picker: Option<(Option<crate::sound::Sfx>, Receiver<Option<std::path::PathBuf>>)>,
@@ -153,6 +174,8 @@ struct Setup {
     ach_filter: trainer::AchFilter,
     /// Selected achievement category tab.
     ach_tab: usize,
+    ach_query: String,
+    ach_sort: u8,
     /// Trainer card image maker, when open.
     profile_card: Option<trainer::ProfileCardView>,
     /// Profile page tab.
@@ -262,6 +285,8 @@ pub struct App {
     /// Achievement / level-up pop-ups waiting to show.
     toasts: std::collections::VecDeque<trainer::Toast>,
     progress_checked: Instant,
+    /// Hotkeys pressed lately (the Hotkeys page lights them up).
+    hot_fired: Vec<(HotAction, Instant)>,
     /// Modular overlay: size it needs (measured while drawing).
     ov_size: Option<[f32; 2]>,
     /// The Shiny Hunter overlay window is open (Start / Stop).
@@ -299,6 +324,12 @@ pub struct App {
     applied_passthrough: Option<bool>,
     /// Recent auto-counted encounters (unix time, how many) for the pace graph.
     recent_enc: std::collections::VecDeque<(u64, u64)>,
+    /// The last few battles counted (unix time, Pokémon, how many counted)
+    /// for the Counting page's live feed.
+    enc_feed: std::collections::VecDeque<(u64, Vec<usize>, u32)>,
+    /// Set while the Overlay page draws its live preview: where (in the main
+    /// window) and the clip rect, both in the preview layer's coordinates.
+    ov_preview: Option<(Rect, Rect)>,
     /// When the last battle was counted (for "last encounter").
     last_enc_at: Option<Instant>,
     /// Slow-changing numbers for the modular overlay, refreshed every second.
@@ -422,6 +453,8 @@ impl App {
             applied_bg_pause: None,
             applied_passthrough: None,
             recent_enc: std::collections::VecDeque::new(),
+            enc_feed: std::collections::VecDeque::new(),
+            ov_preview: None,
             last_enc_at: None,
             ov_cache: None,
             game_loc_checked: None,
@@ -443,16 +476,20 @@ impl App {
                 zoom_fit: true,
                 test: None,
                 confirm_reset: false,
-                confirm_delete_run: None,
+                runs_filter: 0,
+                runs_query: String::new(),
+                runs_undo: None,
                 capture_at: None,
                 recording: None,
                 bind_msg: None,
+                hk_swap: None,
                 picking_target: false,
                 picking_also: None,
                 caught_pick: false,
                 backup_picker: None,
                 restore_pending: None,
                 backup_msg: None,
+                auto_backup_at: None,
                 data_picker: None,
                 data_msg: None,
                 welcome_step: 0,
@@ -462,19 +499,21 @@ impl App {
                 pace_view: Default::default(),
                 top_view: Default::default(),
                 stats_tab: Default::default(),
-                overlay_tab: Default::default(),
-                hunt_tab: Default::default(),
                 pokedex: Default::default(),
                 rare_offer: None,
                 // Apps start folded; clicking one opens its pages.
                 nav_collapsed: vec![Tab::Shiny],
-                appear_tab: Default::default(),
-                adv_tab: Default::default(),
+                adv_jump: None,
+                look_code: String::new(),
+                look_msg: None,
+                look_start: None,
                 song_picker: None,
                 share: None,
                 toast: None,
                 ach_filter: trainer::AchFilter::All,
                 ach_tab: 0,
+                ach_query: String::new(),
+                ach_sort: 0,
                 profile_card: None,
                 profile_section: Default::default(),
                 dex: extras::DexView::default(),
@@ -516,6 +555,7 @@ impl App {
             undo_caught: None,
             toasts: std::collections::VecDeque::new(),
             progress_checked: Instant::now() - Duration::from_secs(60),
+            hot_fired: Vec::new(),
             cfg,
         }
     }
@@ -553,6 +593,9 @@ impl App {
         self.cfg.target2 = it.next();
         self.cfg.more_targets = it.collect();
         self.dirty = true;
+        if self.cfg.target2.is_some() {
+            self.add_event("double_vision");
+        }
     }
 
     /// Species index of every target: the main one first.
@@ -704,6 +747,23 @@ impl App {
                         self.cfg.run_stats.note_target_seen(self.cfg.count);
                     }
                 }
+                // live feed: a late name joins the battle it belongs to
+                match self.enc_feed.back_mut() {
+                    Some(b) if late => {
+                        b.2 += added;
+                        for &i in &names {
+                            if !b.1.contains(&i) {
+                                b.1.push(i);
+                            }
+                        }
+                    }
+                    _ => {
+                        self.enc_feed.push_back((now_unix(), names.clone(), added));
+                        while self.enc_feed.len() > 30 {
+                            self.enc_feed.pop_front();
+                        }
+                    }
+                }
                 self.last_battle = names;
                 self.last_enc_at = Some(Instant::now());
                 if added > 0 {
@@ -775,6 +835,48 @@ impl App {
                 self.cfg.overlay.click_through = !self.cfg.overlay.click_through;
                 self.dirty = true;
             }
+            HotAction::StartStop => {
+                if self.overlay_on {
+                    self.stop_overlay();
+                } else {
+                    self.start_overlay();
+                }
+            }
+            HotAction::AddMany => self.add(self.cfg.keybinds.add_many_n.clamp(1, 99) as i64),
+            HotAction::MuteSounds => {
+                self.cfg.sounds.enabled = !self.cfg.sounds.enabled;
+                self.dirty = true;
+                let on = self.cfg.sounds.enabled;
+                self.hotkey_notice("🔊", if on { "Sounds on" } else { "Sounds off" }, "");
+            }
+            HotAction::DismissAlert => {
+                self.shiny_alert = None;
+            }
+            HotAction::ShowApp => {}
+            HotAction::CycleSize => {
+                use crate::config::OverlaySize;
+                if !self.cfg.overlay.legacy() {
+                    self.cfg.overlay.size = match self.cfg.overlay.size {
+                        OverlaySize::Full => OverlaySize::Compact,
+                        OverlaySize::Compact => OverlaySize::Bar,
+                        OverlaySize::Bar => OverlaySize::Full,
+                    };
+                    self.cfg.mini = false;
+                    self.ov_size = None;
+                    self.dirty = true;
+                }
+            }
+            HotAction::HotkeysToggle => {
+                self.cfg.keybinds.paused = !self.cfg.keybinds.paused;
+                self.dirty = true;
+                self.apply_keybinds();
+                let key = self.cfg.keybinds.get(HotAction::HotkeysToggle).map(|b| b.text()).unwrap_or_default();
+                if self.cfg.keybinds.paused {
+                    self.hotkey_notice("⌨", "Hotkeys off", &format!("{key} turns them back on."));
+                } else {
+                    self.hotkey_notice("⌨", "Hotkeys on", "");
+                }
+            }
         }
     }
 
@@ -788,6 +890,18 @@ impl App {
         } else {
             self.ov_size.unwrap_or(FULL_SIZE)
         }
+    }
+
+    /// The overlay's Small / Medium / Large factor.
+    fn ov_scale(&self) -> f32 {
+        self.cfg.overlay.scale.factor()
+    }
+
+    /// The overlay window's real size: the layout's size times the scale.
+    fn overlay_window_size(&self) -> [f32; 2] {
+        let [w, h] = self.overlay_size();
+        let s = self.ov_scale();
+        [(w * s).round(), (h * s).round()]
     }
 
     /// Which layout the overlay is in, for remembering where each one sits.
@@ -808,7 +922,7 @@ impl App {
 
     /// Runs inside the overlay window each frame.
     fn sync_window(&mut self, ctx: &egui::Context) {
-        let want = self.overlay_size();
+        let want = self.overlay_window_size();
         let ppp = ctx.pixels_per_point();
         let key = self.overlay_layout_key();
         let here = ctx.input(|i| i.viewport().outer_rect).map(|r| [r.min.x, r.min.y]);
@@ -2069,8 +2183,8 @@ impl App {
         );
         p.rect_stroke(boxr, 2.0, Stroke::new(2.5f32, theme::REGION));
         p.text(
-            egui::pos2(boxr.center().x, rect.max.y - 10.0),
-            Align2::CENTER_CENTER,
+            egui::pos2(boxr.min.x, rect.max.y - 10.0),
+            Align2::LEFT_CENTER,
             "your box (leave room for the ★)",
             ui_kit::font(12.0),
             theme::REGION,
@@ -2596,8 +2710,27 @@ impl eframe::App for App {
         self.fonts.poll(ctx);
         self.sprites.poll(ctx);
         for a in self.hotkeys.poll() {
-            self.on_hotkey(a);
+            self.hot_fired.retain(|(_, t)| t.elapsed() < Duration::from_secs(30));
+            self.hot_fired.push((a, Instant::now()));
+            if a == HotAction::ShowApp {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            } else {
+                self.on_hotkey(a);
+            }
         }
+        // Light or dark following Windows.
+        if self.cfg.appearance.follow_system {
+            if let Some(t) = ctx.system_theme() {
+                let m = if t == egui::Theme::Light { crate::config::UiMode::Light } else { crate::config::UiMode::Dark };
+                if self.cfg.appearance.mode != m {
+                    self.cfg.appearance.mode = m;
+                    self.dirty = true;
+                }
+            }
+        }
+        self.auto_backup_tick();
+        self.hotkeys_guard();
         while let Ok(msg) = self.rx.try_recv() {
             self.on_msg(msg);
         }
@@ -2655,6 +2788,10 @@ impl eframe::App for App {
             if let Some(i) = std::env::var("SHOT_NOTICE").ok().and_then(|v| v.parse::<usize>().ok()) {
                 self.preview_notice(i);
             }
+            let sc = self.ov_scale();
+            for l in [egui::LayerId::background(), egui::LayerId::new(egui::Order::Foreground, egui::Id::new("toasts"))] {
+                ctx.set_transform_layer(l, egui::emath::TSTransform::from_scaling(sc));
+            }
             if self.cfg.mini {
                 self.mini_ui(ctx);
             } else {
@@ -2662,6 +2799,22 @@ impl eframe::App for App {
             }
             ctx.request_repaint_after(Duration::from_millis(40));
             return;
+        }
+        // Screenshot rig only: a few made-up battles for the Counting page.
+        #[cfg(not(windows))]
+        if std::env::var_os("SHOT_FEED").is_some() && self.enc_feed.is_empty() {
+            let now = now_unix();
+            let idx = |slug: &str| self.species.iter().position(|s| s.slug == slug).unwrap_or(0);
+            let picks = [("scyther", "pinsir"), ("pinsir", "scyther"), ("scyther", "scyther"), ("beautifly", "scyther"), ("pinsir", "kricketune"), ("scyther", "pinsir")];
+            for (k, (a, b)) in picks.iter().enumerate() {
+                self.enc_feed.push_back((now - (picks.len() - k) as u64 * 23, vec![idx(a), idx(b)], 2));
+            }
+            for k in 0..30u64 {
+                self.recent_enc.push_back((now - (30 - k) * 60, 2 + (k % 5) * 2));
+            }
+            self.last_enc_at = Some(Instant::now() - Duration::from_secs(9));
+            self.status.text = "session-20261111-184753.log".into();
+            self.cfg.paused = false;
         }
         // The launcher is the main window.
         self.launcher_ui(ctx);

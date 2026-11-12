@@ -636,8 +636,32 @@ impl App {
     }
 
     /// The overlay as its own always-on-top window (while it's started).
+    /// Where the overlay draws: filling its own window, or (for the Overlay
+    /// page's live preview) in a box in the main window that ignores clicks.
+    pub(super) fn ov_panel(&mut self, ctx: &egui::Context, add: impl FnOnce(&mut Self, &mut egui::Ui)) {
+        match self.ov_preview {
+            Some((r, clip)) => {
+                egui::Area::new(egui::Id::new(super::overlay_page::PREVIEW_AREA))
+                    .order(egui::Order::Middle)
+                    .fixed_pos(r.min)
+                    .constrain(false)
+                    .interactable(false)
+                    .show(ctx, |ui| {
+                        let mut c = ui.new_child(egui::UiBuilder::new().max_rect(r));
+                        c.set_clip_rect(clip);
+                        add(self, &mut c);
+                        // nothing in the preview can be clicked or dragged
+                        let _ = ui.interact(r, egui::Id::new("overlay-preview-block"), Sense::click_and_drag());
+                    });
+            }
+            None => {
+                egui::CentralPanel::default().frame(egui::Frame::none()).show(ctx, |ui| add(self, ui));
+            }
+        }
+    }
+
     pub(super) fn overlay_viewport(&mut self, ctx: &egui::Context) {
-        let want = self.overlay_size();
+        let want = self.overlay_window_size();
         if self.ov_geom.is_none() {
             let key = self.overlay_layout_key();
             // Older settings kept one spot for every layout.
@@ -666,6 +690,17 @@ impl App {
             // so egui never fights the window being dragged.
             .with_position(pos)
             .with_inner_size(size);
+        // Medium / Large: everything the overlay draws is scaled up as one
+        // picture (layout, hit-testing and pointer positions all follow), so
+        // every theme keeps its exact proportions. The scale is only set while
+        // the overlay window draws, so the main window never sees it.
+        let scale = self.ov_scale();
+        let layers = [egui::LayerId::background(), egui::LayerId::new(egui::Order::Foreground, egui::Id::new("toasts"))];
+        if scale != 1.0 {
+            for l in layers {
+                ctx.set_transform_layer(l, egui::emath::TSTransform::from_scaling(scale));
+            }
+        }
         ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("shiny-overlay"), builder, |ctx, _class| {
             if ctx.input(|i| i.viewport().close_requested()) {
                 self.overlay_on = false;
@@ -680,6 +715,11 @@ impl App {
             }
             self.clip_overlay(ctx);
         });
+        if scale != 1.0 {
+            for l in layers {
+                ctx.set_transform_layer(l, egui::emath::TSTransform::IDENTITY);
+            }
+        }
     }
 
     /// The window shape a notice or pop-up card under the overlay needs:
@@ -705,7 +745,8 @@ impl App {
     /// corners come out black).
     fn clip_overlay(&mut self, ctx: &egui::Context) {
         let Some(hwnd) = self.overlay_keeper else { return };
-        let ppp = ctx.pixels_per_point();
+        // shapes are in the overlay's own (unscaled) units
+        let ppp = ctx.pixels_per_point() * self.ov_scale();
         let px = |v: f32| (v * ppp).round() as i32;
         // One pixel proud of the drawn edge, so the outline is never shaved.
         let key: Vec<[i32; 5]> = self
@@ -741,6 +782,7 @@ impl App {
                 style: m.style,
                 theme: m.theme,
                 size: m.size,
+                scale: m.scale,
                 click_through: m.click_through,
                 status_dot: m.status_dot,
                 sprites: m.sprites,
@@ -772,17 +814,17 @@ impl App {
             FULL_SIZE[0]
         };
         let st = self.ov_stats();
-        egui::CentralPanel::default().frame(egui::Frame::none()).show(ctx, |ui| {
+        self.ov_panel(ctx, |this, ui| {
             let win = ui.max_rect();
             let full_w = Rect::from_min_size(win.min, egui::vec2(width, win.height().max(60.0))).shrink(1.0);
             let p = ui.painter().clone();
-            let t = self.t_ms();
+            let t = this.t_ms();
             let blink = (t / 350) % 2 == 0;
-            let target_flash = self.target_flash.is_some_and(|f| f.elapsed() < Duration::from_millis(1600));
+            let target_flash = this.target_flash.is_some_and(|f| f.elapsed() < Duration::from_millis(1600));
 
             let bg_slot = p.add(egui::Shape::Noop);
             let header = Rect::from_min_size(full_w.min, egui::vec2(full_w.width(), 32.0));
-            self.ov_header(ui, ctx, &p, header, &m);
+            this.ov_header(ui, ctx, &p, header, &m);
             let frame_slot = p.add(egui::Shape::Noop);
 
             let mut y = header.max.y + 10.0;
@@ -791,9 +833,9 @@ impl App {
             let cx = (x0 + x1) / 2.0;
             let mut shown_any = false;
 
-            let target = self.target_idx().map(|i| self.species[i].clone());
+            let target = this.target_idx().map(|i| this.species[i].clone());
             // Every target (main first); two or more = a multi-target hunt.
-            let all: Vec<crate::species::Species> = self.all_target_idx().into_iter().map(|i| self.species[i].clone()).collect();
+            let all: Vec<crate::species::Species> = this.all_target_idx().into_iter().map(|i| this.species[i].clone()).collect();
             let multi = all.len() > 1;
 
             // ── Target plate
@@ -805,7 +847,7 @@ impl App {
                     Some(sp) => {
                         // What sits on the right of the plate, so the name can
                         // be fitted into what's left.
-                        let watch = if !target_flash && !compact { self.target_watch() } else { None };
+                        let watch = if !target_flash && !compact { this.target_watch() } else { None };
                         let right_txt = match (&watch, target_flash) {
                             (_, true) => Some(("SPOTTED!".to_string(), 7.0)),
                             (Some(w), _) if w.dry => Some((format!("NOT SEEN IN {}", theme::thousands(w.since.unwrap_or(0))), 6.5)),
@@ -871,8 +913,8 @@ impl App {
 
             // ── Sprites (the shiny alert / celebration use this space; it's
             // made for them when the sprites are hidden)
-            let alerting = self.shiny_alert.is_some();
-            let celebrating = self.celebrate.is_some();
+            let alerting = this.shiny_alert.is_some();
+            let celebrating = this.celebrate.is_some();
             let mut fx_area: Option<Rect> = None;
             if m.sprites || alerting || celebrating {
                 shown_any = true;
@@ -917,7 +959,7 @@ impl App {
                             let foot = egui::pos2(b.min.x + slot_w * (k as f32 + 0.5), b.max.y - 14.0);
                             theme::platform(&p, foot + egui::vec2(0.0, 2.0), (slot_w * 0.38).min(52.0), if compact { 6.0 } else { 8.0 });
                             if let Some(sp) = &sp {
-                                self.draw_sprite(&p, sp, sh, foot + egui::vec2(0.0, 4.0), egui::vec2(max_w, box_h - 24.0));
+                                this.draw_sprite(&p, sp, sh, foot + egui::vec2(0.0, 4.0), egui::vec2(max_w, box_h - 24.0));
                             }
                         }
                     }
@@ -925,23 +967,23 @@ impl App {
                 fx_area = Some(area);
                 y += box_h + 10.0;
             }
-            if let (Some(area), Some(plate_idx)) = (fx_area, self.shiny_alert) {
-                self.ov_shiny_banner(ui, &p, area, plate_idx, blink);
+            if let (Some(area), Some(plate_idx)) = (fx_area, this.shiny_alert) {
+                this.ov_shiny_banner(ui, &p, area, plate_idx, blink);
             }
             if let Some(area) = fx_area {
-                self.ov_celebrate(ctx, &p, area, false);
+                this.ov_celebrate(ctx, &p, area, false);
             }
 
             // ── Counter (+ today's time)
             if m.counter {
                 shown_any = true;
                 let big = if compact { 20.0 } else { 24.0 };
-                outlined_text(&p, egui::pos2(cx, y + big * 0.58), Align2::CENTER_CENTER, &theme::thousands(self.cfg.count), big, Color32::WHITE);
+                outlined_text(&p, egui::pos2(cx, y + big * 0.58), Align2::CENTER_CENTER, &theme::thousands(this.cfg.count), big, Color32::WHITE);
                 y += if compact { 27.0 } else { 32.0 };
-                let (label, label_color) = self.counter_label();
+                let (label, label_color) = this.counter_label();
                 outlined_text(&p, egui::pos2(cx, y + 4.0), Align2::CENTER_CENTER, label, 8.0, label_color);
-                if self.cfg.show_session_timer {
-                    self.ov_timer(ui, &p, egui::pos2(x1, y + 4.0));
+                if this.cfg.show_session_timer {
+                    this.ov_timer(ui, &p, egui::pos2(x1, y + 4.0));
                 }
                 y += 20.0;
             }
@@ -949,7 +991,7 @@ impl App {
             // ── Odds bar + method line
             if m.odds_bar {
                 shown_any = true;
-                let o = self.ov_odds();
+                let o = this.ov_odds();
                 outlined_text(&p, egui::pos2(x0, y + 5.0), Align2::LEFT_CENTER, &o.left, 7.0, o.color);
                 body_text(&p, egui::pos2(x1, y + 5.0), Align2::RIGHT_CENTER, &o.right, 11.0, MUTED());
                 let top = y;
@@ -962,9 +1004,9 @@ impl App {
             }
             if m.method_line {
                 shown_any = true;
-                let mut caption = self.cfg.odds_caption();
-                if let Some(one_in) = self.cfg.odds_one_in() {
-                    if self.cfg.pokemon_per_battle().map_or(true, |n| n > 1.0) {
+                let mut caption = this.cfg.odds_caption();
+                if let Some(one_in) = this.cfg.odds_one_in() {
+                    if this.cfg.pokemon_per_battle().map_or(true, |n| n > 1.0) {
                         caption.push_str(&format!(" · 1/{} each", fmt_one_in(one_in)));
                     }
                 }
@@ -978,32 +1020,32 @@ impl App {
             // ── Luck · next milestone
             let mut cells: Vec<(&str, String, Color32, String)> = Vec::new();
             if m.luck {
-                match self.ov_luck() {
+                match this.ov_luck() {
                     Some((pct, col, tip)) => cells.push(("LUCK", format!("{pct:.0}% would have it"), col, tip)),
                     None => cells.push(("LUCK", "after 1st battle".to_string(), MUTED(), "Needs the odds first (start a battle).".to_string())),
                 }
             }
             if m.milestone {
-                let (what, when, tip) = self.ov_next_milestone();
+                let (what, when, tip) = this.ov_next_milestone();
                 cells.push(("NEXT MILESTONE", format!("{what} {when}"), Color32::WHITE, tip));
             }
             if !cells.is_empty() {
                 shown_any = true;
-                y = self.ov_cells(ui, &p, x0, x1, y, 32.0, cells, "luck");
+                y = this.ov_cells(ui, &p, x0, x1, y, 32.0, cells, "luck");
             }
 
             // ── Session strip
             if m.session {
                 shown_any = true;
                 let now = now_unix();
-                let (enc, secs) = self.cfg.run_stats.current_session(now).map_or((0, 0), |s| (s.encounters, s.secs));
+                let (enc, secs) = this.cfg.run_stats.current_session(now).map_or((0, 0), |s| (s.encounters, s.secs));
                 let rate = if secs >= 60 { format!("{}/h", theme::thousands(enc * 3600 / secs)) } else { "—".to_string() };
                 let cells = vec![
                     ("SESSION", theme::thousands(enc), Color32::WHITE, "Encounters this session (a session ends after a long break)".to_string()),
                     ("TIME", if secs > 0 { crate::stats::fmt_duration(secs) } else { "—".to_string() }, Color32::WHITE, "Hunting time this session".to_string()),
                     ("PACE", rate, Color32::WHITE, "Encounters per hour this session".to_string()),
                 ];
-                y = self.ov_cells(ui, &p, x0, x1, y, 32.0, cells, "session");
+                y = this.ov_cells(ui, &p, x0, x1, y, 32.0, cells, "session");
             }
 
             // ── Speed sparkline
@@ -1012,9 +1054,9 @@ impl App {
                 let r = Rect::from_min_max(egui::pos2(x0, y), egui::pos2(x1, y + 40.0));
                 cell(&p, r);
                 tiny(&p, egui::pos2(r.min.x + 8.0, r.min.y + 9.0), Align2::LEFT_CENTER, "PACE · LAST 20 MIN", MUTED());
-                body_text(&p, egui::pos2(r.max.x - 8.0, r.min.y + 9.0), Align2::RIGHT_CENTER, format!("{}/h", theme::thousands(self.ov_pace_per_hour())), 10.5, Color32::WHITE);
+                body_text(&p, egui::pos2(r.max.x - 8.0, r.min.y + 9.0), Align2::RIGHT_CENTER, format!("{}/h", theme::thousands(this.ov_pace_per_hour())), 10.5, Color32::WHITE);
                 let g = Rect::from_min_max(egui::pos2(r.min.x + 8.0, r.min.y + 17.0), egui::pos2(r.max.x - 8.0, r.max.y - 6.0));
-                self.sparkline(&p, g, &self.ov_pace(20));
+                this.sparkline(&p, g, &this.ov_pace(20));
                 ui.interact(r, ui.id().with("pace"), Sense::hover())
                     .on_hover_text("Encounters each minute for the last 20 minutes (gold is this minute). The number is your pace over the last 10 minutes.");
                 y = r.max.y + GAP;
@@ -1023,9 +1065,9 @@ impl App {
             // ── Last encounter
             if m.last_seen {
                 shown_any = true;
-                let names: Vec<&str> = self.last_battle.iter().filter_map(|&i| self.species.get(i)).map(|s| s.name).collect();
+                let names: Vec<&str> = this.last_battle.iter().filter_map(|&i| this.species.get(i)).map(|s| s.name).collect();
                 let text = if names.is_empty() { "—".to_string() } else { names.join(" · ") };
-                let ago = self.last_enc_at.map(|t| {
+                let ago = this.last_enc_at.map(|t| {
                     let s = t.elapsed().as_secs();
                     if s < 60 { format!("{s}s ago") } else if s < 3600 { format!("{}m ago", s / 60) } else { format!("{}h ago", s / 3600) }
                 });
@@ -1037,7 +1079,7 @@ impl App {
             }
 
             // ── Chips: phases · streak · personal best
-            let chips = self.ov_chips(&m, &st);
+            let chips = this.ov_chips(&m, &st);
             if !chips.is_empty() {
                 shown_any = true;
                 let mut x = x0;
@@ -1077,7 +1119,7 @@ impl App {
             }
             if m.daily_goal {
                 shown_any = true;
-                let goal = self.cfg.daily_goal;
+                let goal = this.cfg.daily_goal;
                 let done = goal > 0 && st.today >= goal;
                 let col = if done { GOLD } else { theme::GREEN };
                 tiny(&p, egui::pos2(x0, y + 5.0), Align2::LEFT_CENTER, if done { "DAILY GOAL ✔" } else { "DAILY GOAL" }, col);
@@ -1096,11 +1138,11 @@ impl App {
             }
 
             // ── Buttons (the Caught! question / Undo show even when hidden)
-            let need_row = m.buttons || self.confirm_caught || self.undo_caught_left().is_some();
+            let need_row = m.buttons || this.confirm_caught || this.undo_caught_left().is_some();
             if need_row {
                 let h = if compact { 28.0 } else { 30.0 };
                 let row = Rect::from_min_max(egui::pos2(x0, y + 2.0), egui::pos2(x1, y + 2.0 + h));
-                self.ov_buttons(ui, ctx, &p, row);
+                this.ov_buttons(ui, ctx, &p, row);
                 y = row.max.y + 10.0;
             } else {
                 y += 2.0;
@@ -1108,14 +1150,14 @@ impl App {
 
             let full = Rect::from_min_max(full_w.min, egui::pos2(full_w.max.x, y.max(header.max.y + 24.0)));
 
-            let border = if (self.shiny_alert.is_some() || target_flash) && blink { GOLD } else { OUTLINE };
+            let border = if (this.shiny_alert.is_some() || target_flash) && blink { GOLD } else { OUTLINE };
             let body = Rect::from_min_max(egui::pos2(full.min.x, header.max.y - 1.0), full.max);
             p.set(
                 bg_slot,
                 egui::Shape::rect_filled(
                     body,
                     egui::Rounding { nw: 0.0, ne: 0.0, sw: 12.0, se: 12.0 },
-                    theme::BG().gamma_multiply(self.cfg.opacity),
+                    theme::BG().gamma_multiply(this.cfg.opacity),
                 ),
             );
             p.set(
@@ -1124,20 +1166,20 @@ impl App {
             );
 
             // Notices and pop-ups hover just under the overlay, never over it.
-            let below = !self.notices.is_empty() || self.toasts_pending();
-            self.ov_shape.clear();
-            self.ov_shape.push([full.min.x, full.min.y, full.width(), full.height(), 12.0]);
+            let below = !this.notices.is_empty() || this.toasts_pending();
+            this.ov_shape.clear();
+            this.ov_shape.push([full.min.x, full.min.y, full.width(), full.height(), 12.0]);
             if below {
                 let area = Rect::from_min_max(egui::pos2(full.min.x, full.max.y + 6.0), egui::pos2(full.max.x, full.max.y + 6.0 + BELOW_H - 8.0));
-                if !self.notices.is_empty() {
-                    self.draw_notice(ui, ctx, area, crate::config::OverlayTheme::Classic);
+                if !this.notices.is_empty() {
+                    this.draw_notice(ui, ctx, area, crate::config::OverlayTheme::Classic);
                 }
-                if !self.toasts.is_empty() {
+                if !this.toasts.is_empty() {
                     let fg = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("toasts")));
-                    self.draw_toast(ctx, &fg, area, crate::config::OverlayTheme::Classic);
+                    this.draw_toast(ctx, &fg, area, crate::config::OverlayTheme::Classic);
                 }
-                let shape = self.popup_shape(area, crate::config::OverlayTheme::Classic);
-                self.ov_shape.push(shape);
+                let shape = this.popup_shape(area, crate::config::OverlayTheme::Classic);
+                this.ov_shape.push(shape);
             }
 
             // Liquid layout: drag the right edge to change the width.
@@ -1150,15 +1192,15 @@ impl App {
                     p.line_segment([egui::pos2(x, grip.center().y - 16.0), egui::pos2(x, grip.center().y + 16.0)], Stroke::new(3.0f32, GOLD));
                 }
                 if gr.dragged() {
-                    self.cfg.liquid_width = (width + gr.drag_delta().x).clamp(LIQUID_MIN, LIQUID_MAX);
+                    this.cfg.liquid_width = (width + gr.drag_delta().x).clamp(LIQUID_MIN, LIQUID_MAX);
                 }
                 if gr.drag_stopped() {
-                    self.dirty = true;
+                    this.dirty = true;
                 }
                 gr.on_hover_text("Drag to resize the overlay");
             }
 
-            self.ov_size = Some([width, (full.max.y - win.min.y + 1.0 + if below { BELOW_H + 6.0 } else { 0.0 }).ceil()]);
+            this.ov_size = Some([width, (full.max.y - win.min.y + 1.0 + if below { BELOW_H + 6.0 } else { 0.0 }).ceil()]);
         });
     }
 
@@ -1186,12 +1228,12 @@ impl App {
     fn bar_ui(&mut self, ctx: &egui::Context) {
         let m = self.cfg.overlay.clone();
         let st = self.ov_stats();
-        egui::CentralPanel::default().frame(egui::Frame::none()).show(ctx, |ui| {
+        self.ov_panel(ctx, |this, ui| {
             let win = ui.max_rect();
             let p = ui.painter().clone();
-            let t = self.t_ms();
+            let t = this.t_ms();
             let blink = (t / 350) % 2 == 0;
-            let target_flash = self.target_flash.is_some_and(|f| f.elapsed() < Duration::from_millis(1600));
+            let target_flash = this.target_flash.is_some_and(|f| f.elapsed() < Duration::from_millis(1600));
             let top = win.min.y + 1.0;
             let left = win.min.x + 1.0;
             let mid = top + BAR_H / 2.0;
@@ -1199,16 +1241,16 @@ impl App {
             let accent_slot = p.add(egui::Shape::Noop);
 
             // Drag anywhere that isn't a button.
-            let drag_w = self.ov_size.map_or(400.0, |s| s[0]);
+            let drag_w = this.ov_size.map_or(400.0, |s| s[0]);
             let drag = ui.interact(
                 Rect::from_min_size(egui::pos2(left, top), egui::vec2(drag_w, BAR_H)),
                 ui.id().with("bar-drag"),
                 Sense::click_and_drag(),
             );
-            if drag.drag_started() && !self.cfg.pinned {
+            if drag.drag_started() && !this.cfg.pinned {
                 ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
             }
-            drag.on_hover_text(if self.cfg.pinned { "Pinned: unpin to move" } else { "Drag to move" });
+            drag.on_hover_text(if this.cfg.pinned { "Pinned: unpin to move" } else { "Drag to move" });
 
             let mut x = left + 10.0;
             let divider = |p: &egui::Painter, x: &mut f32| {
@@ -1220,13 +1262,13 @@ impl App {
             if m.sprites {
                 let foot = egui::pos2(x + 22.0, top + BAR_H - 6.0);
                 theme::platform(&p, foot, 18.0, 4.5);
-                match self.target_idx().map(|i| self.species[i].clone()) {
+                match this.target_idx().map(|i| this.species[i].clone()) {
                     Some(sp) => {
-                        self.draw_sprite(&p, &sp, true, foot + egui::vec2(0.0, 2.0), egui::vec2(44.0, 40.0));
+                        this.draw_sprite(&p, &sp, true, foot + egui::vec2(0.0, 2.0), egui::vec2(44.0, 40.0));
                     }
                     None => {
                         p.image(
-                            self.icon_tex.id(),
+                            this.icon_tex.id(),
                             Rect::from_center_size(egui::pos2(x + 22.0, mid), egui::vec2(28.0, 28.0)),
                             Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                             Color32::WHITE,
@@ -1237,28 +1279,28 @@ impl App {
             }
 
             // Name + count (or SHINY!)
-            if let Some(plate_idx) = self.shiny_alert {
+            if let Some(plate_idx) = this.shiny_alert {
                 let r1 = outlined_text(&p, egui::pos2(x, top + 17.0), Align2::LEFT_CENTER, "SHINY!", 13.0, if blink { GOLD } else { Color32::WHITE });
                 let r2 = body_text(&p, egui::pos2(x, top + 36.0), Align2::LEFT_CENTER, if plate_idx == super::GIFT_PLATE { "Shiny starter!".to_string() } else { format!("Star on plate {}", plate_idx + 1) }, 10.5, Color32::WHITE);
                 x = r1.max.x.max(r2.max.x) + 10.0;
                 let dr = Rect::from_min_size(egui::pos2(x, mid - 12.0), egui::vec2(64.0, 24.0));
                 if ui.put(dr, egui::Button::new("Dismiss").fill(theme::PLATE())).clicked() {
-                    self.shiny_alert = None;
+                    this.shiny_alert = None;
                     crate::sound::stop_song();
                 }
                 x = dr.max.x + 10.0;
             } else if m.target || m.counter {
                 let mut w: f32 = 0.0;
                 if m.target {
-                    let name = self.targets_title().map(|t| t.to_uppercase()).unwrap_or_else(|| "PICK A TARGET".to_string());
-                    let col = if target_flash && blink { GOLD } else if self.target_idx().is_some() { Color32::WHITE } else { MUTED() };
+                    let name = this.targets_title().map(|t| t.to_uppercase()).unwrap_or_else(|| "PICK A TARGET".to_string());
+                    let col = if target_flash && blink { GOLD } else if this.target_idx().is_some() { Color32::WHITE } else { MUTED() };
                     let y = if m.counter { top + 15.0 } else { mid };
                     w = w.max(outlined_text(&p, egui::pos2(x, y), Align2::LEFT_CENTER, &name, 7.5, col).width());
                 }
                 if m.counter {
                     let y = if m.target { top + 34.0 } else { mid };
-                    let r = outlined_text(&p, egui::pos2(x, y), Align2::LEFT_CENTER, &theme::thousands(self.cfg.count), 16.0, Color32::WHITE);
-                    let (label, col) = self.counter_label();
+                    let r = outlined_text(&p, egui::pos2(x, y), Align2::LEFT_CENTER, &theme::thousands(this.cfg.count), 16.0, Color32::WHITE);
+                    let (label, col) = this.counter_label();
                     if label != "ENCOUNTERS" {
                         tiny(&p, egui::pos2(r.max.x + 6.0, y + 2.0), Align2::LEFT_CENTER, label, col);
                     }
@@ -1270,7 +1312,7 @@ impl App {
             // Odds
             if m.odds_bar {
                 divider(&p, &mut x);
-                let o = self.ov_odds();
+                let o = this.ov_odds();
                 let label = o.mult.map_or("ODDS —".to_string(), |v| if v < 0.1 { format!("{v:.2}× ODDS") } else { format!("{v:.1}× ODDS") });
                 tiny(&p, egui::pos2(x, top + 17.0), Align2::LEFT_CENTER, &label, o.color);
                 let bar = Rect::from_min_size(egui::pos2(x + 1.0, top + 28.0), egui::vec2(64.0, 6.0));
@@ -1291,16 +1333,16 @@ impl App {
                 *x += w + 10.0;
             };
             if m.luck {
-                if let Some((pct, col, tip)) = self.ov_luck() {
+                if let Some((pct, col, tip)) = this.ov_luck() {
                     stat(ui, &mut x, "LUCK", format!("{pct:.0}%"), col, tip);
                 }
             }
             if m.milestone {
-                let (what, when, tip) = self.ov_next_milestone();
+                let (what, when, tip) = this.ov_next_milestone();
                 stat(ui, &mut x, "NEXT", format!("{what} {when}"), Color32::WHITE, tip);
             }
             if m.session {
-                let enc = self.cfg.run_stats.current_session(now_unix()).map_or(0, |s| s.encounters);
+                let enc = this.cfg.run_stats.current_session(now_unix()).map_or(0, |s| s.encounters);
                 stat(ui, &mut x, "SESSION", theme::thousands(enc), Color32::WHITE, "Encounters this session".to_string());
             }
             if m.streak && st.streak > 0 {
@@ -1308,49 +1350,49 @@ impl App {
             }
             if m.sparkline {
                 divider(&p, &mut x);
-                tiny(&p, egui::pos2(x, top + 14.0), Align2::LEFT_CENTER, &format!("{}/H", theme::thousands(self.ov_pace_per_hour())), MUTED());
+                tiny(&p, egui::pos2(x, top + 14.0), Align2::LEFT_CENTER, &format!("{}/H", theme::thousands(this.ov_pace_per_hour())), MUTED());
                 let g = Rect::from_min_size(egui::pos2(x, top + 21.0), egui::vec2(60.0, 18.0));
-                self.sparkline(&p, g, &self.ov_pace(15));
+                this.sparkline(&p, g, &this.ov_pace(15));
                 ui.interact(g.expand(4.0), ui.id().with("bar-pace"), Sense::hover()).on_hover_text("Encounters each minute, last 15 minutes");
                 x += 70.0;
             }
 
             // Buttons / Caught! question / Undo
-            let undo_left = if self.confirm_caught { None } else { self.undo_caught_left() };
+            let undo_left = if this.confirm_caught { None } else { this.undo_caught_left() };
             let bh = 26.0;
             let btn_at = |x: f32, w: f32| Rect::from_min_size(egui::pos2(x, mid - bh / 2.0), egui::vec2(w, bh));
-            if self.shiny_alert.is_none() {
+            if this.shiny_alert.is_none() {
                 if let Some(left_s) = undo_left {
                     divider(&p, &mut x);
                     if ui.put(btn_at(x, 70.0), egui::Button::new(RichText::new(format!("Undo ({left_s})")).strong().color(Color32::WHITE)).fill(theme::PLATE()))
                         .on_hover_text("Logged as caught. Pressed it by mistake? Put everything back")
                         .clicked()
                     {
-                        self.undo_caught_now();
+                        this.undo_caught_now();
                     }
                     x += 74.0;
                     if ui.put(btn_at(x, 34.0), egui::Button::new("OK").fill(theme::PLATE())).clicked() {
-                        self.undo_caught = None;
+                        this.undo_caught = None;
                     }
                     x += 44.0;
                     ctx.request_repaint_after(Duration::from_millis(250));
-                } else if self.confirm_caught {
+                } else if this.confirm_caught {
                     divider(&p, &mut x);
-                    let all = self.all_target_idx();
+                    let all = this.all_target_idx();
                     if all.len() > 3 {
                         if ui.put(btn_at(x, 76.0), egui::Button::new(RichText::new("Choose…").strong().color(Color32::WHITE)).fill(theme::GREEN.gamma_multiply(0.7)))
                             .on_hover_text("Pick which of your targets it was")
                             .clicked()
                         {
-                            self.setup.caught_pick = true;
-                            self.show_setup = true;
+                            this.setup.caught_pick = true;
+                            this.show_setup = true;
                         }
                         x += 80.0;
                     } else {
                         let targets: Vec<(Option<String>, String)> = if all.len() <= 1 {
-                            vec![(self.cfg.target.clone(), "Target".to_string())]
+                            vec![(this.cfg.target.clone(), "Target".to_string())]
                         } else {
-                            all.iter().map(|&i| (Some(self.species[i].slug.clone()), self.species[i].name.to_string())).collect()
+                            all.iter().map(|&i| (Some(this.species[i].slug.clone()), this.species[i].name.to_string())).collect()
                         };
                         for (slug, name) in targets {
                             let short = if name.chars().count() > 8 { format!("{}…", name.chars().take(7).collect::<String>()) } else { name.clone() };
@@ -1358,8 +1400,8 @@ impl App {
                                 .on_hover_text(format!("Shiny {name}! Logs this hunt and starts fresh"))
                                 .clicked()
                             {
-                                self.log_hunt_as(slug);
-                                self.confirm_caught = false;
+                                this.log_hunt_as(slug);
+                                this.confirm_caught = false;
                             }
                             x += 70.0;
                         }
@@ -1368,20 +1410,20 @@ impl App {
                         .on_hover_text("A shiny of a different Pokémon: pick which, and this hunt keeps going")
                         .clicked()
                     {
-                        self.confirm_caught = false;
-                        self.setup.phase_pick = true;
-                        self.setup.search.clear();
-                        self.show_setup = true;
+                        this.confirm_caught = false;
+                        this.setup.phase_pick = true;
+                        this.setup.search.clear();
+                        this.show_setup = true;
                     }
                     x += 58.0;
                     if ui.put(btn_at(x, 28.0), egui::Button::new("✖").fill(theme::PLATE())).on_hover_text("Not a shiny after all").clicked() {
-                        self.confirm_caught = false;
+                        this.confirm_caught = false;
                     }
                     x += 38.0;
                 } else if m.buttons {
                     divider(&p, &mut x);
                     for (i, w) in [(0usize, 30.0f32), (1, 30.0), (2, 30.0), (3, 64.0)] {
-                        self.count_button(ui, btn_at(x, w), i);
+                        this.count_button(ui, btn_at(x, w), i);
                         x += w + 5.0;
                     }
                     x += 5.0;
@@ -1390,7 +1432,7 @@ impl App {
 
             // Status light, settings, hide, close.
             if m.status_dot {
-                let (dot, status_text) = self.status_line();
+                let (dot, status_text) = this.status_line();
                 let c = egui::pos2(x + 2.0, mid);
                 p.circle_filled(c, 3.5, dot);
                 p.circle_stroke(c, 3.5, Stroke::new(1.0f32, OUTLINE));
@@ -1403,28 +1445,28 @@ impl App {
                     .on_hover_text(tip)
                     .clicked()
             };
-            if small_btn(ui, x, if self.cfg.pinned { "🔒" } else { "🔓" }, self.cfg.pinned, "Pin in place") {
-                self.cfg.pinned = !self.cfg.pinned;
-                self.dirty = true;
+            if small_btn(ui, x, if this.cfg.pinned { "🔒" } else { "🔓" }, this.cfg.pinned, "Pin in place") {
+                this.cfg.pinned = !this.cfg.pinned;
+                this.dirty = true;
             }
             x += 21.0;
-            if small_btn(ui, x, "⚙", self.show_setup, "Setup: target, screen boxes, odds, overlay sections") {
-                self.show_setup = !self.show_setup;
+            if small_btn(ui, x, "⚙", this.show_setup, "Setup: target, screen boxes, odds, overlay sections") {
+                this.show_setup = !this.show_setup;
             }
             x += 21.0;
-            let hide_tip = format!("Hide to badge{}", self.cfg.keybinds.hint(HotAction::ToggleHide));
+            let hide_tip = format!("Hide to badge{}", this.cfg.keybinds.hint(HotAction::ToggleHide));
             if small_btn(ui, x, "—", false, &hide_tip) {
-                self.cfg.mini = true;
-                self.dirty = true;
+                this.cfg.mini = true;
+                this.dirty = true;
             }
             x += 21.0;
-            self.close_button(ui, ctx, &p, Rect::from_min_size(egui::pos2(x, mid - 11.0), egui::vec2(20.0, 22.0)));
+            this.close_button(ui, ctx, &p, Rect::from_min_size(egui::pos2(x, mid - 11.0), egui::vec2(20.0, 22.0)));
             x += 26.0;
 
             let width = (x - win.min.x).ceil().max(160.0);
             let bar = Rect::from_min_size(egui::pos2(left, top), egui::vec2(width - 2.0, BAR_H));
-            let border = if (self.shiny_alert.is_some() || target_flash) && blink { GOLD } else { OUTLINE };
-            p.set(bg_slot, egui::Shape::rect_filled(bar, 12.0, theme::BG().gamma_multiply(self.cfg.opacity)));
+            let border = if (this.shiny_alert.is_some() || target_flash) && blink { GOLD } else { OUTLINE };
+            p.set(bg_slot, egui::Shape::rect_filled(bar, 12.0, theme::BG().gamma_multiply(this.cfg.opacity)));
             // Thin red accent along the top, like the full overlay's header.
             p.set(
                 accent_slot,
@@ -1435,34 +1477,34 @@ impl App {
                 ),
             );
             p.rect_stroke(bar, 12.0, Stroke::new(if border == GOLD { 2.5f32 } else { 1.5f32 }, border));
-            if self.click_through_active() {
+            if this.click_through_active() {
                 tiny(&p, egui::pos2(bar.max.x - 12.0, bar.max.y - 6.0), Align2::RIGHT_CENTER, "CLICK-THROUGH", GOLD);
             }
-            if self.celebrate.is_some() {
-                self.ov_celebrate(ctx, &p, bar.shrink(2.0), true);
+            if this.celebrate.is_some() {
+                this.ov_celebrate(ctx, &p, bar.shrink(2.0), true);
             }
 
             // Notices and pop-ups get a card under the bar while they show.
             let mut h = BAR_H + 2.0;
-            self.ov_shape.clear();
-            self.ov_shape.push([bar.min.x, bar.min.y, bar.width(), bar.height(), 12.0]);
-            if !self.notices.is_empty() || self.toasts_pending() {
+            this.ov_shape.clear();
+            this.ov_shape.push([bar.min.x, bar.min.y, bar.width(), bar.height(), 12.0]);
+            if !this.notices.is_empty() || this.toasts_pending() {
                 // A compact card pinned under the bar's right end.
                 let right = bar.max.x.max(left + BAR_POPUP_W);
                 let area = Rect::from_min_max(egui::pos2(right - BAR_POPUP_W, bar.max.y + 6.0), egui::pos2(right, bar.max.y + 100.0));
-                let shape = self.popup_shape(area, crate::config::OverlayTheme::Classic);
-                self.ov_shape.push(shape);
-                if !self.notices.is_empty() {
-                    self.draw_notice(ui, ctx, area, crate::config::OverlayTheme::Classic);
+                let shape = this.popup_shape(area, crate::config::OverlayTheme::Classic);
+                this.ov_shape.push(shape);
+                if !this.notices.is_empty() {
+                    this.draw_notice(ui, ctx, area, crate::config::OverlayTheme::Classic);
                 }
-                if !self.toasts.is_empty() {
+                if !this.toasts.is_empty() {
                     let fg = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("toasts")));
-                    self.draw_toast(ctx, &fg, area, crate::config::OverlayTheme::Classic);
+                    this.draw_toast(ctx, &fg, area, crate::config::OverlayTheme::Classic);
                 }
                 h = BAR_H + 104.0;
             }
             let w = if h > BAR_H + 2.0 { width.max(BAR_POPUP_W + 2.0) } else { width };
-            self.ov_size = Some([w, h]);
+            this.ov_size = Some([w, h]);
         });
     }
 }

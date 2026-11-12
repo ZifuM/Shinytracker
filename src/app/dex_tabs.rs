@@ -381,6 +381,11 @@ impl App {
                 ui.label(small("None."));
                 return;
             }
+            // Wide cards show what each move does in its own column (otherwise
+            // it's only on hover).
+            let fixed = if kind == MoveKind::Tutor { 720.0 } else { 520.0 };
+            let effect_w = (ui.available_width() - fixed).min(560.0);
+            let show_effect = effect_w >= 220.0;
             egui::ScrollArea::horizontal().id_salt("pdx-moves").show(ui, |ui| {
                 egui::Grid::new(("pdx-moves-grid", kind as u8)).striped(true).spacing([14.0, 7.0]).min_col_width(0.0).show(ui, |ui| {
                     let mut heads: Vec<&str> = vec!["Move", "Type", "Kind", "Power", "Acc.", "PP"];
@@ -388,6 +393,9 @@ impl App {
                         MoveKind::Tutor => heads.extend(["Where", "Shards"]),
                         MoveKind::Egg => {}
                         _ => heads.insert(0, first_head),
+                    }
+                    if show_effect {
+                        heads.push("Effect");
                     }
                     for h in heads {
                         ui.label(head(h));
@@ -439,6 +447,12 @@ impl App {
                                 }
                             });
                         }
+                        if show_effect {
+                            ui.scope(|ui| {
+                                ui.set_max_width(effect_w);
+                                ui.add(egui::Label::new(small(&mv.d)).wrap());
+                            });
+                        }
                         ui.end_row();
                     }
                 });
@@ -452,7 +466,9 @@ impl App {
                 foot.push(' ');
                 foot.push_str(&text("modernMore"));
             }
-            foot.push_str(" Hover a move to see what it does.");
+            if !show_effect {
+                foot.push_str(" Hover a move to see what it does.");
+            }
             ui.add(egui::Label::new(small(foot.trim())).wrap());
         });
     }

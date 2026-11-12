@@ -95,6 +95,146 @@ pub fn primary_shape(rect: Rect, hovered: bool) -> egui::Shape {
     theme::button_shape(rect, rect.height() / 2.0, hovered)
 }
 
+/// `primary_shape` part-way into its hover (`t` 0..1).
+pub fn primary_shape_t(rect: Rect, t: f32) -> egui::Shape {
+    theme::button_shape_t(rect, rect.height() / 2.0, t)
+}
+
+// ───────────────────────── motion ─────────────────────────
+// Cirrus motion: quick (140ms) for hovers and presses, base (220ms) for
+// things that move, a little longer for a page coming in; all on a soft
+// ease-out (fast start, gentle landing). Appearance → Animations turns it
+// all off: every helper then jumps straight to where it's going.
+
+/// Hovers and presses.
+pub const QUICK: f32 = 0.14;
+/// Things that move or grow.
+pub const BASE: f32 = 0.24;
+/// A page or step coming in.
+pub const ENTER: f32 = 0.32;
+
+pub fn motion() -> bool {
+    theme::motion()
+}
+
+/// Soft ease-out (close to Cirrus's cubic-bezier(0.22, 1, 0.36, 1)).
+pub fn ease(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    1.0 - (1.0 - t).powi(4)
+}
+
+/// 0..1 easing towards `on` (hover fades, switches).
+pub fn anim(ctx: &egui::Context, id: egui::Id, on: bool, secs: f32) -> f32 {
+    if !motion() {
+        return if on { 1.0 } else { 0.0 };
+    }
+    let t = ctx.animate_bool_with_time(id, on, secs);
+    if on { ease(t) } else { 1.0 - ease(1.0 - t) }
+}
+
+#[derive(Clone, Copy)]
+struct Glide {
+    from: [f32; 4],
+    to: [f32; 4],
+    start: f64,
+}
+
+fn glide_at(g: &Glide, now: f64, secs: f32) -> ([f32; 4], bool) {
+    let t = ((now - g.start) as f32 / secs.max(0.001)).clamp(0.0, 1.0);
+    let e = ease(t);
+    let mut v = [0.0; 4];
+    for i in 0..4 {
+        v[i] = g.from[i] + (g.to[i] - g.from[i]) * e;
+    }
+    (v, t >= 1.0)
+}
+
+/// Up to four numbers gliding to `target` whenever it changes (a sliding
+/// tab pill, a bar growing). `from` = where it starts the first time it's
+/// seen (None: already there).
+pub fn glide4(ctx: &egui::Context, id: egui::Id, target: [f32; 4], from: Option<[f32; 4]>, secs: f32) -> [f32; 4] {
+    if !motion() {
+        return target;
+    }
+    let now = ctx.input(|i| i.time);
+    let g = ctx.data_mut(|d| {
+        let g = d.get_temp_mut_or_insert_with(id, || Glide { from: from.unwrap_or(target), to: target, start: now });
+        if g.to.iter().zip(target.iter()).any(|(a, b)| (a - b).abs() > 0.05) {
+            let (cur, _) = glide_at(g, now, secs);
+            *g = Glide { from: cur, to: target, start: now };
+        }
+        *g
+    });
+    let (v, done) = glide_at(&g, now, secs);
+    if !done {
+        ctx.request_repaint();
+    }
+    v
+}
+
+pub fn glide(ctx: &egui::Context, id: egui::Id, target: f32, from: Option<f32>, secs: f32) -> f32 {
+    glide4(ctx, id, [target, 0.0, 0.0, 0.0], from.map(|f| [f, 0.0, 0.0, 0.0]), secs)[0]
+}
+
+/// A rect gliding to `target`. The glide runs relative to `anchor` (the
+/// track's corner), so scrolling or moving the window carries the pill
+/// along instead of making it chase its track.
+pub fn glide_rect(ctx: &egui::Context, id: egui::Id, target: Rect, anchor: egui::Pos2, secs: f32) -> Rect {
+    let t = target.translate(-anchor.to_vec2());
+    let v = glide4(ctx, id, [t.min.x, t.min.y, t.max.x, t.max.y], None, secs);
+    Rect::from_min_max(egui::pos2(v[0], v[1]), egui::pos2(v[2], v[3])).translate(anchor.to_vec2())
+}
+
+/// How far (0..1, eased) something keyed by `key` has come in since the key
+/// last changed, over `secs`. Used for pages and tour steps fading in.
+pub fn entering(ctx: &egui::Context, id: egui::Id, key: u64, secs: f32) -> f32 {
+    if !motion() {
+        return 1.0;
+    }
+    let now = ctx.input(|i| i.time);
+    let (k, at) = ctx.data_mut(|d| {
+        let e = d.get_temp_mut_or_insert_with(id, || (key, now - secs as f64));
+        if e.0 != key {
+            *e = (key, now);
+        }
+        *e
+    });
+    let _ = k;
+    let t = ((now - at) as f32 / secs).clamp(0.0, 1.0);
+    if t < 1.0 {
+        ctx.request_repaint();
+    }
+    ease(t)
+}
+
+/// Fade a ui in and lift it into place, `t` 0..1 from `entering`.
+pub fn enter_ui(ui: &mut Ui, t: f32, rise: f32) {
+    if t >= 1.0 {
+        return;
+    }
+    ui.set_opacity(t.max(0.0));
+    ui.add_space(rise * (1.0 - t));
+}
+
+/// A number that changes each time a page is opened (so bars on it can
+/// grow in again). Bumped by the settings window when the page changes.
+pub fn page_visit(ctx: &egui::Context) -> u64 {
+    ctx.data(|d| d.get_temp::<u64>(egui::Id::new("page-visit"))).unwrap_or(0)
+}
+
+pub fn bump_page_visit(ctx: &egui::Context) {
+    ctx.data_mut(|d| {
+        let v = d.get_temp_mut_or_default::<u64>(egui::Id::new("page-visit"));
+        *v = v.wrapping_add(1);
+    });
+}
+
+/// A bar's filled fraction growing in from 0 each time its page opens.
+pub fn grow(ctx: &egui::Context, id: egui::Id, frac: f32) -> f32 {
+    let id = id.with(page_visit(ctx));
+    glide(ctx, id, frac, Some(0.0), 0.7)
+}
+
 /// Cirrus Sunken: the hover wash on Cloud surfaces.
 pub fn sunken() -> Color32 {
     if theme::pal().light {
@@ -193,7 +333,13 @@ pub fn stat_tile(ui: &mut Ui, width: f32, icon: &str, color: Color32, label: &st
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, h), Sense::click());
     let p = ui.painter_at(rect.expand(12.0));
     let hovered = resp.hovered();
+    // Lifts a little on hover.
+    let lift = anim(ui.ctx(), resp.id.with("lift"), hovered, QUICK);
+    let rect = rect.translate(egui::vec2(0.0, -2.0 * lift));
     p.add(card_shadow().as_shape(rect, 14.0));
+    if lift > 0.0 {
+        p.add(shadow_tier(2).as_shape(rect, 14.0));
+    }
     p.rect_filled(rect, 14.0, CARD());
     p.rect_stroke(rect, 14.0, Stroke::new(1.0f32, if hovered { theme::blend(LINE(), color, 0.6) } else { LINE() }));
     let chip = Rect::from_min_size(rect.min + egui::vec2(14.0, 14.0), egui::vec2(30.0, 30.0));
@@ -213,7 +359,9 @@ pub fn stat_tile(ui: &mut Ui, width: f32, icon: &str, color: Color32, label: &st
 
 /// A thin progress bar in the accent (gradient if the user has one).
 pub fn bar(ui: &mut Ui, width: f32, height: f32, frac: f32) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), Sense::hover());
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, height), Sense::hover());
+    // Grows in from empty each time its page opens.
+    let frac = grow(ui.ctx(), resp.id, frac);
     paint_bar(ui.painter(), rect, frac);
 }
 
@@ -1020,7 +1168,7 @@ pub fn keycap(ui: &mut Ui, text: &str) {
 /// Sidebar navigation item. Returns true when clicked.
 pub fn nav_item(ui: &mut Ui, icon: &str, label: &str, selected: bool) -> bool {
     if modern() {
-        return modern::nav_item(ui, icon, label, selected, theme::BUTTON(), false).clicked();
+        return modern::nav_item(ui, icon, label, selected, theme::BUTTON(), false, true).clicked();
     }
     if clean() {
         return clean::nav_item(ui, icon, label, selected);
@@ -1140,13 +1288,19 @@ pub fn expander(ui: &mut Ui, label: &str, detail: &str, open: bool) -> Response 
 /// Add a button filled with the button colour (or gradient). Pass the
 /// button's own rounding.
 pub fn accent_button(ui: &mut Ui, btn: egui::Button<'_>, rounding: f32) -> Response {
+    accent_button_w(ui, btn, rounding, 0.0)
+}
+
+/// `accent_button` at least `min_w` wide.
+pub fn accent_button_w(ui: &mut Ui, btn: egui::Button<'_>, rounding: f32, min_w: f32) -> Response {
     if modern() {
-        return modern::accent_button(ui, btn);
+        return modern::accent_button(ui, btn, min_w);
     }
     if clean() {
-        return clean::accent_button(ui, btn);
+        return clean::accent_button(ui, btn, min_w);
     }
     let slot = ui.painter().add(egui::Shape::Noop);
+    let btn = if min_w > 0.0 { btn.min_size(egui::vec2(min_w, 0.0)) } else { btn };
     let resp = ui.add(btn.fill(Color32::TRANSPARENT).rounding(rounding));
     let shape = theme::button_shape(resp.rect, rounding, resp.hovered());
     ui.painter().set(slot, shape);
@@ -1399,12 +1553,12 @@ mod clean {
 
     /// Primary button: a flat pill in the button colour, the same size and
     /// shape as the outlined buttons. (The gradient stays on the header bar.)
-    pub fn accent_button(ui: &mut Ui, btn: egui::Button<'_>) -> Response {
+    pub fn accent_button(ui: &mut Ui, btn: egui::Button<'_>, min_w: f32) -> Response {
         let slot = ui.painter().add(egui::Shape::Noop);
         let resp = ui.add(
             btn.fill(Color32::TRANSPARENT)
                 .stroke(Stroke::NONE)
-                .min_size(egui::vec2(0.0, CONTROL_H)),
+                .min_size(egui::vec2(min_w, CONTROL_H)),
         );
         let base = theme::BUTTON();
         let fill = if resp.is_pointer_button_down_on() {
@@ -1464,41 +1618,51 @@ pub(crate) mod modern {
         r
     }
 
-    /// Cirrus tabs: a Cloud pill track with a hairline; the open tab is an
-    /// pill in the button colour, lifted by the tier-2 shadow, the rest wash on hover.
+    /// Cirrus tabs: a Cloud pill track with a hairline; the open tab is a
+    /// pill in the button colour, lifted by the tier-2 shadow, that slides
+    /// to the tab you pick; the others wash softly on hover.
     pub fn tab_bar<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, tabs: &[(T, &str)]) -> bool {
         let mut changed = false;
         let h = 44.0;
         let (bar, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), h), Sense::hover());
-        let p = ui.painter();
+        let p = ui.painter().clone();
         p.add(shadow_tier(1).as_shape(bar, h / 2.0));
         p.rect_filled(bar, h / 2.0, CARD());
         p.rect_stroke(bar, h / 2.0, Stroke::new(1.0f32, LINE()));
         let n = tabs.len().max(1) as f32;
         let (pad, gap) = (5.0, 4.0);
         let cw = (bar.width() - 2.0 * pad - gap * (n - 1.0)) / n;
+        let rect_of = |i: usize| Rect::from_min_size(egui::pos2(bar.min.x + pad + (cw + gap) * i as f32, bar.min.y + pad), egui::vec2(cw, h - 2.0 * pad));
+        let bar_id = ui.id().with(("tab-bar", tabs.first().map(|t| t.1).unwrap_or("")));
+        let sel = tabs.iter().position(|(v, _)| *v == *value);
+        let hover_slot = p.add(egui::Shape::Noop);
+        let pill = sel.map(|i| glide_rect(ui.ctx(), bar_id.with("pill"), rect_of(i), bar.min, BASE));
+        if let Some(pr) = pill {
+            p.add(shadow_tier(2).as_shape(pr, pr.height() / 2.0));
+            p.add(primary_shape(pr, false));
+        }
+        let mut hovers = vec![];
         for (i, (v, label)) in tabs.iter().enumerate() {
-            let r = Rect::from_min_size(egui::pos2(bar.min.x + pad + (cw + gap) * i as f32, bar.min.y + pad), egui::vec2(cw, h - 2.0 * pad));
-            let resp = ui.interact(r, ui.id().with(("tab-bar", i, *label)), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
-            let sel = *value == *v;
-            let hovered = resp.hovered();
-            let p = ui.painter();
-            let rad = r.height() / 2.0;
-            if sel {
-                p.add(shadow_tier(2).as_shape(r, rad));
-                p.add(primary_shape(r, false));
-            } else if hovered {
-                p.rect_filled(r, rad, sunken());
+            let r = rect_of(i);
+            let resp = ui.interact(r, bar_id.with(i), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+            let is_sel = *value == *v;
+            let ht = anim(ui.ctx(), bar_id.with(("hover", i)), resp.hovered() && !is_sel, QUICK);
+            if ht > 0.0 {
+                hovers.push(egui::Shape::rect_filled(r, r.height() / 2.0, sunken().gamma_multiply(ht)));
             }
-            let ink = if sel { on_primary() } else if hovered { TEXT() } else { MUTED() };
+            // The label turns to the pill's ink as the pill slides under it.
+            let cover = pill.map_or(0.0, |pr| (pr.intersect(r).width().max(0.0) / r.width()).clamp(0.0, 1.0));
+            let base = theme::blend(MUTED(), TEXT(), ht);
+            let ink = theme::blend(base, on_primary(), cover);
             let font = crate::fonts::sans_bold_font(13.5);
-            let label = clip_label(p, label, &font, r.width() - 16.0);
+            let label = clip_label(&p, label, &font, r.width() - 16.0);
             p.text(r.center(), Align2::CENTER_CENTER, label, font, ink);
-            if resp.clicked() && !sel {
+            if resp.clicked() && !is_sel {
                 *value = *v;
                 changed = true;
             }
         }
+        p.set(hover_slot, egui::Shape::Vec(hovers));
         changed
     }
 
@@ -1520,24 +1684,27 @@ pub(crate) mod modern {
     }
 
     /// Cirrus segmented control: a Sunken pill track; the chosen option is
-    /// a pill in the button colour.
+    /// a pill in the button colour that slides to the one you pick.
     pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T, &str)]) -> bool {
         let mut changed = false;
+        let seg_id = ui.id().with(("segmented", options.first().map(|o| o.1).unwrap_or("")));
         egui::Frame::none()
             .fill(sunken())
             .stroke(Stroke::new(1.0f32, LINE()))
             .rounding(CONTROL_H)
             .inner_margin(egui::Margin::same(3.0))
             .show(ui, |ui| {
+                let anchor = ui.cursor().min;
+                let pill_slot = ui.painter().add(egui::Shape::Noop);
+                let mut sel_rect = None;
+                let mut rects = vec![];
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
                     ui.spacing_mut().button_padding = egui::vec2(14.0, 2.0);
-                    for (v, label) in options {
+                    for (k, (v, label)) in options.iter().enumerate() {
                         let selected = *value == *v;
                         let slot = ui.painter().add(egui::Shape::Noop);
-                        let text = RichText::new(label.trim())
-                            .font(crate::fonts::sans_bold_font(13.0))
-                            .color(if selected { on_primary() } else { MUTED() });
+                        let text = RichText::new(label.trim()).font(crate::fonts::sans_bold_font(13.0)).color(Color32::TRANSPARENT);
                         let resp = ui.add(
                             egui::Button::new(text)
                                 .fill(Color32::TRANSPARENT)
@@ -1545,21 +1712,31 @@ pub(crate) mod modern {
                                 .rounding(CONTROL_H)
                                 .min_size(egui::vec2(0.0, CONTROL_H - 4.0)),
                         );
-                        let rad = resp.rect.height() / 2.0;
-                        let shape = if selected {
-                            egui::Shape::Vec(vec![shadow_tier(2).as_shape(resp.rect, rad).into(), primary_shape(resp.rect, false)])
-                        } else if resp.hovered() {
-                            egui::Shape::rect_filled(resp.rect, rad, theme::blend(sunken(), TEXT(), 0.06))
-                        } else {
-                            egui::Shape::Noop
-                        };
-                        ui.painter().set(slot, shape);
+                        let ht = anim(ui.ctx(), seg_id.with(("hover", k)), resp.hovered() && !selected, QUICK);
+                        if ht > 0.0 {
+                            ui.painter().set(slot, egui::Shape::rect_filled(resp.rect, resp.rect.height() / 2.0, theme::blend(sunken(), TEXT(), 0.06).gamma_multiply(ht)));
+                        }
+                        if selected {
+                            sel_rect = Some(resp.rect);
+                        }
+                        rects.push((resp.rect, label.trim().to_string(), ht));
                         if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() && !selected {
                             *value = *v;
                             changed = true;
                         }
                     }
                 });
+                let pill = sel_rect.map(|r| glide_rect(ui.ctx(), seg_id.with("pill"), r, anchor, BASE));
+                if let Some(pr) = pill {
+                    let rad = pr.height() / 2.0;
+                    ui.painter().set(pill_slot, egui::Shape::Vec(vec![shadow_tier(2).as_shape(pr, rad).into(), primary_shape(pr, false)]));
+                }
+                // labels on top, turning to the pill's ink as it slides under
+                for (r, label, ht) in rects {
+                    let cover = pill.map_or(0.0, |pr| (pr.intersect(r).width().max(0.0) / r.width()).clamp(0.0, 1.0));
+                    let ink = theme::blend(theme::blend(MUTED(), TEXT(), ht), on_primary(), cover);
+                    ui.painter().text(r.center(), Align2::CENTER_CENTER, label, crate::fonts::sans_bold_font(13.0), ink);
+                }
             });
         changed
     }
@@ -1610,7 +1787,7 @@ pub(crate) mod modern {
                 *on = !*on;
                 resp.mark_changed();
             }
-            let t = ui.ctx().animate_bool_with_time(resp.id, *on, 0.14);
+            let t = anim(ui.ctx(), resp.id, *on, QUICK);
             let hovered = resp.hovered();
             let p = ui.painter();
             let b = rect;
@@ -1638,7 +1815,7 @@ pub(crate) mod modern {
             *on = !*on;
             resp.mark_changed();
         }
-        let t = ui.ctx().animate_bool_with_time(resp.id, *on, 0.18);
+        let t = anim(ui.ctx(), resp.id, *on, BASE);
         let hovered = resp.hovered();
         let p = ui.painter();
         let rad = rect.height() / 2.0;
@@ -1690,6 +1867,11 @@ pub(crate) mod modern {
         let p = ui.painter_at(rect.expand(14.0));
         let accent = primary();
         let hovered = resp.hovered();
+        let lift = anim(ui.ctx(), resp.id.with("lift"), hovered && !selected, QUICK);
+        let rect = rect.translate(egui::vec2(0.0, -2.0 * lift));
+        if lift > 0.0 {
+            p.add(shadow_tier(2).as_shape(rect, 20.0));
+        }
         p.add(card_shadow().as_shape(rect, 20.0));
         p.rect_filled(rect, 20.0, if selected { CARD() } else if hovered { CARD_HOVER() } else { CARD() });
         p.rect_stroke(
@@ -1760,16 +1942,24 @@ pub(crate) mod modern {
 
     /// Sidebar row: an icon chip in the page's colour; the open page sits on
     /// a raised highlight with its chip filled in. `compact`: icon only.
-    pub fn nav_item(ui: &mut Ui, icon: &str, label: &str, selected: bool, color: Color32, compact: bool) -> Response {
+    /// The open page's pill in the sidebar.
+    pub fn nav_selected_fill() -> Color32 {
+        theme::blend(SIDEBAR(), TEXT(), if theme::pal().light { 0.06 } else { 0.09 })
+    }
+
+    /// A sidebar row. `draw_selected`: paint the open page's pill here
+    /// (the modern sidebar paints one pill itself, sliding between rows).
+    pub fn nav_item(ui: &mut Ui, icon: &str, label: &str, selected: bool, color: Color32, compact: bool, draw_selected: bool) -> Response {
         let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 38.0), Sense::click());
         let p = ui.painter();
         let hovered = resp.hovered();
         // Cirrus nav: the open page on a Sunken pill, hovers a fainter wash.
         let rad = rect.height() / 2.0;
-        if selected {
-            p.rect_filled(rect, rad, theme::blend(SIDEBAR(), TEXT(), if theme::pal().light { 0.06 } else { 0.09 }));
-        } else if hovered {
-            p.rect_filled(rect, rad, theme::blend(SIDEBAR(), TEXT(), 0.04));
+        let ht = anim(ui.ctx(), resp.id.with("hover"), hovered && !selected, QUICK);
+        if selected && draw_selected {
+            p.rect_filled(rect, rad, nav_selected_fill());
+        } else if ht > 0.0 {
+            p.rect_filled(rect, rad, theme::blend(SIDEBAR(), TEXT(), 0.04).gamma_multiply(ht));
         }
         let chip = if compact {
             Rect::from_center_size(rect.center(), egui::vec2(28.0, 28.0))
@@ -1822,16 +2012,21 @@ pub(crate) mod modern {
 
     /// Primary button: a pill in the user's button colour (or gradient),
     /// lifted by the tier-1 shadow; it sinks a pixel on press.
-    pub fn accent_button(ui: &mut Ui, btn: egui::Button<'_>) -> Response {
+    pub fn accent_button(ui: &mut Ui, btn: egui::Button<'_>, min_w: f32) -> Response {
         let slot = ui.painter().add(egui::Shape::Noop);
-        let resp = ui.add(btn.fill(Color32::TRANSPARENT).stroke(Stroke::NONE).rounding(CONTROL_H).min_size(egui::vec2(0.0, CONTROL_H + 2.0)));
+        let resp = ui.add(btn.fill(Color32::TRANSPARENT).stroke(Stroke::NONE).rounding(CONTROL_H).min_size(egui::vec2(min_w, CONTROL_H + 2.0)));
         let down = resp.is_pointer_button_down_on();
-        let r = if down { resp.rect.translate(egui::vec2(0.0, 1.0)) } else { resp.rect };
+        let press = anim(ui.ctx(), resp.id.with("press"), down, 0.08);
+        let ht = anim(ui.ctx(), resp.id.with("hover"), resp.hovered() && !down, QUICK);
+        let r = resp.rect.translate(egui::vec2(0.0, press));
         let mut shapes = vec![];
         if resp.enabled() {
             shapes.push(shadow_tier(1).as_shape(r, r.height() / 2.0).into());
+            if ht > 0.0 {
+                shapes.push(egui::epaint::Shadow { offset: egui::vec2(0.0, 6.0), blur: 16.0, spread: 0.0, color: theme::BUTTON().gamma_multiply(0.3 * ht) }.as_shape(r, r.height() / 2.0).into());
+            }
         }
-        let mut shape = primary_shape(r, resp.hovered() && !down);
+        let mut shape = primary_shape_t(r, ht);
         if !resp.enabled() {
             shape = egui::Shape::rect_filled(r, r.height() / 2.0, primary().gamma_multiply(0.35));
         }
@@ -1843,3 +2038,32 @@ pub(crate) mod modern {
         resp.on_hover_cursor(egui::CursorIcon::PointingHand)
     }
 }
+
+/// A slider whose coloured fill stops exactly at the knob, with its value in
+/// a fixed-width pill on the right (so rows of sliders line up).
+/// egui draws the fill to the knob's centre plus the widget rounding, which
+/// with our pill-shaped controls runs ~30 px past the knob; drawing the rail
+/// with its own (rail-sized) rounding keeps the fill under the knob.
+pub fn slider(ui: &mut Ui, s: egui::Slider<'_>, value: &str) -> Response {
+    ui.horizontal(|ui| {
+        let resp = ui
+            .scope(|ui| {
+                let r = egui::Rounding::same(ui.spacing().slider_rail_height / 2.0);
+                ui.visuals_mut().widgets.inactive.rounding = r;
+                ui.add(s.show_value(false).trailing_fill(true))
+            })
+            .inner;
+        if !value.is_empty() {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(SLIDER_VALUE_W, CONTROL_H), Sense::hover());
+            let p = ui.painter();
+            p.rect_filled(rect, CONTROL_H / 2.0, ui.visuals().extreme_bg_color);
+            p.rect_stroke(rect, CONTROL_H / 2.0, ui.visuals().widgets.inactive.bg_stroke);
+            p.text(rect.center(), egui::Align2::CENTER_CENTER, value, egui::FontId::proportional(13.0), ui.visuals().text_color());
+        }
+        resp
+    })
+    .inner
+}
+
+/// Width of a slider's value pill.
+pub const SLIDER_VALUE_W: f32 = 72.0;

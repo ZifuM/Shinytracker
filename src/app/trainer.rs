@@ -4,7 +4,7 @@
 use super::ui_kit::{self as kit, MUTED, PillKind, CARD, CARD_HOVER, LINE, TEXT};
 use super::App;
 use crate::config::Unlocked;
-use crate::progress::{self, Achievement, Category, Lifetime, Tier, ACHIEVEMENTS};
+use crate::progress::{self, Achievement, Lifetime, Tier, ACHIEVEMENTS};
 use crate::stats::{fmt_date, fmt_duration, now_unix, odds_multiple};
 use crate::theme::{self, GOLD, OUTLINE};
 use eframe::egui::{self, Align2, Color32, Rect, RichText, Sense, Stroke};
@@ -128,7 +128,27 @@ impl App {
             l.shinies += 1;
             if h.phase {
                 // found during another hunt: its encounters are that hunt's
+                l.phases += 1;
                 continue;
+            }
+            let m = &h.method;
+            let by = if m.starts_with("Rare grass") {
+                Some(0)
+            } else if m.starts_with("Masuda") {
+                Some(1)
+            } else if m.starts_with("Soft resets") {
+                Some(2)
+            } else if m.starts_with("Poké Radar") {
+                Some(3)
+            } else {
+                None
+            };
+            if let Some(i) = by {
+                l.method_shinies[i] += 1;
+            }
+            if h.encounters > 0 {
+                l.fewest_catch = Some(l.fewest_catch.map_or(h.encounters, |x| x.min(h.encounters)));
+                l.most_catch = Some(l.most_catch.map_or(h.encounters, |x| x.max(h.encounters)));
             }
             l.encounters += h.encounters;
             l.battles += h.battles;
@@ -146,6 +166,10 @@ impl App {
         l.best_day = days.values().copied().max().unwrap_or(0);
         let active: BTreeSet<i64> = days.iter().filter(|(_, n)| **n > 0).map(|(d, _)| *d).collect();
         l.longest_streak = progress::longest_streak(&active);
+        l.days_hunted = active.len() as u32;
+        l.daily_goals = self.cfg.goals_done.iter().filter(|g| g.key.starts_with("day:")).count() as u32;
+        l.weekly_goals = self.cfg.goals_done.iter().filter(|g| g.key.starts_with("week:")).count() as u32;
+        l.achievements = self.cfg.achievements.iter().filter(|u| progress::find(&u.id).is_some()).count() as u32;
         l.targets = targets.len() as u32;
         l.events = self.cfg.events.iter().cloned().collect();
         let (dex, regions) = self.dex_progress();
@@ -262,6 +286,11 @@ impl App {
         } else if hour < 7 {
             self.add_event("early_bird");
         }
+        // 1970-01-01 was a Thursday: 0 = Sunday, 6 = Saturday
+        let weekday = (crate::stats::local_day(now_unix()) + 4).rem_euclid(7);
+        if weekday == 0 || weekday == 6 {
+            self.add_event("weekend_warrior");
+        }
     }
 
     /// A milestone pop-up, shown like the others, just under the overlay.
@@ -290,7 +319,7 @@ impl App {
         }
     }
 
-    fn push_toast(&mut self, kind: ToastKind) {
+    pub(super) fn push_toast(&mut self, kind: ToastKind) {
         if !self.cfg.toasts {
             return;
         }
@@ -461,437 +490,10 @@ impl App {
 
     // ───────────────────────────── profile page ─────────────────────────────
 
-    pub(super) fn page_profile(&mut self, ui: &mut egui::Ui) {
-        kit::page_header(ui, "TRAINER PROFILE", "Level up by hunting: encounters, time, shinies and achievements all give XP.");
-        let l = self.lifetime_full();
-        let xp = self.total_xp(&l);
-        let total = xp.total();
-        let level = progress::level_for(total);
-        let (into, need) = progress::level_progress(total);
-        let (metal, _, _) = progress::badge_metal(level);
-
-        // Profile card
-        kit::card(ui, |ui| {
-            ui.horizontal(|ui| {
-                let (r, _) = ui.allocate_exact_size(egui::vec2(110.0, 110.0), Sense::hover());
-                let p = ui.painter_at(r.expand(4.0));
-                theme::level_badge(&p, r.center(), 48.0, level);
-                ui.add_space(8.0);
-                ui.vertical(|ui| {
-                    ui.add_space(4.0);
-                    if ui.add(
-                        egui::TextEdit::singleline(&mut self.cfg.trainer_name)
-                            .hint_text("Your trainer name")
-                            .font(egui::FontId::new(13.0, crate::fonts::pixel()))
-                            .char_limit(16)
-                            .desired_width(240.0),
-                    )
-                    .on_hover_text("Your trainer name: click to change it")
-                    .changed()
-                    {
-                        self.dirty = true;
-                    }
-                    ui.add_space(4.0);
-                    ui.label(
-                        RichText::new(format!("Level {level} · {}", progress::title(level)))
-                            .size(kit::fs(15.0))
-                            .family(kit::strong_family(kit::fs(15.0))).strong()
-                            .color(TEXT()),
-                    );
-                    ui.label(RichText::new(format!("{metal} badge")).size(kit::fs(11.5)).color(MUTED()));
-                    ui.add_space(6.0);
-                    let frac = if level >= progress::MAX_LEVEL { 1.0 } else { into as f32 / need.max(1) as f32 };
-                    let (br, _) = ui.allocate_exact_size(egui::vec2(ui.available_width().min(380.0), 12.0), Sense::hover());
-                    let pp = ui.painter();
-                    pp.rect_filled(br, 6.0, CARD_HOVER());
-                    let fill = Rect::from_min_size(br.min, egui::vec2((br.width() * frac).max(12.0), br.height()));
-                    pp.add(theme::button_shape(fill, 6.0, false));
-                    ui.label(
-                        RichText::new(if level >= progress::MAX_LEVEL {
-                            format!("{} XP · max level!", theme::thousands(total))
-                        } else {
-                            format!(
-                                "{} / {} XP to level {}  ·  {} XP total",
-                                theme::thousands(into),
-                                theme::thousands(need),
-                                level + 1,
-                                theme::thousands(total)
-                            )
-                        })
-                        .size(kit::fs(11.5))
-                        .color(MUTED()),
-                    );
-                });
-            });
-        });
-
-        ui.horizontal(|ui| {
-            if super::hunt_pages::primary(ui, "  🖼  Make a trainer card image  ")
-                .on_hover_text("A shareable picture of your level, stats, shinies and achievements")
-                .clicked()
-            {
-                self.setup.profile_card = Some(ProfileCardView::default());
-            }
-        });
-        ui.add_space(10.0);
-
-        // Section tabs
-        let unlocked = self.cfg.achievements.iter().filter(|u| progress::find(&u.id).is_some()).count();
-        let (goals_done, goals_all) = self.goals_done_count();
-        let tabs = [
-            (ProfileSection::Overview, "Overview".to_string(), None),
-            (ProfileSection::Goals, "Goals".to_string(), Some((goals_done, goals_all))),
-            (ProfileSection::Achievements, "Achievements".to_string(), Some((unlocked, ACHIEVEMENTS.len()))),
-        ];
-        if let Some(s) = section_tabs(ui, self.setup.profile_section, &tabs) {
-            self.setup.profile_section = s;
-        }
-        ui.add_space(12.0);
-        let section = self.setup.profile_section;
-        if section == ProfileSection::Goals {
-            self.goals_section(ui);
-            return;
-        }
-        if section == ProfileSection::Overview {
-        // The stats live on their own page now: a pointer to them.
-        let w = ((ui.available_width() - 12.0) / 2.0).floor();
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 12.0;
-            if kit::stat_tile(ui, w, "📊", kit::C_CYAN, "Lifetime stats", "Luck, pace, habits, records", Some(("Open Stats ›", kit::C_CYAN))).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                self.setup.stats_tab = super::stats_life::StatsTab::Lifetime;
-                self.go_to(super::Tab::Stats);
-            }
-            if kit::stat_tile(ui, w, "🎯", kit::C_PINK, "This hunt's stats", "Luck curve, sessions, trends", Some(("Open Stats ›", kit::C_PINK))).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                self.setup.stats_tab = super::stats_life::StatsTab::Hunt;
-                self.go_to(super::Tab::Stats);
-            }
-        });
-        ui.add_space(12.0);
-        ui.label(
-            RichText::new(format!(
-                "XP from encounters {} · time {} · shinies {} · achievements {} · goals {}",
-                theme::thousands(xp.encounters),
-                theme::thousands(xp.time),
-                theme::thousands(xp.shinies),
-                theme::thousands(xp.achievements),
-                theme::thousands(xp.goals)
-            ))
-            .size(kit::fs(11.5))
-            .color(MUTED()),
-        );
-        ui.add_space(10.0);
-
-        // Options
-        kit::card(ui, |ui| {
-            self.dirty |= kit::toggle_row(
-                ui,
-                "Achievement pop-ups",
-                "A little pop-up on the overlay when you unlock an achievement or level up.",
-                &mut self.cfg.toasts,
-            );
-            ui.add_space(8.0);
-            ui.separator();
-            ui.add_space(8.0);
-            self.dirty |= kit::toggle_row(
-                ui,
-                "Show my level on the overlay",
-                "A small level badge next to the overlay title.",
-                &mut self.cfg.level_on_overlay,
-            );
-            ui.add_space(6.0);
-            if ui
-                .add(egui::Button::new(RichText::new("Preview a pop-up").size(kit::fs(12.0))).fill(kit::btn_fill()))
-                .clicked()
-            {
-                let was = self.cfg.toasts;
-                self.cfg.toasts = true;
-                self.push_toast(ToastKind::Achievement {
-                    name: "Show Off".into(),
-                    desc: "This is what a pop-up looks like".into(),
-                    tier: Tier::Gold,
-                });
-                self.cfg.toasts = was;
-                self.cfg.mini = false;
-                self.play(crate::sound::Sfx::Achievement);
-            }
-        });
-
-        return;
-        }
-
-        // Achievements: overall progress, category tabs, tiles
-        let total_n = ACHIEVEMENTS.len();
-        let done_n = unlocked;
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(format!("{done_n} of {total_n} unlocked"))
-                    .size(kit::fs(13.0))
-                    .family(kit::strong_family(kit::fs(13.0))).strong()
-                    .color(TEXT()),
-            );
-            let (br, _) = ui.allocate_exact_size(egui::vec2(ui.available_width() - 4.0, 8.0), Sense::hover());
-            let pp = ui.painter();
-            pp.rect_filled(br, 4.0, CARD_HOVER());
-            let frac = done_n as f32 / total_n.max(1) as f32;
-            if frac > 0.0 {
-                pp.add(theme::button_shape(
-                    Rect::from_min_size(br.min, egui::vec2((br.width() * frac).max(8.0), br.height())),
-                    4.0,
-                    false,
-                ));
-            }
-        });
-        ui.add_space(10.0);
-
-        // tab bar
-        let tab = self.setup.ach_tab.min(Category::ALL.len() - 1);
-        let mut clicked = None;
-        egui::ScrollArea::horizontal()
-            .id_salt("ach-tabs")
-            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    for (i, cat) in Category::ALL.iter().enumerate() {
-                        let got = ACHIEVEMENTS
-                            .iter()
-                            .filter(|a| a.cat == *cat && self.cfg.achievements.iter().any(|u| u.id == a.id))
-                            .count();
-                        let all = ACHIEVEMENTS.iter().filter(|a| a.cat == *cat).count();
-                        if category_tab(ui, cat.label(), got, all, i == tab).clicked() {
-                            clicked = Some(i);
-                        }
-                    }
-                });
-            });
-        if let Some(i) = clicked {
-            self.setup.ach_tab = i;
-        }
-        let (lr, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), Sense::hover());
-        ui.painter().rect_filled(lr, 0.0, LINE());
-        ui.add_space(10.0);
-        ui.horizontal(|ui| {
-            kit::segmented(
-                ui,
-                &mut self.setup.ach_filter,
-                &[(AchFilter::All, "  All  "), (AchFilter::Unlocked, "  Unlocked  "), (AchFilter::Locked, "  Locked  ")],
-            );
-        });
-        ui.add_space(10.0);
-
-        let cat = Category::ALL[tab];
-        let filter = self.setup.ach_filter;
-        // Every achievement as its own tile (no stacks), in order: each
-        // series together, its steps from easiest to hardest.
-        let mut list: Vec<&'static Achievement> = Vec::new();
-        for a in ACHIEVEMENTS.iter().filter(|a| a.cat == cat) {
-            let name = progress::series_of(a.id);
-            if !list.iter().any(|x| progress::series_of(x.id) == name) {
-                list.extend(progress::series(name).into_iter().filter(|x| x.cat == cat));
-            }
-        }
-        let is_done = |id: &str| self.cfg.achievements.iter().any(|u| u.id == id);
-        list.retain(|a| match filter {
-            AchFilter::All => true,
-            AchFilter::Unlocked => is_done(a.id),
-            AchFilter::Locked => !is_done(a.id),
-        });
-        if list.is_empty() {
-            ui.label(
-                RichText::new(match filter {
-                    AchFilter::Unlocked => "None unlocked here yet. Keep hunting!",
-                    _ => "All done here!",
-                })
-                .size(kit::fs(12.5))
-                .color(MUTED()),
-            );
-        }
-        let gap = 10.0;
-        let cols = (((ui.available_width() + gap) / (340.0 + gap)).floor() as usize).clamp(1, 4);
-        let tw = ((ui.available_width() - gap * (cols - 1) as f32) / cols as f32).floor();
-        for row in list.chunks(cols) {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = gap;
-                for a in row {
-                    let when = self.cfg.achievements.iter().find(|u| u.id == a.id).map(|u| u.unix);
-                    self.achievement_tile(ui, *a, when, &l, tw, 0);
-                }
-            });
-            ui.add_space(gap);
-        }
-        if self.cfg.events.is_empty() && unlocked == 0 {
-            kit::pill(ui, "Start hunting and your first achievements will pop up!", PillKind::Info);
-        }
-    }
 }
 
-/// Big full-width tabs for the Profile page sections.
-fn section_tabs(
-    ui: &mut egui::Ui,
-    current: ProfileSection,
-    tabs: &[(ProfileSection, String, Option<(usize, usize)>)],
-) -> Option<ProfileSection> {
-    if kit::modern() {
-        return section_tabs_cirrus(ui, current, tabs);
-    }
-    if kit::clean() {
-        return section_tabs_clean(ui, current, tabs);
-    }
-    let mut out = None;
-    let h = 42.0;
-    let (bar, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), h), Sense::hover());
-    ui.painter().rect_filled(bar, kit::r(12.0), CARD());
-    let n = tabs.len() as f32;
-    let cw = (bar.width() - 8.0) / n;
-    for (i, (sec, label, count)) in tabs.iter().enumerate() {
-        let r = Rect::from_min_size(egui::pos2(bar.min.x + 4.0 + cw * i as f32, bar.min.y + 4.0), egui::vec2(cw, h - 8.0));
-        let resp = ui.interact(r, ui.id().with(("profile-tab", i)), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
-        let sel = *sec == current;
-        let p = ui.painter();
-        if sel {
-            p.add(theme::button_shape(r, 9.0, resp.hovered()));
-        } else if resp.hovered() {
-            p.rect_filled(r, 9.0, CARD_HOVER());
-        }
-        let ink = if sel { theme::button_ink() } else if resp.hovered() { TEXT() } else { MUTED() };
-        let font = kit::font(14.0);
-        let lw = p.layout_no_wrap(label.clone(), font.clone(), ink).size().x;
-        let chip = count.map(|(g, a)| (format!("{g}/{a}"), g == a && a > 0));
-        let chw = chip.as_ref().map_or(0.0, |(t, _)| {
-            p.layout_no_wrap(t.clone(), kit::font(11.0), ink).size().x + 14.0
-        });
-        let total = lw + if chip.is_some() { chw + 8.0 } else { 0.0 };
-        let x0 = r.center().x - total / 2.0;
-        p.text(egui::pos2(x0, r.center().y), Align2::LEFT_CENTER, label, font, ink);
-        if let Some((t, full)) = chip {
-            let cr = Rect::from_min_size(egui::pos2(x0 + lw + 8.0, r.center().y - 9.0), egui::vec2(chw, 18.0));
-            let (bg, fg) = if full {
-                (GOLD, OUTLINE)
-            } else if sel {
-                (Color32::from_black_alpha(60), ink)
-            } else {
-                (CARD_HOVER(), MUTED())
-            };
-            p.rect_filled(cr, 9.0, bg);
-            p.text(cr.center(), Align2::CENTER_CENTER, t, kit::font(11.0), fg);
-        }
-        if resp.clicked() && !sel {
-            out = Some(*sec);
-        }
-    }
-    out
-}
 
-/// Cirrus section tabs: a Cloud pill track; the open tab is a pill in the button colour,
-/// with its count in a small chip.
-fn section_tabs_cirrus(
-    ui: &mut egui::Ui,
-    current: ProfileSection,
-    tabs: &[(ProfileSection, String, Option<(usize, usize)>)],
-) -> Option<ProfileSection> {
-    let mut out = None;
-    let h = 44.0;
-    let (bar, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), h), Sense::hover());
-    let p = ui.painter();
-    p.add(kit::shadow_tier(1).as_shape(bar, h / 2.0));
-    p.rect_filled(bar, h / 2.0, CARD());
-    p.rect_stroke(bar, h / 2.0, Stroke::new(1.0f32, LINE()));
-    let n = tabs.len() as f32;
-    let (pad, gap) = (5.0, 4.0);
-    let cw = (bar.width() - 2.0 * pad - gap * (n - 1.0)) / n;
-    for (i, (sec, label, count)) in tabs.iter().enumerate() {
-        let r = Rect::from_min_size(egui::pos2(bar.min.x + pad + (cw + gap) * i as f32, bar.min.y + pad), egui::vec2(cw, h - 2.0 * pad));
-        let resp = ui.interact(r, ui.id().with(("profile-tab", i)), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
-        let sel = *sec == current;
-        let hovered = resp.hovered();
-        let p = ui.painter();
-        let rad = r.height() / 2.0;
-        if sel {
-            p.add(kit::shadow_tier(2).as_shape(r, rad));
-            p.add(kit::primary_shape(r, false));
-        } else if hovered {
-            p.rect_filled(r, rad, kit::sunken());
-        }
-        let ink = if sel { kit::on_primary() } else if hovered { TEXT() } else { MUTED() };
-        let font = crate::fonts::sans_bold_font(13.5);
-        let lw = p.layout_no_wrap(label.clone(), font.clone(), ink).size().x;
-        let chip = count.map(|(g, a)| format!("{g}/{a}"));
-        let chw = chip.as_ref().map_or(0.0, |t| p.layout_no_wrap(t.clone(), kit::font(11.0), ink).size().x + 14.0);
-        let total = lw + if chip.is_some() { chw + 8.0 } else { 0.0 };
-        let x0 = r.center().x - total / 2.0;
-        p.text(egui::pos2(x0, r.center().y), Align2::LEFT_CENTER, label, font, ink);
-        if let Some(t) = chip {
-            let cr = Rect::from_min_size(egui::pos2(x0 + lw + 8.0, r.center().y - 9.0), egui::vec2(chw, 18.0));
-            if sel {
-                p.rect_filled(cr, 9.0, kit::on_primary().gamma_multiply(0.18));
-            } else {
-                p.rect_filled(cr, 9.0, kit::sunken());
-                p.rect_stroke(cr, 9.0, Stroke::new(1.0f32, LINE()));
-            }
-            p.text(cr.center(), Align2::CENTER_CENTER, t, kit::font(11.0), if sel { ink } else { MUTED() });
-        }
-        if resp.clicked() && !sel {
-            out = Some(*sec);
-        }
-    }
-    out
-}
 
-/// Clean-style section tabs: the same look as the other segmented groups
-/// (outlined bar, grey highlight on the open tab, no accent fill).
-fn section_tabs_clean(
-    ui: &mut egui::Ui,
-    current: ProfileSection,
-    tabs: &[(ProfileSection, String, Option<(usize, usize)>)],
-) -> Option<ProfileSection> {
-    let mut out = None;
-    let h = 36.0;
-    let (bar, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), h), Sense::hover());
-    ui.painter().rect_stroke(bar.shrink(0.5), 8.0, Stroke::new(1.0f32, kit::CONTROL()));
-    let n = tabs.len() as f32;
-    let cw = (bar.width() - 6.0 - 2.0 * (n - 1.0)) / n;
-    for (i, (sec, label, count)) in tabs.iter().enumerate() {
-        let r = Rect::from_min_size(
-            egui::pos2(bar.min.x + 3.0 + (cw + 2.0) * i as f32, bar.min.y + 3.0),
-            egui::vec2(cw, h - 6.0),
-        );
-        let resp = ui.interact(r, ui.id().with(("profile-tab", i)), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
-        let sel = *sec == current;
-        let hovered = resp.hovered();
-        let p = ui.painter();
-        if sel {
-            p.rect_filled(r, 6.0, kit::SELECTED_BG());
-        } else if hovered {
-            p.rect_filled(r, 6.0, CARD_HOVER());
-        }
-        let ink = if sel || hovered { TEXT() } else { MUTED() };
-        let font = if sel { crate::fonts::sans_bold_font(13.5) } else { crate::fonts::sans_font(13.5) };
-        let lw = p.layout_no_wrap(label.clone(), font.clone(), ink).size().x;
-        let chip_font = crate::fonts::sans_font(12.0);
-        let chip = count.map(|(g, a)| (format!("{g}/{a}"), g == a && a > 0));
-        let chw = chip.as_ref().map_or(0.0, |(t, _)| p.layout_no_wrap(t.clone(), chip_font.clone(), ink).size().x + 14.0);
-        let total = lw + if chip.is_some() { chw + 8.0 } else { 0.0 };
-        let x0 = r.center().x - total / 2.0;
-        p.text(egui::pos2(x0, r.center().y), Align2::LEFT_CENTER, label, font, ink);
-        if let Some((t, full)) = chip {
-            let cr = Rect::from_min_size(egui::pos2(x0 + lw + 8.0, r.center().y - 10.0), egui::vec2(chw, 20.0));
-            // Grey count chip; gold only when the set is complete.
-            let (bg, fg) = if full {
-                (GOLD, OUTLINE)
-            } else if sel {
-                (kit::CONTROL(), TEXT())
-            } else {
-                (kit::SELECTED_BG(), MUTED())
-            };
-            p.rect_filled(cr, 10.0, bg);
-            p.text(cr.center(), Align2::CENTER_CENTER, t, chip_font.clone(), fg);
-        }
-        if resp.clicked() && !sel {
-            out = Some(*sec);
-        }
-    }
-    out
-}
 
 /// A stacked series being drawn as one tile.
 struct StackInfo {
@@ -900,40 +502,6 @@ struct StackInfo {
     next: Option<&'static Achievement>,
 }
 
-/// One category tab: label + "got/all", underlined when selected.
-fn category_tab(ui: &mut egui::Ui, label: &str, got: usize, all: usize, selected: bool) -> egui::Response {
-    let font = kit::font(13.0);
-    let count = format!("{got}/{all}");
-    let lw = ui.painter().layout_no_wrap(label.to_string(), font.clone(), TEXT()).size().x;
-    let cw = ui.painter().layout_no_wrap(count.clone(), kit::font(10.5), TEXT()).size().x;
-    let (r, resp) = ui.allocate_exact_size(egui::vec2(lw + cw + 34.0, 36.0), Sense::click());
-    let p = ui.painter();
-    if selected {
-        p.rect_filled(r, egui::Rounding { nw: 8.0, ne: 8.0, sw: 0.0, se: 0.0 }, CARD());
-        let underline = Rect::from_min_max(egui::pos2(r.min.x + 6.0, r.max.y - 3.0), egui::pos2(r.max.x - 6.0, r.max.y));
-        if kit::clean() {
-            // Clean style: a plain text-coloured underline, like Creative Cloud's tabs.
-            p.rect_filled(underline, 1.5, TEXT());
-        } else {
-            p.add(theme::button_shape(underline, 1.5, false));
-        }
-    } else if resp.hovered() {
-        p.rect_filled(r, egui::Rounding { nw: 8.0, ne: 8.0, sw: 0.0, se: 0.0 }, CARD_HOVER());
-    }
-    let tc = if selected { TEXT() } else { MUTED() };
-    p.text(egui::pos2(r.min.x + 12.0, r.center().y), Align2::LEFT_CENTER, label, font, tc);
-    let chip = Rect::from_min_size(egui::pos2(r.min.x + 16.0 + lw, r.center().y - 8.0), egui::vec2(cw + 10.0, 16.0));
-    let full = got == all && all > 0;
-    p.rect_filled(chip, 8.0, if full { GOLD } else { CARD_HOVER() });
-    p.text(
-        chip.center(),
-        Align2::CENTER_CENTER,
-        count,
-        kit::font(10.5),
-        if full { OUTLINE } else { tc },
-    );
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
-}
 
 impl App {
     /// A tile for one achievement: its Pokémon (shiny and animated when

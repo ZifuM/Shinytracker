@@ -297,6 +297,25 @@ pub enum OverlaySize {
     Bar,
 }
 
+/// How big the overlay window is drawn. Small is the original size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum OverlayScale {
+    #[default]
+    Small,
+    Medium,
+    Large,
+}
+
+impl OverlayScale {
+    pub fn factor(self) -> f32 {
+        match self {
+            OverlayScale::Small => 1.0,
+            OverlayScale::Medium => 1.25,
+            OverlayScale::Large => 1.5,
+        }
+    }
+}
+
 /// Sections of the modular overlay. What the original overlay had is on by
 /// default; the newer extras start off.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -305,6 +324,8 @@ pub struct OverlayModules {
     pub style: OverlayStyle,
     pub theme: OverlayTheme,
     pub size: OverlaySize,
+    /// Small (the original size), Medium or Large.
+    pub scale: OverlayScale,
     /// Clicks go through to the game (toggle back with the hotkey).
     pub click_through: bool,
     // Header
@@ -339,6 +360,7 @@ impl Default for OverlayModules {
             style: OverlayStyle::Modular,
             theme: OverlayTheme::Classic,
             size: OverlaySize::Full,
+            scale: OverlayScale::Small,
             click_through: false,
             status_dot: true,
             target: true,
@@ -396,6 +418,11 @@ pub struct Appearance {
     pub modern_ui: bool,
     /// Modern look: the sidebar shows icons only.
     pub nav_compact: bool,
+    /// Smooth transitions: pages fading in, sliding tabs, eased hovers. Off
+    /// for people who'd rather have less motion.
+    pub animations: bool,
+    /// Light or dark follows Windows' own setting.
+    pub follow_system: bool,
 }
 
 impl Default for Appearance {
@@ -413,6 +440,8 @@ impl Default for Appearance {
             clean_settings: true,
             modern_ui: true,
             nav_compact: false,
+            animations: true,
+            follow_system: false,
         }
     }
 }
@@ -563,9 +592,19 @@ pub struct Config {
     pub auto_update: bool,
     /// Also update to GitHub pre-releases (test builds), not just full releases.
     pub prerelease_updates: bool,
+    /// Keep a copy of everything each day (the last week of them) in the
+    /// data folder's backups folder.
+    pub auto_backup: bool,
+    /// The day (days since 1970, local) the last automatic copy was made.
+    pub auto_backup_day: i64,
+    /// When the last backup was saved by hand (unix seconds).
+    pub last_backup: Option<u64>,
     /// The release this copy was last updated to (stops a re-download loop
     /// if that release's .exe reports an older version number).
     pub installed_update: Option<String>,
+    /// The app version that last saved this file. When a different version
+    /// opens it, the file is copied to backups/before-update-… first.
+    pub saved_by: String,
     /// Settings window position / size (egui points) and maximized state,
     /// restored next time it opens.
     pub settings_pos: Option<[f32; 2]>,
@@ -610,6 +649,12 @@ pub struct Config {
     /// One-time switch to the modular overlay (original sections on, the
     /// new extras off).
     pub overlay_reset1: bool,
+    /// Runs page: runs pinned to the top (by run id).
+    pub pinned_runs: Vec<u64>,
+    /// Runs page sort: 0 recent, 1 encounters, 2 odds, 3 name.
+    pub runs_sort: u8,
+    /// Runs page shows a compact list instead of cards.
+    pub runs_list: bool,
 }
 
 impl Default for Config {
@@ -675,7 +720,11 @@ impl Default for Config {
             session_goal: 0,
             auto_update: true,
             prerelease_updates: false,
+            auto_backup: true,
+            auto_backup_day: 0,
+            last_backup: None,
             installed_update: None,
+            saved_by: String::new(),
             settings_pos: None,
             settings_size: None,
             settings_maximized: false,
@@ -697,6 +746,9 @@ impl Default for Config {
             star_alert_reset2: false,
             star_alert_on3: false,
             overlay_reset1: false,
+            pinned_runs: Vec::new(),
+            runs_sort: 0,
+            runs_list: false,
         }
     }
 }
@@ -1005,14 +1057,157 @@ impl Config {
     }
 
     pub fn load() -> Self {
-        std::fs::read_to_string(Self::path())
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+        Self::load_from(&data_dir())
+    }
+
+    /// Nothing worth keeping: no runs, no catches, no count, no hunt time.
+    pub fn is_blank(&self) -> bool {
+        self.count == 0 && self.saved_runs.is_empty() && self.history.is_empty() && self.run_stats.hunt_secs == 0 && self.achievements.is_empty()
+    }
+
+    /// Load the saves in `dir`, never losing them:
+    /// - a file that can't be read right now (e.g. another copy of the app
+    ///   is writing it) is retried for a moment;
+    /// - a value this version doesn't understand falls back to its default on
+    ///   its own, and everything else (runs, catches, ...) still loads;
+    /// - a file that didn't load cleanly is kept aside as
+    ///   `config-unreadable-<time>.json`, never saved over; if nothing could
+    ///   be read from it, the newest automatic copy with something in it is
+    ///   used instead;
+    /// - when a different app version opens the file, it is copied to
+    ///   `backups/before-update-<old>-to-<new>.json` first.
+    pub fn load_from(dir: &Path) -> Self {
+        let path = dir.join("config.json");
+        let mut raw: Option<String> = None;
+        if path.exists() {
+            for _ in 0..20 {
+                match std::fs::read_to_string(&path) {
+                    Ok(s) => {
+                        if let Ok(mut c) = serde_json::from_str::<Config>(&s) {
+                            c.note_version(dir, &s);
+                            return c;
+                        }
+                        raw = Some(s);
+                        break;
+                    }
+                    Err(_) => std::thread::sleep(std::time::Duration::from_millis(100)),
+                }
+            }
+            // didn't load cleanly: keep it aside so nothing can save over it
+            let aside = dir.join(format!("config-unreadable-{}.json", now_unix()));
+            match &raw {
+                Some(s) => {
+                    let _ = std::fs::write(&aside, s);
+                }
+                None => {
+                    let _ = std::fs::copy(&path, &aside);
+                }
+            }
+            if let Some(mut c) = raw.as_deref().and_then(Self::from_json_lenient) {
+                if !c.is_blank() {
+                    c.saved_by = update_version().to_string();
+                    return c;
+                }
+            }
+        }
+        let mut c = Self::newest_backup(dir).unwrap_or_default();
+        c.saved_by = update_version().to_string();
+        c
+    }
+
+    /// Remember which version saves this file; if it was another one, keep a
+    /// copy of the file as it was first.
+    fn note_version(&mut self, dir: &Path, raw: &str) {
+        let now = update_version();
+        if self.saved_by != now {
+            if !self.is_blank() {
+                let bk = dir.join("backups");
+                let _ = std::fs::create_dir_all(&bk);
+                let from = if self.saved_by.is_empty() { "older".to_string() } else { self.saved_by.replace(|c: char| !c.is_ascii_alphanumeric() && c != '.', "") };
+                let name = format!("before-update-{from}-to-{now}-{}.json", now_unix());
+                let _ = std::fs::write(bk.join(name), raw);
+            }
+            self.saved_by = now.to_string();
+        }
+    }
+
+    /// Read saves leniently: any value this version can't read falls back to
+    /// its default on its own (inside lists, only that entry is dropped), and
+    /// everything else is kept.
+    pub fn from_json_lenient(s: &str) -> Option<Config> {
+        use serde_json::Value;
+        let Ok(Value::Object(file)) = serde_json::from_str::<Value>(s) else { return None };
+        let mut out = serde_json::to_value(Config::default()).ok()?;
+        let reads = |v: &Value| serde_json::from_value::<Config>(v.clone()).is_ok();
+        for (k, v) in file {
+            let mut cand = out.clone();
+            cand[&k] = v.clone();
+            if reads(&cand) {
+                out = cand;
+                continue;
+            }
+            match &v {
+                Value::Object(parts) if out.get(&k).is_some_and(|x| x.is_object()) => {
+                    for (kk, vv) in parts {
+                        let mut cand = out.clone();
+                        cand[&k][kk] = vv.clone();
+                        if reads(&cand) {
+                            out = cand;
+                        }
+                    }
+                }
+                Value::Array(items) => {
+                    let mut kept: Vec<Value> = Vec::new();
+                    for it in items {
+                        let mut cand = out.clone();
+                        let mut list = kept.clone();
+                        list.push(it.clone());
+                        cand[&k] = Value::Array(list.clone());
+                        if reads(&cand) {
+                            kept = list;
+                        }
+                    }
+                    out[&k] = Value::Array(kept);
+                }
+                _ => {}
+            }
+        }
+        serde_json::from_value(out).ok()
+    }
+
+    /// The newest automatic copy in `dir/backups` that reads and isn't empty.
+    fn newest_backup(dir: &Path) -> Option<Self> {
+        let mut list: Vec<(PathBuf, std::time::SystemTime)> = std::fs::read_dir(dir.join("backups"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| {
+                let n = e.file_name().to_string_lossy().to_string();
+                n.starts_with("auto-") && n.ends_with(".json")
+            })
+            .filter_map(|e| Some((e.path(), e.metadata().ok()?.modified().ok()?)))
+            .collect();
+        list.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| b.0.cmp(&a.0)));
+        list.into_iter()
+            .filter_map(|(p, _)| serde_json::from_str::<Config>(&std::fs::read_to_string(p).ok()?).ok())
+            .find(|c| !c.is_blank())
     }
 
     pub fn save(&self) {
-        let path = Self::path();
+        self.save_to(&data_dir());
+    }
+
+    pub fn save_to(&self, dir: &Path) {
+        let path = dir.join("config.json");
+        // About to replace saves that have runs in them with an empty one:
+        // keep the old file first (outside the rolling automatic copies).
+        if self.is_blank() {
+            if let Some(old) = std::fs::read_to_string(&path).ok().filter(|s| serde_json::from_str::<Config>(s).is_ok_and(|c| !c.is_blank())) {
+                let bk = dir.join("backups");
+                let _ = std::fs::create_dir_all(&bk);
+                let _ = std::fs::write(bk.join(format!("before-empty-{}.json", now_unix())), old);
+            }
+        }
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
@@ -1026,9 +1221,134 @@ impl Config {
     }
 }
 
+/// This app's version (as saved in `saved_by`).
+fn update_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
 pub fn now_unix() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod safe_load_tests {
+    use super::*;
+
+    fn tmp(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("st-safe-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("backups")).unwrap();
+        d
+    }
+
+    fn with_runs() -> Config {
+        let mut c = Config::default();
+        c.count = 220;
+        c.trainer_name = "Zifu".into();
+        c
+    }
+
+    #[test]
+    fn unreadable_file_is_kept_and_backup_used() {
+        let d = tmp("unreadable");
+        std::fs::write(d.join("config.json"), "{ not json").unwrap();
+        std::fs::write(d.join("backups/auto-2026-11-12_10-00-00.json"), serde_json::to_string(&with_runs()).unwrap()).unwrap();
+        let c = Config::load_from(&d);
+        assert_eq!(c.count, 220, "falls back to the newest good copy");
+        let aside: Vec<_> = std::fs::read_dir(&d).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().starts_with("config-unreadable-")).collect();
+        assert_eq!(aside.len(), 1, "the unreadable file is kept aside");
+        assert_eq!(std::fs::read_to_string(aside[0].path()).unwrap(), "{ not json");
+    }
+
+    #[test]
+    fn missing_file_uses_backup_and_blank_backups_are_skipped() {
+        let d = tmp("missing");
+        std::fs::write(d.join("backups/auto-2026-11-12_09-00-00.json"), serde_json::to_string(&with_runs()).unwrap()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(d.join("backups/auto-2026-11-12_11-00-00.json"), serde_json::to_string(&Config::default()).unwrap()).unwrap();
+        assert_eq!(Config::load_from(&d).count, 220);
+    }
+
+    #[test]
+    fn one_bad_value_keeps_everything_else() {
+        let d = tmp("lenient");
+        let mut v = serde_json::to_value(with_runs()).unwrap();
+        v["saved_runs"] = serde_json::json!([
+            {"id": 1, "target": "riolu", "count": 2574, "battles": 0, "target_seen": 0, "started_unix": 0, "saved_unix": 0},
+            {"id": 2, "target": "porygon", "count": "not a number", "battles": 0, "target_seen": 0, "started_unix": 0, "saved_unix": 0},
+            {"id": 3, "target": "beldum", "count": 6702, "battles": 0, "target_seen": 0, "started_unix": 0, "saved_unix": 0}
+        ]);
+        v["odds"] = serde_json::json!("eight thousand");
+        v["appearance"]["mode"] = serde_json::json!("SomeFutureMode");
+        std::fs::write(d.join("config.json"), v.to_string()).unwrap();
+        let c = Config::load_from(&d);
+        assert_eq!(c.count, 220);
+        assert_eq!(c.trainer_name, "Zifu");
+        let runs: Vec<u64> = c.saved_runs.iter().map(|r| r.count).collect();
+        assert_eq!(runs, vec![2574, 6702], "only the bad run is dropped");
+        assert_eq!(c.odds, Config::default().odds);
+        // the original file is kept aside, untouched
+        assert!(std::fs::read_dir(&d).unwrap().flatten().any(|e| e.file_name().to_string_lossy().starts_with("config-unreadable-")));
+    }
+
+    #[test]
+    fn opening_with_a_new_version_keeps_a_copy_first() {
+        let d = tmp("versioned");
+        let mut c = with_runs();
+        c.saved_by = "0.4.5".into();
+        std::fs::write(d.join("config.json"), serde_json::to_string(&c).unwrap()).unwrap();
+        let c = Config::load_from(&d);
+        assert_eq!(c.saved_by, env!("CARGO_PKG_VERSION"));
+        let names: Vec<String> = std::fs::read_dir(d.join("backups")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
+        assert_eq!(names.len(), 1);
+        assert!(names[0].starts_with(&format!("before-update-0.4.5-to-{}", env!("CARGO_PKG_VERSION"))), "{names:?}");
+        // a save with no saved_by at all (every version before this one)
+        std::fs::remove_file(d.join("backups").join(&names[0])).unwrap();
+        let v = serde_json::to_value(with_runs()).unwrap();
+        let mut o = v.as_object().unwrap().clone();
+        o.remove("saved_by");
+        std::fs::write(d.join("config.json"), serde_json::Value::Object(o).to_string()).unwrap();
+        let _ = Config::load_from(&d);
+        let names: Vec<String> = std::fs::read_dir(d.join("backups")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
+        assert!(names.iter().any(|n| n.starts_with("before-update-older-to-")), "{names:?}");
+    }
+
+    #[test]
+    fn first_start_is_blank() {
+        let d = tmp("first");
+        assert!(Config::load_from(&d).is_blank());
+    }
+
+    #[test]
+    fn blank_save_over_runs_keeps_the_old_file() {
+        let d = tmp("blanksave");
+        with_runs().save_to(&d);
+        Config::default().save_to(&d);
+        let kept: Vec<_> = std::fs::read_dir(d.join("backups")).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().starts_with("before-empty-")).collect();
+        assert_eq!(kept.len(), 1);
+        let c: Config = serde_json::from_str(&std::fs::read_to_string(kept[0].path()).unwrap()).unwrap();
+        assert_eq!(c.count, 220);
+        // a second blank save doesn't make another copy
+        Config::default().save_to(&d);
+        assert_eq!(std::fs::read_dir(d.join("backups")).unwrap().count(), 1);
+    }
+}
+
+
+#[cfg(test)]
+mod scale_tests {
+    use super::*;
+
+    #[test]
+    fn overlay_scale_defaults_to_small_and_reads_back() {
+        assert_eq!(Config::default().overlay.scale, OverlayScale::Small);
+        // saves from before the setting existed
+        let c: Config = serde_json::from_str(r#"{"overlay":{"theme":"Glass"}}"#).unwrap();
+        assert_eq!(c.overlay.scale, OverlayScale::Small);
+        let c: Config = serde_json::from_str(r#"{"overlay":{"scale":"Large"}}"#).unwrap();
+        assert_eq!(c.overlay.scale.factor(), 1.5);
+    }
 }

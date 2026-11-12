@@ -196,6 +196,12 @@ static SURF: std::sync::RwLock<Surf> = std::sync::RwLock::new(MODERN_DARK);
 // that follows those picks the modern look up too. Appearance → Style.
 
 static MODERN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+static MOTION: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Are transitions and animations on? (Appearance → Animations.)
+pub fn motion() -> bool {
+    MOTION.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 /// True when the Companion window uses the modern style.
 pub fn modern() -> bool {
@@ -292,6 +298,7 @@ pub fn set_appearance(ctx: &egui::Context, a: &crate::config::Appearance) {
         *w = p;
     }
     MODERN.store(a.modern_ui, std::sync::atomic::Ordering::Relaxed);
+    MOTION.store(a.animations, std::sync::atomic::Ordering::Relaxed);
     CLEAN.store(a.clean_settings || a.modern_ui, std::sync::atomic::Ordering::Relaxed);
     if let Ok(mut w) = SURF.write() {
         *w = match (a.modern_ui, a.mode) {
@@ -304,6 +311,58 @@ pub fn set_appearance(ctx: &egui::Context, a: &crate::config::Appearance) {
         };
     }
     apply(ctx);
+}
+
+/// The colours a look uses, worked out without applying it (the
+/// Appearance page previews a choice while you hover it).
+#[derive(Clone, Copy)]
+pub struct Look {
+    pub s: Surf,
+    pub light: bool,
+    pub accent: Color32,
+    pub accent2: Color32,
+    pub button: Color32,
+    pub button2: Color32,
+    pub modern: bool,
+    pub clean: bool,
+}
+
+pub fn look_of(a: &crate::config::Appearance) -> Look {
+    use crate::config::UiMode;
+    let p = match a.mode {
+        UiMode::Dark => DARK,
+        UiMode::SemiDark => SEMI,
+        UiMode::Light => LIGHT,
+    };
+    let c3 = |c: [u8; 3]| Color32::from_rgb(c[0], c[1], c[2]);
+    let accent = c3(a.accent);
+    let accent2 = if a.gradient { c3(a.accent2) } else { accent };
+    let (button, button2) = if a.separate_buttons {
+        (c3(a.button), if a.button_gradient { c3(a.button2) } else { c3(a.button) })
+    } else {
+        (accent, if a.solid_buttons { accent } else { accent2 })
+    };
+    let s = match (a.modern_ui, a.clean_settings, a.mode) {
+        (true, _, UiMode::Dark) => MODERN_DARK,
+        (true, _, UiMode::SemiDark) => MODERN_SEMI,
+        (true, _, UiMode::Light) => MODERN_LIGHT,
+        (false, true, UiMode::Dark) => CLEAN_DARK,
+        (false, true, UiMode::SemiDark) => CLEAN_SEMI,
+        (false, true, UiMode::Light) => CLEAN_LIGHT,
+        (false, false, _) => Surf {
+            sidebar: p.sidebar,
+            page: p.page,
+            card: p.card,
+            card_hover: p.card_hover,
+            line: p.line,
+            control: p.line,
+            selected: mix(p.card, accent, if p.light { 0.16 } else { 0.32 }),
+            text: p.text,
+            muted: p.muted,
+            field: p.widget,
+        },
+    };
+    Look { s, light: p.light, accent, accent2, button, button2, modern: a.modern_ui, clean: a.clean_settings || a.modern_ui }
 }
 
 #[allow(non_snake_case)]
@@ -407,8 +466,13 @@ pub fn BUTTON() -> Color32 {
 
 /// Fill for a button: its colour or gradient, a little brighter on hover.
 pub fn button_shape(rect: Rect, r: f32, hovered: bool) -> Shape {
+    button_shape_t(rect, r, if hovered { 1.0 } else { 0.0 })
+}
+
+/// `button_shape` part-way into its hover (`t` 0..1), for eased hovers.
+pub fn button_shape_t(rect: Rect, r: f32, t: f32) -> Shape {
     let pl = pal();
-    let k = if hovered { 0.14 } else { 0.0 };
+    let k = 0.14 * t.clamp(0.0, 1.0);
     gradient_rect(
         rect,
         [r; 4],
