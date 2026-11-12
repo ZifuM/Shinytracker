@@ -1051,8 +1051,16 @@ impl App {
             ui.add_space(8.0);
         }
         ui.add_space(4.0);
-        if ui.add(egui::Button::new(RichText::new("Open in the Pokédex  ›").size(13.0)).fill(kit::btn_fill())).on_hover_text("Moves, stats, evolutions and every spot on the map").clicked() {
-            *dex = Some(m.id.clone());
+        let teams = self.team_choices();
+        let mut add: Option<Option<u64>> = None;
+        ui.horizontal(|ui| {
+            if ui.add(egui::Button::new(RichText::new("Open in the Pokédex  ›").size(13.0)).fill(kit::btn_fill())).on_hover_text("Moves, stats, evolutions and every spot on the map").clicked() {
+                *dex = Some(m.id.clone());
+            }
+            super::team_home::add_to_team_menu(ui, &teams, &mut add);
+        });
+        if let Some(t) = add {
+            self.team_add_from(&m.id, t);
         }
     }
 

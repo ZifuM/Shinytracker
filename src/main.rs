@@ -2,6 +2,8 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
+mod battle;
+mod calc;
 mod canvas;
 mod capture;
 mod card;
@@ -25,6 +27,7 @@ mod sound;
 mod species;
 mod sprites;
 mod stats;
+mod teams;
 mod theme;
 mod topmost;
 mod update;

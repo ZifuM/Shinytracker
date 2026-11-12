@@ -30,3 +30,7 @@ Install [Rust](https://rustup.rs), then run `build.bat`. It builds the app and m
 ---
 
 Fan-made and not affiliated with Nintendo, Game Freak or The Pokémon Company. It only reads the game's log and map files; it never changes them or the game's memory.
+
+## Credits
+
+The Team Planner's battle data (base stats, abilities, move details, held items and sample sets) comes from [Pokémon Showdown](https://github.com/smogon/pokemon-showdown)'s open data, and its damage calculator follows the Gen 4 steps of Smogon's [damage-calc](https://github.com/smogon/damage-calc). Both are MIT licensed.

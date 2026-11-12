@@ -886,6 +886,8 @@ impl App {
         let hunting = sp.is_some_and(|sp| self.cfg.target.as_deref() == Some(sp.slug.as_str()) || self.also_slugs().contains(&sp.slug));
         let met = self.species_met().get(&m.dex).copied().unwrap_or(0);
         let rare_spots = sp.map(|s| self.rare_spots_for(&s.slug)).unwrap_or_default();
+        let team_list = self.team_choices();
+        let mut add_team: Option<Option<u64>> = None;
         let map_ok = self.gamemap.as_ref().is_some_and(|r| r.is_ok());
         let wild_places: Vec<String> = {
             let mut v: Vec<String> = Vec::new();
@@ -1017,6 +1019,7 @@ impl App {
                         if ui.add(egui::Button::new("Wiki  ↗").fill(kit::btn_fill())).on_hover_text(w.page_url(m)).clicked() {
                             open_wiki = true;
                         }
+                        super::team_home::add_to_team_menu(ui, &team_list, &mut add_team);
                     });
                     if !rare_spots.is_empty() {
                         ui.add_space(12.0);
@@ -1124,6 +1127,9 @@ impl App {
         self.setup.pokedex.shiny = shiny;
         if show_map {
             self.show_on_map(&wild_places, m.name.clone(), None);
+        }
+        if let Some(t) = add_team {
+            self.team_add_from(&m.id, t);
         }
         if let Some(t) = show_type {
             let st = &mut self.setup.pokedex;

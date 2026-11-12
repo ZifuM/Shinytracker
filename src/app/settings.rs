@@ -312,7 +312,7 @@ impl App {
                                     || self.setup.caught_pick
                                     || (self.setup.profile_card.is_none()
                                         && self.setup.share.is_none()
-                                        && matches!(self.setup.tab, Tab::Home | Tab::Profile | Tab::Stats | Tab::Dex | Tab::Trophies | Tab::Runs | Tab::Pokedex | Tab::Map | Tab::Info));
+                                        && matches!(self.setup.tab, Tab::Home | Tab::Profile | Tab::Stats | Tab::Dex | Tab::Trophies | Tab::Runs | Tab::Pokedex | Tab::Map | Tab::Info | Tab::Team));
                                 let cap = if modern { 1060.0 } else { 900.0 };
                                 let w = if wide { ui.available_width() } else { ui.available_width().min(cap) };
                                 ui.set_max_width(w);
@@ -340,6 +340,7 @@ impl App {
                                         Tab::Pokedex => self.page_pokedex(ui),
                                         Tab::Map => self.page_map(ui),
                                         Tab::Info => self.page_info(ui),
+                                        Tab::Team => self.page_team(ui),
                                         Tab::Profile => self.page_profile(ui),
                                         Tab::Stats => self.page_stats(ui),
                                         Tab::Dex | Tab::Trophies => {
@@ -568,7 +569,7 @@ impl App {
     fn sidebar(&mut self, ui: &mut egui::Ui) {
         ui.add_space(2.0);
         // (group heading, tab, icon, label, parent: the app a page belongs to)
-        let items: [(Option<&str>, Tab, &str, &str, Option<Tab>); 14] = [
+        let items: [(Option<&str>, Tab, &str, &str, Option<Tab>); 15] = [
             (None, Tab::Home, "🏠", "Home", None),
             (None, Tab::Profile, "🏅", "Profile", None),
             (None, Tab::Stats, "📊", "Stats", None),
@@ -580,6 +581,7 @@ impl App {
             (None, Tab::Pokedex, "📖", "Pokédex", None),
             (None, Tab::Map, "🗺", "Map", None),
             (None, Tab::Info, "📚", "Game Info", None),
+            (None, Tab::Team, "🛡", "Team Planner", None),
             (Some("SETTINGS"), Tab::Appearance, "🎨", "Appearance", None),
             (None, Tab::Hotkeys, "⌨", "Hotkeys", None),
             (None, Tab::Advanced, "⚙", "Advanced", None),

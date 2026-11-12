@@ -24,6 +24,11 @@ mod info_moves;
 mod info_items;
 mod info_places;
 mod info_story;
+mod team_analysis;
+mod team_build;
+mod team_calc;
+mod team_check;
+mod team_home;
 mod hunt_pages;
 mod notices;
 mod onboarding;
@@ -86,6 +91,7 @@ enum Tab {
     Pokedex,
     Map,
     Info,
+    Team,
     Profile,
     Stats,
     Dex,
@@ -170,6 +176,8 @@ struct Setup {
     pokedex: pokedex::DexState,
     /// Game Info: search, filters and the open result.
     info: info_home::InfoState,
+    /// Team Planner: teams, the open one, pickers.
+    team: team_home::TeamState,
     /// "Hunt it on rare grass?" after picking a target that's there today.
     rare_offer: Option<rare::RareOffer>,
     /// Apps in the sidebar whose pages are folded away.
@@ -523,6 +531,7 @@ impl App {
                 trophy_back: None,
                 pokedex: Default::default(),
                 info: Default::default(),
+                team: Default::default(),
                 rare_offer: None,
                 // Apps start folded; clicking one opens its pages.
                 nav_collapsed: vec![Tab::Shiny],
@@ -2753,6 +2762,7 @@ impl eframe::App for App {
             }
         }
         self.auto_backup_tick();
+        self.team_save_tick(false);
         self.hotkeys_guard();
         while let Ok(msg) = self.rx.try_recv() {
             self.on_msg(msg);
@@ -2875,11 +2885,13 @@ impl eframe::App for App {
     /// save everything, window spot and size included.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.cfg.save();
+        self.team_save_tick(true);
     }
 }
 
 impl Drop for App {
     fn drop(&mut self) {
         self.cfg.save();
+        self.team_save_tick(true);
     }
 }
