@@ -7,9 +7,6 @@ use crate::battle::{self, World};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-/// Rolling copies kept of the teams file.
-const KEEP: usize = 5;
-
 fn default_ivs() -> [u16; 6] {
     [31; 6]
 }
@@ -129,7 +126,7 @@ fn now() -> u64 {
 }
 
 pub fn file_in(dir: &Path) -> PathBuf {
-    dir.join("teams.json")
+    crate::safefile::file_in(dir, "teams")
 }
 
 pub fn file() -> PathBuf {
@@ -139,61 +136,23 @@ pub fn file() -> PathBuf {
 /// Load the teams, and a note when the file couldn't be read: then it's
 /// moved aside (kept, never overwritten) and the newest good copy is used.
 pub fn load_from(dir: &Path) -> (TeamFile, Option<String>) {
-    let path = file_in(dir);
-    let Ok(text) = std::fs::read_to_string(&path) else { return (TeamFile::default(), None) };
-    match serde_json::from_str::<TeamFile>(&text) {
-        Ok(f) => (f, None),
-        Err(_) => {
-            let aside = dir.join(format!("teams.unreadable-{}.json", now()));
-            let _ = std::fs::rename(&path, &aside);
-            let back = newest_backup(dir).and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| serde_json::from_str::<TeamFile>(&t).ok());
-            let note = match &back {
-                Some(_) => format!("Your teams file couldn't be read, so the newest backup was loaded. The old file is kept as {}.", aside.display()),
-                None => format!("Your teams file couldn't be read. It's kept as {}.", aside.display()),
-            };
-            (back.unwrap_or_default(), Some(note))
-        }
-    }
+    crate::safefile::load(dir, "teams", "teams")
 }
 
 pub fn load() -> (TeamFile, Option<String>) {
     load_from(&crate::config::data_dir())
 }
 
+#[cfg(test)]
 fn backups_in(dir: &Path) -> Vec<PathBuf> {
-    let mut v: Vec<PathBuf> = std::fs::read_dir(dir.join("backups"))
-        .map(|r| r.flatten().map(|e| e.path()).filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("teams-") && n.ends_with(".json"))).collect())
-        .unwrap_or_default();
-    v.sort();
-    v
-}
-
-fn newest_backup(dir: &Path) -> Option<PathBuf> {
-    backups_in(dir).pop()
+    crate::safefile::backups_in(dir, "teams")
 }
 
 /// Save the teams. Before the first save of each run, the file on disk is
 /// copied to `backups/teams-<time>.json` (the newest 5 are kept). An empty
 /// list never replaces one with teams in it without a copy.
 pub fn save_to(dir: &Path, f: &TeamFile, first_this_run: bool) -> Result<(), String> {
-    let path = file_in(dir);
-    let _ = std::fs::create_dir_all(dir);
-    if let Ok(old) = std::fs::read_to_string(&path) {
-        let had_teams = serde_json::from_str::<TeamFile>(&old).is_ok_and(|o| !o.teams.is_empty());
-        if first_this_run || (f.teams.is_empty() && had_teams) {
-            let bk = dir.join("backups");
-            let _ = std::fs::create_dir_all(&bk);
-            let _ = std::fs::write(bk.join(format!("teams-{}.json", now())), &old);
-            let mut all = backups_in(dir);
-            while all.len() > KEEP {
-                let _ = std::fs::remove_file(all.remove(0));
-            }
-        }
-    }
-    let json = serde_json::to_string_pretty(f).map_err(|e| e.to_string())?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+    crate::safefile::save(dir, "teams", f, first_this_run, |t: &TeamFile| !t.teams.is_empty())
 }
 
 pub fn save(f: &TeamFile, first_this_run: bool) -> Result<(), String> {

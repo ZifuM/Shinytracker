@@ -26,6 +26,8 @@ mod share;
 mod sound;
 mod species;
 mod sprites;
+mod safefile;
+mod sim;
 mod stats;
 mod teams;
 mod theme;

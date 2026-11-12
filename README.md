@@ -33,4 +33,4 @@ Fan-made and not affiliated with Nintendo, Game Freak or The Pokémon Company. I
 
 ## Credits
 
-The Team Planner's battle data (base stats, abilities, move details, held items and sample sets) comes from [Pokémon Showdown](https://github.com/smogon/pokemon-showdown)'s open data, and its damage calculator follows the Gen 4 steps of Smogon's [damage-calc](https://github.com/smogon/damage-calc). Both are MIT licensed.
+The Team Planner's battle data (base stats, abilities, move details, held items and sample sets) comes from [Pokémon Showdown](https://github.com/smogon/pokemon-showdown)'s open data, and its damage calculator follows the Gen 4 steps of Smogon's [damage-calc](https://github.com/smogon/damage-calc). Both are MIT licensed. The Battle Sim's move effects and gender ratios also come from Showdown's data, and its catch rates from [PokéAPI](https://pokeapi.co).
