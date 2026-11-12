@@ -659,6 +659,12 @@ pub struct Config {
     pub guides_read: Vec<String>,
     /// Game Info: pages pinned to its front page ("move:surf", "place:Route 210"…).
     pub info_pins: Vec<String>,
+    /// Game Info: how far into the story you are (index into the wiki's
+    /// badge stages: 0 = before Roark … 9 = after the League). None: not set.
+    pub info_stage: Option<u8>,
+    /// Game Info: your world's options (what wild Pokémon it has).
+    pub info_more: bool,
+    pub info_modern: bool,
 }
 
 impl Default for Config {
@@ -750,6 +756,9 @@ impl Default for Config {
             star_alert_reset2: false,
             guides_read: Vec::new(),
             info_pins: Vec::new(),
+            info_stage: None,
+            info_more: true,
+            info_modern: false,
             star_alert_on3: false,
             overlay_reset1: false,
             pinned_runs: Vec::new(),

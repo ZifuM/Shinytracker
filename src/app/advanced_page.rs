@@ -312,6 +312,8 @@ impl App {
                 }
             }
             ui.add_space(14.0);
+            self.adv_game_data(ui);
+            ui.add_space(14.0);
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
                 let state = update::get(&self.updater);

@@ -42,9 +42,6 @@ pub(super) struct PlacesState {
     pub tab: Option<String>,
     pub time: Option<usize>,
     pub area: Option<String>,
-    /// Show what MORE / MODERN POKéMON add.
-    pub hide_more: bool,
-    pub hide_modern: bool,
 }
 
 /// A place: its name, its areas (place keys), when you can first get there.
@@ -246,18 +243,28 @@ impl App {
         // the timeline: one stretch per badge stage
         let mut open: Option<String> = None;
         let rail = 56.0;
+        let at = self.story_stage();
         for (si, stage) in w.data.stages.iter().enumerate() {
             let here: Vec<&&PlaceGroup> = shown.iter().filter(|g| g.stage == si).collect();
             if here.is_empty() {
                 continue;
             }
+            let locked = at.is_some_and(|a| si > a);
+            let next = at.is_some_and(|a| si == a + 1);
             let top = ui.cursor().min.y;
             ui.horizontal_top(|ui| {
                 ui.add_space(rail);
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(stage).font(crate::fonts::sans_bold_font(17.0)).color(TEXT()));
+                        ui.label(RichText::new(stage).font(crate::fonts::sans_bold_font(17.0)).color(if locked { MUTED() } else { TEXT() }));
                         ui.label(small(format!("{} · {}", stage_badge(si, stage), here.len())));
+                        if next {
+                            tag(ui, "YOUR NEXT BADGE", kit::C_TEAL);
+                        } else if at == Some(si) {
+                            tag(ui, "YOU'RE HERE", kit::C_GREEN);
+                        } else if locked {
+                            tag(ui, "LATER", kit::C_SLATE);
+                        }
                     });
                     ui.add_space(10.0);
                     let avail = ui.available_width();
@@ -268,7 +275,7 @@ impl App {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = gap;
                             for g in row {
-                                if self.place_card(ui, w, g, cw) {
+                                if self.place_card(ui, w, g, cw, locked) {
                                     open = Some(g.name.clone());
                                 }
                             }
@@ -283,8 +290,9 @@ impl App {
             let c = egui::pos2(x, top + 12.0);
             let p = ui.painter();
             p.line_segment([egui::pos2(x, top + 26.0), egui::pos2(x, bottom + 4.0)], Stroke::new(2.0f32, kit::tint(kit::C_GREEN, 0.35)));
-            p.circle_filled(c, 13.0, theme::blend(CARD(), kit::C_GREEN, 0.35));
-            p.circle_stroke(c, 13.0, Stroke::new(1.5f32, kit::C_GREEN));
+            let rc = if locked { kit::C_SLATE } else { kit::C_GREEN };
+            p.circle_filled(c, 13.0, theme::blend(CARD(), rc, 0.35));
+            p.circle_stroke(c, 13.0, Stroke::new(1.5f32, rc));
             let label = if stage.to_lowercase().starts_with("after") { "★".to_string() } else { (si + 1).to_string() };
             p.text(c, Align2::CENTER_CENTER, label, crate::fonts::sans_bold_font(12.0), TEXT());
             ui.add_space(14.0);
@@ -295,7 +303,7 @@ impl App {
     }
 
     /// A place in the list: name, cave or not, how many Pokémon and items, methods.
-    fn place_card(&mut self, ui: &mut egui::Ui, w: &Arc<Wiki>, g: &PlaceGroup, cw: f32) -> bool {
+    fn place_card(&mut self, ui: &mut egui::Ui, w: &Arc<Wiki>, g: &PlaceGroup, cw: f32, locked: bool) -> bool {
         let (r, resp) = ui.allocate_exact_size(egui::vec2(cw, 86.0), Sense::click());
         if !ui.is_rect_visible(r) {
             return false;
@@ -311,14 +319,20 @@ impl App {
         let mut icons: Vec<&str> = methods.iter().map(|m| method_icon(m)).collect();
         icons.dedup();
         let ht = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered(), kit::QUICK);
-        let col = if g.cave { Color32::from_rgb(170, 130, 90) } else { kit::C_GREEN };
+        let col = if locked {
+            kit::C_SLATE
+        } else if g.cave {
+            Color32::from_rgb(170, 130, 90)
+        } else {
+            kit::C_GREEN
+        };
         let p = ui.painter_at(r.expand(4.0));
         p.add(kit::card_shadow().as_shape(r, 14.0));
         p.rect_filled(r, 14.0, theme::blend(CARD(), CARD_HOVER(), ht));
         p.rect_stroke(r, 14.0, Stroke::new(1.0f32, theme::blend(LINE(), col, 0.2 + 0.5 * ht)));
         p.rect_filled(Rect::from_min_size(r.min + egui::vec2(0.0, 14.0), egui::vec2(3.0, r.height() - 28.0)), 1.5, col);
         let f = crate::fonts::sans_bold_font(14.5);
-        p.text(egui::pos2(r.min.x + 16.0, r.min.y + 22.0), Align2::LEFT_CENTER, super::charts::clip(ui, &g.name, &f, cw - 32.0), f, TEXT());
+        p.text(egui::pos2(r.min.x + 16.0, r.min.y + 22.0), Align2::LEFT_CENTER, super::charts::clip(ui, &g.name, &f, cw - 32.0), f, if locked { MUTED() } else { TEXT() });
         let sub = format!("{} Pokémon{}", kinds.len(), if g.keys.len() > 1 { format!(" · {} areas", g.keys.len()) } else { String::new() });
         p.text(egui::pos2(r.min.x + 16.0, r.min.y + 42.0), Align2::LEFT_CENTER, sub, crate::fonts::sans_font(11.5), MUTED());
         // how you meet them: "Grass · Surfing · Fishing"
@@ -392,6 +406,21 @@ impl App {
             return;
         }
         ui.add_space(18.0);
+        if let Some(at) = self.story_stage().filter(|a| g.stage > *a) {
+            let need = super::info_story::stage_words(g.stage, &stage);
+            let have = w.data.stages.get(at).map(|n| super::info_story::stage_words(at, n)).unwrap_or_default();
+            egui::Frame::none()
+                .fill(theme::blend(CARD(), kit::C_SLATE, 0.14))
+                .stroke(Stroke::new(1.0f32, theme::blend(LINE(), kit::C_SLATE, 0.5)))
+                .rounding(12.0)
+                .inner_margin(egui::Margin::symmetric(16.0, 10.0))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(RichText::new(format!("Not yet: you can get here at {}", need.to_lowercase())).font(crate::fonts::sans_bold_font(13.5)).color(TEXT()));
+                    ui.label(small(format!("You said you're at {}. Change it in Game Info › Your adventure.", have.to_lowercase())));
+                });
+            ui.add_space(14.0);
+        }
         let avail = ui.available_width();
         let gap = 18.0;
         if avail >= 1000.0 {
@@ -422,7 +451,8 @@ impl App {
         // forget an area or method from another place
         let area = st.area.clone().filter(|a| g.keys.contains(a));
         let time = st.time.unwrap_or(now);
-        let (hide_more, hide_modern) = (st.hide_more, st.hide_modern);
+        let (hide_more, hide_modern) = (!self.cfg.info_more, !self.cfg.info_modern);
+        let at = self.story_stage();
         let shown_world = |e: &&&Wild| !(hide_more && e.setting == "more") && !(hide_modern && e.setting == "modern");
         let in_area: Vec<&&Wild> = wild_all.iter().filter(|e| area.as_ref().map_or(true, |a| &e.area == a)).filter(shown_world).collect();
         let mut counts: BTreeMap<usize, usize> = BTreeMap::new();
@@ -490,7 +520,7 @@ impl App {
             });
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                ui.label(small("Show what these world options add:"));
+                ui.label(small("Your world has:"));
                 if chip(ui, "MORE POKéMON", !hide_more, kit::C_INDIGO) {
                     flip_more = true;
                 }
@@ -523,7 +553,10 @@ impl App {
                 if ht > 0.0 {
                     p.rect_filled(r, 10.0, theme::blend(CARD(), CARD_HOVER(), ht));
                 }
-                let dim = c == 0;
+                let later = at.is_some_and(|a| w.stage_index(&e.stage) > a);
+                let dim = c == 0 || later;
+                // a whole place that's later says so once, at the top
+                let place_later = at.is_some_and(|a| g.stage > a);
                 let mon = w.mon(&e.species).cloned();
                 let name = mon.as_ref().map(|m| m.name.clone()).unwrap_or_else(|| e.species.clone());
                 let tc = mon.as_ref().and_then(|m| m.types.first()).map(|t| type_color(t)).unwrap_or(MUTED());
@@ -542,6 +575,9 @@ impl App {
                     "modern" => title.push_str("  · MODERN"),
                     _ => {}
                 }
+                if later && !place_later {
+                    title.push_str(&format!("  · LATER, {}", e.stage));
+                }
                 p.text(egui::pos2(x, r.center().y - 9.0), Align2::LEFT_CENTER, title, crate::fonts::sans_bold_font(13.5), ink);
                 let area_name = if area.is_none() && g.keys.len() > 1 { w.place(&e.area).map(|p| format!(" · {}", p.name)).unwrap_or_default() } else { String::new() };
                 let types = mon.as_ref().map(|m| m.types.join(" / ")).unwrap_or_default();
@@ -554,9 +590,10 @@ impl App {
                 p.rect_filled(bar, 4.0, kit::tint(LINE(), 0.9));
                 let f = c as f32 / most;
                 if f > 0.0 {
-                    p.rect_filled(Rect::from_min_size(bar.min, egui::vec2((bar.width() * f).max(6.0), 8.0)), 4.0, tc);
+                    let bc = if later { kit::tint(MUTED(), 0.6) } else { tc };
+                    p.rect_filled(Rect::from_min_size(bar.min, egui::vec2((bar.width() * f).max(6.0), 8.0)), 4.0, bc);
                 }
-                p.text(egui::pos2(r.max.x - 10.0, r.center().y), Align2::RIGHT_CENTER, if dim { "—".to_string() } else { format!("{c}%") }, crate::fonts::sans_bold_font(13.5), ink);
+                p.text(egui::pos2(r.max.x - 10.0, r.center().y), Align2::RIGHT_CENTER, if c == 0 { "—".to_string() } else { format!("{c}%") }, crate::fonts::sans_bold_font(13.5), ink);
                 let others = format!("Morning {}% · Day {}% · Night {}%", e.chance.morning, e.chance.day, e.chance.night);
                 if resp.on_hover_text(format!("{others}\nOpen in the Pokédex")).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     open = Some(e.species.clone());
@@ -578,10 +615,13 @@ impl App {
             s.area = a;
         }
         if flip_more {
-            s.hide_more = !s.hide_more;
+            self.cfg.info_more = !self.cfg.info_more;
         }
         if flip_modern {
-            s.hide_modern = !s.hide_modern;
+            self.cfg.info_modern = !self.cfg.info_modern;
+        }
+        if flip_more || flip_modern {
+            self.cfg.save();
         }
         if let Some(id) = open {
             self.info_open_dex(Some(id));
@@ -679,7 +719,7 @@ impl App {
             ui.add_space(18.0);
             kit::card(ui, |ui| {
                 let stage = w.data.stages.get(g.stage).cloned().unwrap_or_default();
-                card_head(ui, "🧭", kit::C_TEAL, "Also reachable then", None);
+                card_head(ui, "🗺", kit::C_TEAL, "Also reachable then", None);
                 ui.label(small(format!("Other places you can get to {}", stage.to_lowercase())));
                 ui.add_space(8.0);
                 ui.horizontal_wrapped(|ui| {

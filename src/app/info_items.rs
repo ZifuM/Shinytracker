@@ -880,7 +880,12 @@ impl App {
             };
             if let Some((st, s)) = first {
                 let stage = w.data.stages.get(st).cloned().unwrap_or_default();
-                row(ui, "First chance", s.place.clone(), Some(format!("{} · {}", stage, s.how.to_lowercase())));
+                let mark = match self.story_stage() {
+                    Some(a) if st <= a => " · ✔ you can get it now",
+                    Some(_) => " · later in your story",
+                    None => "",
+                };
+                row(ui, "First chance", s.place.clone(), Some(format!("{} · {}{mark}", stage, s.how.to_lowercase())));
             }
             if let Some(b) = mart {
                 row(ui, "Poké Mart", if b == 0 { "From the start".into() } else { format!("After {b} badge{}", if b == 1 { "" } else { "s" }) }, Some("Every Poké Mart sells it".into()));

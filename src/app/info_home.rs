@@ -145,6 +145,8 @@ pub(super) struct InfoState {
     pub recent: Vec<Page>,
     /// The app page Game Info was opened from (the Pokédex…), for "Back".
     pub from_tab: Option<Tab>,
+    /// What changed since the last wiki copy you saw.
+    pub fresh: super::info_story::FreshState,
     pub query: String,
     /// Only this kind in the results; with no query, list all of it.
     pub kind: Option<Kind>,
@@ -1010,7 +1012,7 @@ impl App {
         if !wild.is_empty() {
             look_head(ui, "WHERE TO CATCH IT", &format!("best first for {} now", PERIODS[now].to_lowercase()));
             for e in wild.iter().take(5) {
-                if wild_row(ui, w, e, now) {
+                if wild_row(ui, w, e, now, false) {
                     *go = w.place(&e.area).map(|p| (Kind::Place, if p.group.is_empty() { p.name.clone() } else { p.group.clone() }));
                 }
             }
@@ -1151,8 +1153,11 @@ impl App {
     // ───────────────────────────── front page ─────────────────────────────
 
     fn info_front(&mut self, ui: &mut egui::Ui, w: &Arc<Wiki>) {
+        self.info_changes(ui, w);
         self.info_news(ui, w);
         self.info_shortcuts(ui, w);
+        self.info_adventure(ui, w);
+        ui.add_space(18.0);
         let avail = ui.available_width();
         let gap = 18.0;
         if avail >= 980.0 {
@@ -1317,6 +1322,13 @@ impl App {
         let mut dex: Option<String> = None;
         let mut pick = false;
         let mut hunt_place: Option<String> = None;
+        let stage = self.story_stage();
+        let (more, modern) = (self.cfg.info_more, self.cfg.info_modern);
+        let world = move |setting: &str| match setting {
+            "more" => more,
+            "modern" => modern,
+            _ => true,
+        };
         kit::card(ui, |ui| {
             let link = if mon.is_some() { Some("Pokédex entry ›") } else { None };
             if card_head(ui, "🎯", kit::C_PINK, "Your hunt in Sinnoh", link) {
@@ -1354,32 +1366,53 @@ impl App {
             });
             ui.add_space(12.0);
             let now = period_now();
-            let mut wild = w.wild(&m.id);
-            wild.sort_by_key(|e| (std::cmp::Reverse(chance_at(e, now)), w.stage_index(&e.stage)));
-            if let Some(best) = wild.first().filter(|e| chance_at(e, now) > 0) {
+            // only the spots your world has; the ones you can reach first
+            let all_wild = w.wild(&m.id);
+            let mut wild: Vec<&Wild> = all_wild.iter().copied().filter(|e| world(&e.setting)).collect();
+            let other_worlds = all_wild.len() - wild.len();
+            let later = |e: &Wild| stage.is_some_and(|s| w.stage_index(&e.stage) > s);
+            let best_of = |e: &Wild| e.chance.morning.max(e.chance.day).max(e.chance.night);
+            wild.sort_by_key(|e| (later(e), std::cmp::Reverse(chance_at(e, now)), std::cmp::Reverse(best_of(e)), w.stage_index(&e.stage)));
+            let reach: Vec<&Wild> = wild.iter().copied().filter(|e| !later(e)).collect();
+            // the most common spot at its best time; ties go to the earlier spot
+            let best = reach.iter().copied().fold(None::<&Wild>, |b, e| match b {
+                Some(x) if (best_of(x), chance_at(x, now)) >= (best_of(e), chance_at(e, now)) => Some(x),
+                _ => Some(e),
+            });
+            if let Some(best) = best {
                 let place = w.place(&best.area).map(|p| p.name.clone()).unwrap_or_else(|| best.area.clone());
+                let t = (0..3).max_by_key(|&p| (chance_at(best, p), p == now)).unwrap_or(now);
                 let mut text = format!(
-                    "{}% of {} encounters there in the {}, at Lv {}.",
-                    chance_at(best, now),
-                    super::dex_tabs::method_label(&best.method).to_lowercase(),
-                    PERIODS[now].to_lowercase(),
-                    best.levels
+                    "{} at Lv {}, best in the {} ({}%).",
+                    super::dex_tabs::method_label(&best.method),
+                    best.levels,
+                    PERIODS[t].to_lowercase(),
+                    chance_at(best, t)
                 );
-                // is another time of day better anywhere?
-                if let Some((p, c)) = (0..3)
-                    .filter(|&p| p != now)
-                    .map(|p| (p, wild.iter().map(|e| chance_at(e, p)).max().unwrap_or(0)))
-                    .max_by_key(|x| x.1)
-                    .filter(|x| x.1 > chance_at(best, now))
-                {
-                    text.push_str(&format!(" It's more common in the {}: up to {c}%.", PERIODS[p].to_lowercase()));
+                if t != now {
+                    text.push_str(&format!(" Right now ({}) it's {}%.", PERIODS[now].to_lowercase(), chance_at(best, now)));
                 }
-                callout(ui, &format!("Best right now: {place}"), &text);
+                if let Some((item, what)) = super::info_story::method_needs(&best.method) {
+                    let from = w.data.items.iter().find(|i| i.name == item).and_then(|i| i.found.first()).map(|f| format!(" (from {})", f.place)).unwrap_or_default();
+                    text.push_str(&format!(" You'll need {what}{from}."));
+                }
+                callout(ui, &format!("Your best bet: {place}"), &text);
+                ui.add_space(10.0);
+            } else if let Some(first) = wild.iter().min_by_key(|e| w.stage_index(&e.stage)) {
+                let place = w.place(&first.area).map(|p| p.name.clone()).unwrap_or_else(|| first.area.clone());
+                let si = w.stage_index(&first.stage);
+                let when = w.data.stages.get(si).map(|n| super::info_story::stage_words(si, n)).unwrap_or_default();
+                callout(ui, "Not reachable yet", &format!("The first spot is {place}, once you're at: {when}."));
+                ui.add_space(10.0);
+            } else if other_worlds > 0 {
+                callout(ui, "Not in your world", "It's only in the wild with MORE or MODERN POKéMON on. Change your world's options in Your adventure.");
                 ui.add_space(10.0);
             }
             if wild.is_empty() {
                 let other = w.other(&m.id);
-                if other.is_empty() {
+                if other.is_empty() && other_worlds > 0 {
+                    // said above
+                } else if other.is_empty() {
                     match w.unobtainable(&m.id) {
                         Some(why) => callout(ui, "Can't be caught right now", why),
                         None => callout(ui, "Not in the wild", "The game's data doesn't list anywhere to get it."),
@@ -1394,7 +1427,7 @@ impl App {
             } else {
                 look_head(ui, &format!("{} IN THE WILD", plural(wild.len(), "SPOT", "SPOTS")), "Morning · Day · Night");
                 for e in wild.iter().take(6) {
-                    if wild_row(ui, w, e, now) {
+                    if wild_row(ui, w, e, now, later(e)) {
                         hunt_place = w.place(&e.area).map(|p| if p.group.is_empty() { p.name.clone() } else { p.group.clone() });
                     }
                 }
@@ -1715,8 +1748,8 @@ fn callout(ui: &mut egui::Ui, title: &str, text: &str) {
 }
 
 /// One wild spot: place, how and levels, stage, and the three times of day.
-/// Returns true when clicked (open the place).
-fn wild_row(ui: &mut egui::Ui, w: &Wiki, e: &Wild, now: usize) -> bool {
+/// Returns true when clicked (open the place). `later`: not reachable yet (dimmed).
+fn wild_row(ui: &mut egui::Ui, w: &Wiki, e: &Wild, now: usize, later: bool) -> bool {
     let (r, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 44.0), Sense::click());
     if !ui.is_rect_visible(r) {
         return false;
@@ -1737,7 +1770,11 @@ fn wild_row(ui: &mut egui::Ui, w: &Wiki, e: &Wild, now: usize) -> bool {
         "modern" => title.push_str("  · MODERN"),
         _ => {}
     }
-    p.text(egui::pos2(r.min.x, r.center().y - 8.0), Align2::LEFT_CENTER, super::charts::clip(ui, &title, &f, text_w), f, TEXT());
+    if later {
+        title.push_str("  · LATER");
+    }
+    let ink = if later { MUTED() } else { TEXT() };
+    p.text(egui::pos2(r.min.x, r.center().y - 8.0), Align2::LEFT_CENTER, super::charts::clip(ui, &title, &f, text_w), f, ink);
     let sub = format!("{} · Lv {} · {}", super::dex_tabs::method_label(&e.method), e.levels, e.stage);
     let f2 = crate::fonts::sans_font(11.5);
     p.text(egui::pos2(r.min.x, r.center().y + 10.0), Align2::LEFT_CENTER, super::charts::clip(ui, &sub, &f2, text_w), f2, MUTED());
@@ -1747,16 +1784,17 @@ fn wild_row(ui: &mut egui::Ui, w: &Wiki, e: &Wild, now: usize) -> bool {
     for (i, c) in [e.chance.morning, e.chance.day, e.chance.night].iter().enumerate() {
         let cell = Rect::from_min_size(egui::pos2(x0 + i as f32 * (cw + 2.0), r.min.y + 7.0), egui::vec2(cw, 30.0));
         let on = i == now;
-        let col = if *c == 0 { MUTED() } else { kit::C_GREEN };
+        let col = if *c == 0 || later { MUTED() } else { kit::C_GREEN };
         if on {
             p.rect_filled(cell, 8.0, theme::blend(CARD(), kit::C_GREEN, 0.16));
             p.rect_stroke(cell, 8.0, Stroke::new(1.0f32, theme::blend(LINE(), kit::C_GREEN, 0.5)));
         }
         let t = if *c == 0 { "—".to_string() } else { format!("{c}%") };
-        p.text(cell.center() - egui::vec2(0.0, 5.0), Align2::CENTER_CENTER, t, crate::fonts::sans_bold_font(12.0), if on { TEXT() } else { col });
+        p.text(cell.center() - egui::vec2(0.0, 5.0), Align2::CENTER_CENTER, t, crate::fonts::sans_bold_font(12.0), if on && !later { TEXT() } else { col });
         p.text(cell.center() + egui::vec2(0.0, 8.0), Align2::CENTER_CENTER, ["Morn", "Day", "Night"][i], crate::fonts::sans_font(9.0), MUTED());
     }
-    resp.on_hover_text("Open this place").on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+    let tip = if later { format!("You can't get here yet ({}). Open this place", e.stage) } else { "Open this place".to_string() };
+    resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }
 
 fn stat_box(ui: &mut egui::Ui, label: &str, value: &str, w: f32) {

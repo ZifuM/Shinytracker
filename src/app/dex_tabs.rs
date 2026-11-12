@@ -321,7 +321,7 @@ impl App {
             return;
         };
         let has_modern = !ls.mlv.is_empty() || !ls.mtm.is_empty() || !ls.mtutor.is_empty() || !ls.megg.is_empty();
-        let modern_default = m.modern || ls.lv.is_empty();
+        let modern_default = m.modern || ls.lv.is_empty() || self.cfg.info_modern;
         let mut modern = self.setup.pokedex.modern_moves.unwrap_or(modern_default) && has_modern;
         if ls.lv.is_empty() && !ls.mlv.is_empty() {
             modern = true;

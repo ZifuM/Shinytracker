@@ -23,6 +23,7 @@ mod info_md;
 mod info_moves;
 mod info_items;
 mod info_places;
+mod info_story;
 mod hunt_pages;
 mod notices;
 mod onboarding;
