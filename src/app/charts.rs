@@ -600,6 +600,19 @@ pub(super) fn clock(ui: &mut egui::Ui, vals: &[f64; 24], col: Color32, size: f32
 
 /// Days as squares, a column per week (Monday on top), shaded by `value`.
 pub(super) fn heatmap(ui: &mut egui::Ui, last_day: i64, weeks: usize, value: &dyn Fn(i64) -> u64, col: Color32, hover: &dyn Fn(i64, u64) -> String) -> Response {
+    heatmap_marked(ui, last_day, weeks, value, col, hover, None)
+}
+
+/// `heatmap`, with a gold dot on the days `mark` picks (e.g. a shiny caught).
+pub(super) fn heatmap_marked(
+    ui: &mut egui::Ui,
+    last_day: i64,
+    weeks: usize,
+    value: &dyn Fn(i64) -> u64,
+    col: Color32,
+    hover: &dyn Fn(i64, u64) -> String,
+    mark: Option<&dyn Fn(i64) -> bool>,
+) -> Response {
     let gap = 3.0;
     let avail = ui.available_width();
     let cell = ((avail - 26.0 - gap * (weeks as f32 - 1.0)) / weeks as f32).clamp(6.0, 26.0);
@@ -630,6 +643,9 @@ pub(super) fn heatmap(ui: &mut egui::Ui, last_day: i64, weeks: usize, value: &dy
             let v = value(d);
             let c = if v == 0 { track() } else { theme::blend(faint(col, 0.35), col, (v as f32 / max).sqrt()) };
             p.rect_filled(r, 3.0, c);
+            if mark.is_some_and(|m| m(d)) {
+                p.circle_filled(r.center(), (cell * 0.24).max(2.0), GOLD);
+            }
             if d == last_day {
                 p.rect_stroke(r.expand(1.0), 3.0, Stroke::new(1.5f32, TEXT()));
             }
@@ -653,6 +669,27 @@ pub(super) fn heatmap(ui: &mut egui::Ui, last_day: i64, weeks: usize, value: &dy
 }
 
 // ───────────────────────────── tiles and rows ─────────────────────────────
+
+/// The heatmap's key: "Less ▢▢▢▢ More", plus what the dot means.
+pub(super) fn heat_legend(ui: &mut egui::Ui, col: Color32, dot: Option<&str>) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.label(egui::RichText::new("Less").size(11.0).color(MUTED()));
+        for k in 0..5 {
+            let (r, _) = ui.allocate_exact_size(egui::vec2(11.0, 11.0), Sense::hover());
+            let c = if k == 0 { track() } else { theme::blend(faint(col, 0.35), col, (k as f32 / 4.0).sqrt()) };
+            ui.painter().rect_filled(r, 2.5, c);
+        }
+        ui.label(egui::RichText::new("More").size(11.0).color(MUTED()));
+        if let Some(t) = dot {
+            ui.add_space(12.0);
+            let (r, _) = ui.allocate_exact_size(egui::vec2(11.0, 11.0), Sense::hover());
+            ui.painter().rect_filled(r, 2.5, track());
+            ui.painter().circle_filled(r.center(), 2.8, GOLD);
+            ui.label(egui::RichText::new(t).size(11.0).color(MUTED()));
+        }
+    });
+}
 
 /// "Keep it going" / "Worth a look" tile: a chevron (up, down or flat),
 /// a label, a coloured value and a sentence.

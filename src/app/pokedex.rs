@@ -471,6 +471,7 @@ impl App {
         if let Some(slug) = trophy {
             self.setup.dex.open = Some(slug);
             self.setup.note_draft.clear();
+            self.setup.trophy_back = None;
         }
         if let Some((slug, on)) = mark {
             if on {

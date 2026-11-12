@@ -624,8 +624,14 @@ impl App {
 
     /// One caught species: its trophy cards (every catch), or the hand mark.
     pub(super) fn page_dex_entry(&mut self, ui: &mut egui::Ui, slug: &str) {
-        if super::hunt_pages::back_button(ui, "Shiny Dex") {
+        // back to where it was opened from (Stats), or to the Shiny Dex
+        let back = self.setup.trophy_back;
+        let back_label = if back == Some(Tab::Stats) { "Stats" } else { "Shiny Dex" };
+        if super::hunt_pages::back_button(ui, back_label) {
             self.setup.dex.open = None;
+            if let Some(t) = self.setup.trophy_back.take() {
+                self.setup.tab = t;
+            }
             return;
         }
         let Some(idx) = self.species.iter().position(|s| s.slug == slug) else {

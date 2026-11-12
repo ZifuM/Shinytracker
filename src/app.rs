@@ -24,6 +24,7 @@ mod launcher;
 mod charts;
 mod stats_hunt;
 mod stats_life;
+mod stats_overview;
 mod ov_anime;
 mod ov_common;
 mod ov_glass;
@@ -151,6 +152,13 @@ struct Setup {
     pace_view: stats_hunt::PaceView,
     top_view: stats_life::TopView,
     stats_tab: stats_life::StatsTab,
+    /// Stats Overview: the time range, and how the shiny shelf is shown.
+    stats_period: stats_overview::StatsPeriod,
+    shelf_sort: stats_overview::ShelfSort,
+    shelf_all: bool,
+    /// Where a trophy page's back button goes, when it wasn't opened from
+    /// the Pokédex (e.g. from Stats).
+    trophy_back: Option<Tab>,
     pokedex: pokedex::DexState,
     /// "Hunt it on rare grass?" after picking a target that's there today.
     rare_offer: Option<rare::RareOffer>,
@@ -499,6 +507,10 @@ impl App {
                 pace_view: Default::default(),
                 top_view: Default::default(),
                 stats_tab: Default::default(),
+                stats_period: Default::default(),
+                shelf_sort: Default::default(),
+                shelf_all: false,
+                trophy_back: None,
                 pokedex: Default::default(),
                 rare_offer: None,
                 // Apps start folded; clicking one opens its pages.

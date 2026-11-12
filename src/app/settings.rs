@@ -643,6 +643,10 @@ impl App {
                 // Clicking the page you're on takes you back to its top
                 // (coming back to the Pokédex keeps your place in the grid).
                 self.setup.scroll_top = current == tab || tab != Tab::Pokedex;
+                // a trophy opened from Stats doesn't stick around in the Pokédex
+                if self.setup.trophy_back.take().is_some() {
+                    self.setup.dex.open = None;
+                }
                 self.setup.tab = tab;
                 self.setup.picking_target = false;
                 self.setup.view_run = None;

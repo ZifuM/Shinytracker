@@ -59,20 +59,38 @@ fn month_of(day: i64) -> (i64, u32) {
 impl App {
     /// The Stats page: every hunt together, or the current hunt.
     pub(super) fn page_stats(&mut self, ui: &mut egui::Ui) {
-        kit::page_header(ui, "STATS", "Your hunting in numbers: luck, pace, habits and records.");
-        self.recent_runs(ui);
-        ui.add_space(16.0);
+        kit::page_header(ui, "STATS", "Your hunting in numbers: how much, how lucky, when and what you meet.");
         let mut tab = self.setup.stats_tab;
         let current = self.run_info(super::RunRef::Current);
         let hunt_label = match &current {
             Some(i) if !i.name.is_empty() => format!("Current hunt · {}", i.name),
             _ => "Current hunt".to_string(),
         };
-        kit::tab_bar(ui, &mut tab, &[(StatsTab::Lifetime, "Lifetime"), (StatsTab::Hunt, hunt_label.as_str())]);
+        // one row: which view on the left, the time range pinned to the right
+        let mut period = self.setup.stats_period;
+        ui.horizontal(|ui| {
+            kit::segmented(ui, &mut tab, &[(StatsTab::Lifetime, "Overview"), (StatsTab::Hunt, hunt_label.as_str())]);
+            if tab == StatsTab::Lifetime {
+                use super::stats_overview::StatsPeriod as P;
+                let opts = [(P::Week, "7 days"), (P::Month, "30 days"), (P::Year, "12 months"), (P::All, "All time")];
+                // last frame's width, so the switch can sit flush right
+                let wid = egui::Id::new("stats-period-w");
+                let w = ui.ctx().data(|d| d.get_temp::<f32>(wid)).unwrap_or(330.0);
+                ui.add_space((ui.available_width() - w).max(12.0));
+                let x0 = ui.cursor().min.x;
+                kit::segmented(ui, &mut period, &opts);
+                let used = ui.min_rect().max.x - x0;
+                if (used - w).abs() > 0.5 {
+                    ui.ctx().data_mut(|d| d.insert_temp(wid, used));
+                    ui.ctx().request_repaint();
+                }
+            }
+        });
         self.setup.stats_tab = tab;
-        ui.add_space(14.0);
+        self.setup.stats_period = period;
+        ui.add_space(16.0);
         match tab {
-            StatsTab::Lifetime => self.lifetime_dashboard(ui),
+            StatsTab::Lifetime => self.stats_overview(ui),
             StatsTab::Hunt => match current {
                 Some(info) => {
                     let st = info.stats.clone().unwrap_or_default();
@@ -91,6 +109,7 @@ impl App {
 
     /// The three most recently active runs as cards, each with a button to
     /// its stats.
+    #[allow(dead_code)]
     fn recent_runs(&mut self, ui: &mut egui::Ui) {
         use super::RunRef;
         let mut refs: Vec<(u64, RunRef)> = Vec::new();
@@ -190,6 +209,7 @@ impl App {
         (bresp.clicked() || resp.clicked()) && (bresp.clicked() || !bresp.hovered())
     }
 
+    #[allow(dead_code)]
     pub(super) fn lifetime_dashboard(&mut self, ui: &mut egui::Ui) {
         let l = self.lifetime_full();
         // every run's stats once (current, other saved runs, caught hunts)
