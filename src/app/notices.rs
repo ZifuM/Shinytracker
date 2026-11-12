@@ -169,7 +169,7 @@ impl App {
             };
             if due {
                 self.last_update_check = Some(now_i);
-                update::check(self.updater.clone(), ctx.clone(), self.cfg.installed_update.clone());
+                update::check(self.updater.clone(), ctx.clone(), self.cfg.installed_update.clone(), self.cfg.prerelease_updates);
             }
         }
         match update::get(&self.updater) {

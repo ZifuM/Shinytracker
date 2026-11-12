@@ -489,6 +489,8 @@ pub struct Config {
     pub session_goal: u64,
     /// Check GitHub for new versions and download them.
     pub auto_update: bool,
+    /// Also update to GitHub pre-releases (test builds), not just full releases.
+    pub prerelease_updates: bool,
     /// The release this copy was last updated to (stops a re-download loop
     /// if that release's .exe reports an older version number).
     pub installed_update: Option<String>,
@@ -595,6 +597,7 @@ impl Default for Config {
             break_minutes: 90,
             session_goal: 0,
             auto_update: true,
+            prerelease_updates: false,
             installed_update: None,
             settings_pos: None,
             settings_size: None,

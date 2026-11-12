@@ -829,6 +829,40 @@ impl App {
                 &mut self.cfg.auto_update,
             );
             ui.add_space(6.0);
+            // Which releases to update to: full releases, or pre-releases too.
+            let mut pre = self.cfg.prerelease_updates;
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("Builds").size(kit::fs(13.0)).color(TEXT()));
+                    ui.label(
+                        RichText::new("Pre-release builds are test versions: newest features first, but they may have bugs.")
+                            .size(kit::fs(11.5))
+                            .color(MUTED()),
+                    );
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let label = |p: bool| if p { "Pre-release builds" } else { "Latest release only" };
+                    egui::ComboBox::from_id_salt("update-builds").selected_text(label(pre)).width(190.0).show_ui(ui, |ui| {
+                        ui.selectable_value(&mut pre, false, label(false));
+                        ui.selectable_value(&mut pre, true, label(true));
+                    });
+                });
+            });
+            if pre != self.cfg.prerelease_updates {
+                self.cfg.prerelease_updates = pre;
+                self.dirty = true;
+                // Look again straight away with the new choice.
+                let state = update::get(&self.updater);
+                if matches!(state, State::Idle | State::UpToDate | State::Failed(_)) {
+                    if let Ok(mut g) = self.updater.lock() {
+                        *g = State::Idle;
+                    }
+                    self.last_update_check = Some(std::time::Instant::now());
+                    self.update_dismissed = false;
+                    update::check(self.updater.clone(), ui.ctx().clone(), self.cfg.installed_update.clone(), pre);
+                }
+            }
+            ui.add_space(6.0);
             ui.horizontal(|ui| {
                 let state = update::get(&self.updater);
                 if ui
@@ -845,7 +879,7 @@ impl App {
                     }
                     self.last_update_check = Some(std::time::Instant::now());
                     self.update_dismissed = false;
-                    update::check(self.updater.clone(), ui.ctx().clone(), self.cfg.installed_update.clone());
+                    update::check(self.updater.clone(), ui.ctx().clone(), self.cfg.installed_update.clone(), self.cfg.prerelease_updates);
                 }
                 if matches!(state, State::Ready { .. })
                     && kit::accent_button(ui, egui::Button::new(RichText::new("Restart to update").strong().color(theme::button_ink())), 6.0).clicked()

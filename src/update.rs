@@ -1,6 +1,7 @@
 //! Auto-update from the GitHub releases of ZifuM/Shinytracker.
 //!
-//! A background thread asks GitHub for the latest release. If its version
+//! A background thread asks GitHub for the latest release (or, with
+//! pre-releases turned on, the newest release of any kind). If its version
 //! (the tag, e.g. "v0.3.0") is newer than this build, it downloads the
 //! release's .exe next to the running one as "Shiny Tracker.update.exe",
 //! reporting progress. "Restart to update" then swaps the files: the running
@@ -95,7 +96,7 @@ pub fn cleanup() {
 /// latest is still that one, there's nothing new, even when the build's own
 /// version number says otherwise (a release whose .exe was labelled with an
 /// older version would otherwise be downloaded again on every start).
-pub fn check(shared: Shared, ctx: eframe::egui::Context, installed: Option<String>) {
+pub fn check(shared: Shared, ctx: eframe::egui::Context, installed: Option<String>, prerelease: bool) {
     {
         let Ok(mut g) = shared.lock() else { return };
         if matches!(*g, State::Checking | State::Downloading { .. } | State::Ready { .. }) {
@@ -104,7 +105,7 @@ pub fn check(shared: Shared, ctx: eframe::egui::Context, installed: Option<Strin
         *g = State::Checking;
     }
     std::thread::spawn(move || {
-        let result = run(&shared, &ctx, installed.as_deref());
+        let result = run(&shared, &ctx, installed.as_deref(), prerelease);
         if let Err(e) = result {
             set(&shared, State::Failed(e));
         }
@@ -112,8 +113,16 @@ pub fn check(shared: Shared, ctx: eframe::egui::Context, installed: Option<Strin
     });
 }
 
-fn run(shared: &Shared, ctx: &eframe::egui::Context, installed: Option<&str>) -> Result<(), String> {
-    let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
+/// Does a release have an .exe to download?
+fn has_exe(release: &serde_json::Value) -> bool {
+    release["assets"]
+        .as_array()
+        .is_some_and(|a| a.iter().any(|x| x["name"].as_str().is_some_and(|n| n.to_lowercase().ends_with(".exe"))))
+}
+
+/// GitHub's answer for `path` (under the repo's API address), as JSON.
+fn github(path: &str) -> Result<serde_json::Value, String> {
+    let url = format!("https://api.github.com/repos/{REPO}/{path}");
     let resp = ureq::get(&url)
         .set("User-Agent", "ShinyTracker-updater")
         .set("Accept", "application/vnd.github+json")
@@ -124,7 +133,28 @@ fn run(shared: &Shared, ctx: &eframe::egui::Context, installed: Option<&str>) ->
             other => format!("Couldn't reach GitHub ({other})"),
         })?;
     let body = resp.into_string().map_err(|e| e.to_string())?;
-    let json: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+    serde_json::from_str(&body).map_err(|e| e.to_string())
+}
+
+/// The newest release: the latest full release, or with `prerelease` the
+/// highest version of any release (pre-releases included) that has an .exe.
+fn newest_release(prerelease: bool) -> Result<serde_json::Value, String> {
+    if !prerelease {
+        return github("releases/latest");
+    }
+    let list = github("releases?per_page=30")?;
+    let releases = list.as_array().cloned().unwrap_or_default();
+    releases
+        .into_iter()
+        .filter(|r| !r["draft"].as_bool().unwrap_or(false) && has_exe(r))
+        .filter_map(|r| parse_version(r["tag_name"].as_str().unwrap_or("")).map(|v| (v, r)))
+        .max_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1["prerelease"].as_bool().unwrap_or(false).cmp(&a.1["prerelease"].as_bool().unwrap_or(false))))
+        .map(|(_, r)| r)
+        .ok_or_else(|| "No releases published yet".to_string())
+}
+
+fn run(shared: &Shared, ctx: &eframe::egui::Context, installed: Option<&str>, prerelease: bool) -> Result<(), String> {
+    let json = newest_release(prerelease)?;
     let tag = json["tag_name"].as_str().unwrap_or("").to_string();
     let same_as_installed = installed.is_some_and(|i| parse_version(i).is_some() && parse_version(i) == parse_version(&tag));
     if !is_newer(&tag, VERSION) || same_as_installed {
