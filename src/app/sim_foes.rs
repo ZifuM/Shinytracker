@@ -63,6 +63,8 @@ pub(super) struct FoeView {
     pub time: Option<Time>,
     /// What the last roll gave, in words.
     pub rolled: Option<String>,
+    /// The place, method and time the catch odds were last set from.
+    pub synced: Option<(String, String, Time)>,
 }
 
 /// One kind of Pokémon you can meet in a place.
@@ -351,6 +353,16 @@ impl App {
             }
         });
         let time = v.time.unwrap_or_default();
+        // The catch odds follow the place, method and time; a hand-ticked box
+        // stays until one of those changes.
+        let here = (v.area.clone(), v.method.clone(), time);
+        if v.synced.as_ref() != Some(&here) && !v.area.is_empty() {
+            let cave = w.place(&v.area).is_some_and(|p| p.cave) || v.method == "cave";
+            let c = &mut self.setup.sim.catch;
+            c.sit.night_or_cave = cave || time == Time::Night;
+            c.sit.water = matches!(v.method.as_str(), "surf" | "old_rod" | "good_rod" | "super_rod");
+            v.synced = Some(here);
+        }
         let slots = table(w, &v.area, &v.method, time, world, more);
         ui.add_space(8.0);
         let mut chosen: Option<Slot> = None;
@@ -426,11 +438,9 @@ impl App {
                     *f = m;
                 }
             }
-            // what the catch odds should know about this place
-            let cave = w.place(&v.area).is_some_and(|p| p.cave) || v.method == "cave";
+            // a fresh encounter: first turn, full HP, and the place's flags
+            v.synced = None;
             let c = &mut self.setup.sim.catch;
-            c.sit.night_or_cave = cave || time == Time::Night;
-            c.sit.water = matches!(v.method.as_str(), "surf" | "old_rod" | "good_rod" | "super_rod");
             c.sit.turn = 0;
             c.hp = 1.0;
             self.setup.sim.setup.place = pname;

@@ -2,12 +2,11 @@
 //! trainer or a catch test. This is its start screen: who's on your side,
 //! what kind of battle, who's on theirs, and the catch odds.
 
-use super::team_home::{caps, chip, now_secs, small, world_badge, x_button};
+use super::team_home::{chip, now_secs, small, world_badge, x_button};
 use super::ui_kit::{self as kit, CARD, CARD_HOVER, LINE, MUTED, TEXT};
 use super::{App, Tab};
-use crate::battle::{self, World};
-use crate::calc::Status;
-use crate::sim::{self, Ball, CatchSituation, Format, Mode, Setup, SimFile, BALLS};
+use crate::battle::World;
+use crate::sim::{self, Format, Mode, Setup, SimFile};
 use crate::teams::Member;
 use crate::theme;
 use eframe::egui::{self, Align2, Color32, Rect, RichText, Sense, Stroke};
@@ -15,20 +14,6 @@ use std::time::{Duration, Instant};
 
 pub(super) const RED: Color32 = Color32::from_rgb(236, 92, 92);
 pub(super) const OURS: Color32 = super::team_home::ACCENT;
-
-/// The catch-odds controls.
-#[derive(Clone, Copy)]
-pub(super) struct CatchView {
-    pub hp: f32,
-    pub status: Status,
-    pub sit: CatchSituation,
-}
-
-impl Default for CatchView {
-    fn default() -> Self {
-        CatchView { hp: 1.0, status: Status::None, sit: CatchSituation::default() }
-    }
-}
 
 #[derive(Default)]
 pub(super) struct SimState {
@@ -40,9 +25,11 @@ pub(super) struct SimState {
     /// The battle being set up.
     pub setup: Setup,
     pub started: bool,
-    pub catch: CatchView,
+    pub catch: super::sim_catch::CatchView,
     /// A note under the Start button.
     pub note: Option<String>,
+    /// Scroll to the Catch Lab's throws once.
+    pub scroll_lab: bool,
     /// Picking and building the opponent.
     pub foe: super::sim_foes::FoeView,
 }
@@ -371,6 +358,7 @@ impl App {
             let resp = ui.add_enabled_ui(ready.is_ok(), |ui| kit::accent_button_w(ui, egui::Button::new(RichText::new(label).size(14.0)), 8.0, 130.0)).inner;
             let resp = match &ready {
                 Err(why) => resp.on_disabled_hover_text(why.as_str()),
+                Ok(()) if s.mode == Mode::Catch => resp.on_hover_text("Go to the throws in the Catch Lab"),
                 Ok(()) => resp.on_hover_text("The battle screen is still being built: for now this saves the setup to Recent"),
             };
             *start = resp.clicked();
@@ -480,6 +468,10 @@ impl App {
     /// Whether the setup can start, and why not.
     fn sim_ready(&mut self) -> Result<(), String> {
         let s = self.setup.sim.setup.clone();
+        // the catch odds only need the wild Pokémon
+        if s.mode == Mode::Catch {
+            return if s.foes.is_empty() { Err("Pick a wild Pokémon".into()) } else { Ok(()) };
+        }
         let Some(t) = s.team.and_then(|id| self.setup.team.teams().teams.iter().find(|t| t.id == id).cloned()) else {
             return Err("Pick one of your teams".into());
         };
@@ -506,6 +498,16 @@ impl App {
     }
 
     fn sim_start(&mut self) {
+        if self.setup.sim.setup.mode == Mode::Catch {
+            // a catch test happens right here, in the Catch Lab
+            self.setup.sim.scroll_lab = true;
+            let mut s = self.setup.sim.setup.clone();
+            s.when = now_secs();
+            self.setup.sim.file().remember(s);
+            self.setup.sim.touch();
+            self.setup.sim.note = None;
+            return;
+        }
         let mut s = self.setup.sim.setup.clone();
         s.when = now_secs();
         s.world = s.team.and_then(|id| self.setup.team.teams().teams.iter().find(|t| t.id == id).map(|t| t.world)).unwrap_or_default();
@@ -520,142 +522,6 @@ impl App {
             Mode::Trainer => self.sim_trainers(ui),
             _ => self.sim_wild(ui),
         }
-    }
-
-    /// Every ball's chance against the wild Pokémon, in this situation.
-    fn sim_catch(&mut self, ui: &mut egui::Ui) {
-        let s = self.setup.sim.setup.clone();
-        let sel = if s.format == Format::Doubles && s.mode == Mode::Wild { self.setup.sim.foe.sel } else { 0 };
-        let Some(f) = s.foes.get(sel).or(s.foes.first()).cloned() else { return };
-        let world = s.team.and_then(|id| self.setup.team.teams().teams.iter().find(|t| t.id == id).map(|t| t.world)).unwrap_or_default();
-        let Some(sp) = battle::data().species(&f.species) else { return };
-        let Some(rate) = sim::data().catch_rate(sp.num) else { return };
-        let max_hp = f.final_stats(world).map(|s| s[0] as u32).unwrap_or(100).max(1);
-        let ty = sp.types_in(world).to_vec();
-        let mut cv = self.setup.sim.catch;
-        cv.sit.level = f.level;
-        cv.sit.water_or_bug = ty.iter().any(|t| t == "Water" || t == "Bug");
-        let prices: Vec<(String, u32)> = self.wiki.as_ref().map(|w| w.data.items.iter().filter(|i| i.pocket == "Poké Balls").map(|i| (i.name.clone(), i.price.chars().filter(|c| c.is_ascii_digit()).collect::<String>().parse().unwrap_or(0))).collect()).unwrap_or_default();
-        kit::card(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(format!("Catch odds: {}", f.species)).font(crate::fonts::sans_bold_font(16.0)).color(TEXT()));
-                ui.label(small(format!("catch rate {rate} · Platinum's formula, one throw")));
-            });
-            ui.add_space(10.0);
-            let avail = ui.available_width();
-            let wide = avail >= 900.0;
-            let ctl_w = if wide { 300.0 } else { avail };
-            let controls = |ui: &mut egui::Ui, cv: &mut CatchView| {
-                ui.label(caps("ITS HP"));
-                ui.horizontal(|ui| {
-                    let mut pct = (cv.hp * 100.0).round() as u32;
-                    let label = if pct == 0 { "1 HP".to_string() } else { format!("{pct}%") };
-                    if kit::slider_u32(ui, &mut pct, 0..=100, &label).changed() {
-                        cv.hp = pct as f32 / 100.0;
-                    }
-                });
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-                    for (v, l) in [(1.0f32, "Full"), (0.5, "Half"), (0.2, "Red HP"), (0.0, "1 HP")] {
-                        if chip(ui, l, (cv.hp - v).abs() < 0.005, kit::C_VIOLET).clicked() {
-                            cv.hp = v;
-                        }
-                    }
-                });
-                ui.add_space(8.0);
-                ui.label(caps("STATUS"));
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-                    for (v, l) in [(Status::None, "None"), (Status::Sleep, "Asleep ×2"), (Status::Freeze, "Frozen ×2"), (Status::Paralysis, "Paralyzed ×1.5"), (Status::Poison, "Poisoned ×1.5"), (Status::Burn, "Burned ×1.5")] {
-                        if chip(ui, l, cv.status == v, kit::C_VIOLET).clicked() {
-                            cv.status = v;
-                        }
-                    }
-                });
-                ui.add_space(8.0);
-                ui.label(caps("THE BATTLE"));
-                ui.horizontal(|ui| {
-                    ui.label(small("Turn"));
-                    let mut t = cv.sit.turn + 1;
-                    ui.add(egui::DragValue::new(&mut t).range(1..=99).speed(0.2));
-                    cv.sit.turn = t - 1;
-                    ui.label(small(if cv.sit.turn == 0 { "(first throw)" } else { "" }));
-                });
-                kit::checkbox(ui, &mut cv.sit.night_or_cave, "At night or in a cave");
-                kit::checkbox(ui, &mut cv.sit.water, "Surfing or fishing");
-                kit::checkbox(ui, &mut cv.sit.caught_before, "Caught one before");
-            };
-            let table = |ui: &mut egui::Ui, cv: &CatchView| {
-                let hp = ((max_hp as f32 * cv.hp).round() as u32).clamp(1, max_hp);
-                let sm = sim::status_mult(cv.status);
-                let mut rows: Vec<(Ball, f64, f64)> = BALLS
-                    .iter()
-                    .filter(|b| **b != Ball::Safari && **b != Ball::Cherish)
-                    .map(|b| {
-                        let m = sim::ball_mult(*b, &cv.sit);
-                        (*b, m, sim::catch_chance(rate, max_hp, hp, m, sm))
-                    })
-                    .collect();
-                rows.sort_by(|a, b| (a.0 == Ball::Master).cmp(&(b.0 == Ball::Master)).then(b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal)));
-                let best = rows.first().map(|r| r.2).unwrap_or(0.0);
-                let full = ui.available_width();
-                for (b, m, p) in rows {
-                    let (r, resp) = ui.allocate_exact_size(egui::vec2(full, 30.0), Sense::hover());
-                    let pt = ui.painter().clone();
-                    let top = (p - best).abs() < 1e-9 && b != Ball::Master;
-                    if top {
-                        pt.rect_filled(r, 8.0, theme::blend(CARD(), kit::C_VIOLET, 0.12));
-                    } else if resp.hovered() {
-                        pt.rect_filled(r, 8.0, kit::sunken());
-                    }
-                    pt.text(egui::pos2(r.min.x + 10.0, r.center().y), Align2::LEFT_CENTER, b.name(), crate::fonts::sans_bold_font(12.5), TEXT());
-                    let ms = if b == Ball::Master { "—".to_string() } else { format!("×{}", trim(m)) };
-                    pt.text(egui::pos2(r.min.x + 118.0, r.center().y), Align2::LEFT_CENTER, ms, crate::fonts::sans_font(11.5), if m > 1.0 { super::charts::ink(kit::C_VIOLET) } else { MUTED() });
-                    let bx = r.min.x + 160.0;
-                    let bw = (full - 160.0 - 230.0).max(60.0);
-                    let bar = Rect::from_min_size(egui::pos2(bx, r.center().y - 5.0), egui::vec2(bw, 10.0));
-                    pt.rect_filled(bar, 5.0, kit::sunken());
-                    pt.rect_filled(Rect::from_min_size(bar.min, egui::vec2(bw * p as f32, 10.0)), 5.0, if top { kit::C_VIOLET } else { theme::blend(kit::C_VIOLET, MUTED(), 0.45) });
-                    pt.text(egui::pos2(bar.max.x + 10.0, r.center().y), Align2::LEFT_CENTER, format!("{:.1}%", p * 100.0), crate::fonts::sans_bold_font(12.5), TEXT());
-                    let need = sim::balls_for(p, 0.9);
-                    let price = prices.iter().find(|(n, _)| n == b.name()).map(|x| x.1).unwrap_or(0);
-                    let txt = match need {
-                        Some(1) => "1 is enough".to_string(),
-                        Some(n) if n <= 999 => {
-                            if price > 0 {
-                                format!("{n} for 90%  ·  ₽{}", thousands(n * price))
-                            } else {
-                                format!("{n} for 90%")
-                            }
-                        }
-                        _ => "almost never".to_string(),
-                    };
-                    pt.text(egui::pos2(r.max.x - 8.0, r.center().y), Align2::RIGHT_CENTER, txt, crate::fonts::sans_font(11.5), MUTED());
-                    if !b.when().is_empty() {
-                        resp.on_hover_text(b.when());
-                    }
-                }
-            };
-            if wide {
-                ui.horizontal_top(|ui| {
-                    ui.spacing_mut().item_spacing.x = 24.0;
-                    ui.allocate_ui_with_layout(egui::vec2(ctl_w, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                        ui.set_width(ctl_w);
-                        controls(ui, &mut cv);
-                    });
-                    let rw = ui.available_width();
-                    ui.allocate_ui_with_layout(egui::vec2(rw, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                        ui.set_width(rw);
-                        table(ui, &cv);
-                    });
-                });
-            } else {
-                controls(ui, &mut cv);
-                ui.add_space(10.0);
-                table(ui, &cv);
-            }
-        });
-        self.setup.sim.catch = cv;
     }
 
     /// The last setups, to start again with one click.
@@ -748,12 +614,12 @@ fn world_label(ui: &mut egui::Ui, w: World) {
     world_badge(ui.painter(), egui::pos2(r.max.x, r.center().y), w, true);
 }
 
-fn trim(m: f64) -> String {
+pub(super) fn trim(m: f64) -> String {
     let s = format!("{m:.2}");
     s.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
-fn thousands(n: u32) -> String {
+pub(super) fn thousands(n: u32) -> String {
     let s = n.to_string();
     let mut out = String::new();
     for (i, c) in s.chars().enumerate() {

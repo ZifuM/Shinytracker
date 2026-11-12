@@ -326,26 +326,52 @@ fn isqrt(n: u64) -> u64 {
     (n as f64).sqrt().floor() as u64
 }
 
-/// The chance (0–1) one ball catches it, by Platinum's formula: the catch
-/// value X, then four shake checks.
-pub fn catch_chance(rate: u16, max_hp: u32, hp: u32, ball: f64, status: f64) -> f64 {
+/// The shake value b (out of 65,536) each of the four checks must beat,
+/// or None when the ball can't fail. X is the catch value.
+fn shake_value(rate: u16, max_hp: u32, hp: u32, ball: f64, status: f64) -> Result<u64, bool> {
     if ball >= 255.0 {
-        return 1.0;
+        return Err(true);
     }
     let m = max_hp.max(1) as f64;
     let h = hp.clamp(1, max_hp.max(1)) as f64;
     let x = ((((3.0 * m - 2.0 * h) * rate as f64 * ball) / (3.0 * m)).floor() * status).floor();
     if x >= 255.0 {
-        return 1.0;
+        return Err(true);
     }
     if x < 1.0 {
-        return 0.0;
+        return Err(false);
     }
     let b = 1_048_560u64 / isqrt(isqrt(16_711_680u64 / x as u64)).max(1);
     if b >= 65_536 {
-        return 1.0;
+        return Err(true);
     }
-    (b as f64 / 65_536.0).powi(4)
+    Ok(b)
+}
+
+/// The chance (0–1) one ball catches it, by Platinum's formula: the catch
+/// value X, then four shake checks.
+pub fn catch_chance(rate: u16, max_hp: u32, hp: u32, ball: f64, status: f64) -> f64 {
+    match shake_value(rate, max_hp, hp, ball, status) {
+        Err(true) => 1.0,
+        Err(false) => 0.0,
+        Ok(b) => (b as f64 / 65_536.0).powi(4),
+    }
+}
+
+/// One throw: how many times the ball shakes (0–3) and whether it's caught.
+pub fn throw(rate: u16, max_hp: u32, hp: u32, ball: f64, status: f64, rng: &mut Rng) -> (u8, bool) {
+    match shake_value(rate, max_hp, hp, ball, status) {
+        Err(true) => (3, true),
+        Err(false) => (0, false),
+        Ok(b) => {
+            for i in 0..4u8 {
+                if rng.below(65_536) as u64 >= b {
+                    return (i.min(3), false);
+                }
+            }
+            (3, true)
+        }
+    }
 }
 
 /// How many balls to have a `want` chance (0–1) of a catch by then.
@@ -606,6 +632,12 @@ mod tests {
         assert_eq!(ball_mult(Ball::Nest, &s), 3.0);
         assert_eq!(ball_mult(Ball::Timer, &CatchSituation { turn: 40, ..s }), 4.0);
         assert_eq!(balls_for(0.5, 0.9), Some(4));
+        // throws land near the odds
+        let mut r = Rng::new(3);
+        let p = catch_chance(45, 100, 30, 2.0, 1.5);
+        let n = 20_000;
+        let caught = (0..n).filter(|_| throw(45, 100, 30, 2.0, 1.5, &mut r).1).count() as f64 / n as f64;
+        assert!((caught - p).abs() < 0.015, "{caught} vs {p}");
     }
 
     #[test]
