@@ -70,6 +70,8 @@ pub struct Vol {
     pub endure: bool,
     pub sub: u16,
     pub seeded: bool,
+    /// Who planted the seed (it gets the HP).
+    pub seeder: usize,
     /// Outrage and the like: (move, turns left).
     pub locked: Option<(usize, u8)>,
     /// Fly, Solar Beam…: the move it's charging.
@@ -174,7 +176,8 @@ impl BMon {
 pub struct BSide {
     pub name: String,
     pub mons: Vec<BMon>,
-    pub active: usize,
+    /// Who's on the field: one slot in singles, two in doubles.
+    pub slots: Vec<usize>,
     pub reflect: u8,
     pub light_screen: u8,
     pub safeguard: u8,
@@ -184,33 +187,41 @@ pub struct BSide {
     pub spikes: u8,
     pub tspikes: u8,
     pub rocks: bool,
-    /// (turns, HP) a Wish heals.
-    pub wish: Option<(u8, u16)>,
-    /// Future Sight / Doom Desire: (turns, damage, move).
-    pub future: Option<(u8, u16, String)>,
+    /// (turns, HP, slot) a Wish heals.
+    pub wish: Option<(u8, u16, usize)>,
+    /// Future Sight / Doom Desire: (turns, damage, move, slot).
+    pub future: Option<(u8, u16, String, usize)>,
     pub items: Vec<(String, u8)>,
     pub ai: Ai,
+    #[allow(dead_code)]
     pub trainer: bool,
     /// The Pokémon that leaves the field heal fully (Healing Wish).
     pub healing_wish: bool,
 }
 
 impl BSide {
+    /// The first one on the field.
     pub fn act(&self) -> &BMon {
-        &self.mons[self.active]
+        &self.mons[self.active()]
+    }
+    pub fn active(&self) -> usize {
+        self.slots.first().copied().unwrap_or(0)
     }
     pub fn left(&self) -> usize {
         self.mons.iter().filter(|m| !m.fainted()).count()
     }
     pub fn can_switch_to(&self, i: usize) -> bool {
-        i != self.active && self.mons.get(i).is_some_and(|m| !m.fainted())
+        !self.slots.contains(&i) && self.mons.get(i).is_some_and(|m| !m.fainted())
     }
 }
 
 /// What a side does this turn.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
+    /// A move at the usual target.
     Move(usize),
+    /// A move at a chosen battler (doubles).
+    At(usize, usize),
     Switch(usize),
     Ball(Ball),
     /// (item, which party member).
@@ -245,7 +256,7 @@ pub enum Ev {
     SwitchIn { side: usize, mon: usize, hp: u16, max: u16, status: Status },
     Out { side: usize },
     Faint { side: usize },
-    Throw { ball: Ball, shakes: u8, caught: bool },
+    Throw { at: usize, ball: Ball, shakes: u8, caught: bool },
     Weather(Weather),
     End(Outcome),
 }
@@ -253,8 +264,8 @@ pub enum Ev {
 /// What the battle is waiting for from you.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Ask {
-    /// Pick who goes in (after a faint, or U-turn / Baton Pass).
-    Switch { baton: bool },
+    /// Pick who goes in at this slot (after a faint, or U-turn / Baton Pass).
+    Switch { slot: usize, baton: bool },
 }
 
 #[derive(Clone, Debug)]
@@ -295,6 +306,10 @@ pub struct Battle {
     pub run_tries: u32,
     /// Moves Metronome can call (only filled when someone knows it).
     pub pool: std::sync::Arc<Vec<MoveSlot>>,
+    /// This move hits more than one target (the 0.75 cut).
+    spread_now: bool,
+    /// Life Orb already took its toll this move.
+    lo_done: bool,
     steps: VecDeque<Step>,
     /// Sides that already acted this turn (Sucker Punch, flinch…).
     order: Vec<usize>,
@@ -382,7 +397,13 @@ impl BMon {
 
 impl Battle {
     /// A battle between your Pokémon and theirs. `wild` for a wild encounter.
+    #[allow(dead_code)]
     pub fn new(ours: Vec<BMon>, theirs: Vec<BMon>, wild: bool, world: World, seed: u64) -> Battle {
+        Battle::new_format(ours, theirs, wild, world, seed, false)
+    }
+
+    /// The same, in singles or doubles.
+    pub fn new_format(ours: Vec<BMon>, theirs: Vec<BMon>, wild: bool, world: World, seed: u64, doubles: bool) -> Battle {
         let mut b = Battle {
             sides: [BSide { name: "You".into(), mons: ours, ..Default::default() }, BSide { name: "Foe".into(), mons: theirs, trainer: !wild, ..Default::default() }],
             weather: Weather::None,
@@ -400,13 +421,20 @@ impl Battle {
             rng: Rng::new(seed),
             run_tries: 0,
             pool: Default::default(),
+            spread_now: false,
+            lo_done: false,
             steps: VecDeque::new(),
             order: Vec::new(),
             last_used: None,
         };
-        // the first able one leads
+        // the first able ones lead (two each in doubles, when there are two)
         for s in 0..2 {
-            b.sides[s].active = b.sides[s].mons.iter().position(|m| !m.fainted()).unwrap_or(0);
+            let able: Vec<usize> = (0..b.sides[s].mons.len()).filter(|&i| !b.sides[s].mons[i].fainted()).collect();
+            let n = if doubles { 2 } else { 1 };
+            b.sides[s].slots = able.into_iter().take(n).collect();
+            if b.sides[s].slots.is_empty() {
+                b.sides[s].slots.push(0);
+            }
         }
         b
     }
@@ -435,28 +463,71 @@ impl Battle {
     /// Send out the leads and say hello.
     pub fn start(&mut self, intro: &str) {
         self.say(intro.to_string());
-        for s in [1, 0] {
-            if self.sides[s].mons.is_empty() {
+        for side in [1, 0] {
+            if self.sides[side].mons.is_empty() {
                 continue;
             }
-            if s == 1 && !self.wild {
-                let n = self.sides[1].act().name.clone();
-                self.say(format!("{} sent out {n}!", self.sides[1].name));
-            } else if s == 0 {
-                let n = self.sides[0].act().name.clone();
-                self.say(format!("Go! {n}!"));
+            let names: Vec<String> = self.sides[side].slots.iter().map(|&i| self.sides[side].mons[i].name.clone()).collect();
+            let both = names.join(" and ");
+            if side == 1 && !self.wild {
+                self.say(format!("{} sent out {both}!", self.sides[1].name));
+            } else if side == 0 {
+                self.say(format!("Go! {both}!"));
             }
-            self.enter(s);
+            for slot in 0..self.sides[side].slots.len() {
+                self.enter(slot * 2 + side);
+            }
         }
         self.check_end();
     }
 
-    pub fn act(&self, s: usize) -> &BMon {
-        self.sides[s].act()
+    // ───────────────────────────── battlers ─────────────────────────────
+    // A battler is a place on the field: side = b & 1, slot = b >> 1.
+    // In singles that's just 0 (you) and 1 (them).
+
+    /// The party index of the one at battler `b`.
+    pub fn mi(&self, b: usize) -> usize {
+        let sd = &self.sides[b & 1];
+        sd.slots.get(b >> 1).or(sd.slots.first()).copied().unwrap_or(0)
     }
-    fn actm(&mut self, s: usize) -> &mut BMon {
-        let a = self.sides[s].active;
-        &mut self.sides[s].mons[a]
+    pub fn act(&self, b: usize) -> &BMon {
+        &self.sides[b & 1].mons[self.mi(b)]
+    }
+    fn actm(&mut self, b: usize) -> &mut BMon {
+        let i = self.mi(b);
+        &mut self.sides[b & 1].mons[i]
+    }
+    pub fn doubles(&self) -> bool {
+        self.sides.iter().any(|s| s.slots.len() > 1)
+    }
+    /// Every place on the field (fainted ones too).
+    pub fn battlers(&self) -> Vec<usize> {
+        let n = self.sides[0].slots.len().max(self.sides[1].slots.len());
+        (0..n * 2).filter(|b| (b >> 1) < self.sides[b & 1].slots.len()).collect()
+    }
+    /// Someone able is there.
+    pub fn present(&self, b: usize) -> bool {
+        (b >> 1) < self.sides[b & 1].slots.len() && !self.sides[b & 1].mons.is_empty() && !self.act(b).fainted()
+    }
+    /// The able ones on the other side.
+    pub fn foes(&self, b: usize) -> Vec<usize> {
+        self.battlers().into_iter().filter(|x| (x & 1) != (b & 1) && self.present(*x)).collect()
+    }
+    pub fn ally(&self, b: usize) -> Option<usize> {
+        let a = b ^ 2;
+        (self.present(a)).then_some(a)
+    }
+    /// The usual target: the one across, or the other foe.
+    pub fn foe(&self, b: usize) -> usize {
+        let across = b ^ 1;
+        if self.present(across) {
+            return across;
+        }
+        self.foes(b).first().copied().unwrap_or(across)
+    }
+    /// Battler of a party member, if it's on the field.
+    pub fn battler_of(&self, side: usize, mon: usize) -> Option<usize> {
+        self.sides[side].slots.iter().position(|&m| m == mon).map(|slot| slot * 2 + side)
     }
 
     // ───────────────────────────── words ─────────────────────────────
@@ -464,7 +535,7 @@ impl Battle {
     /// "Gible", "The foe's Gible", "The wild Gible".
     pub fn who(&self, s: usize) -> String {
         let n = &self.act(s).name;
-        if s == 0 {
+        if s & 1 == 0 {
             n.clone()
         } else if self.wild {
             format!("The wild {n}")
@@ -475,7 +546,7 @@ impl Battle {
     /// The same, mid-sentence.
     fn who_l(&self, s: usize) -> String {
         let w = self.who(s);
-        if s == 0 {
+        if s & 1 == 0 {
             w
         } else {
             let mut c = w.chars();
@@ -504,7 +575,7 @@ impl Battle {
 
     /// The weather as it works now (Air Lock / Cloud Nine switch it off).
     pub fn eff_weather(&self) -> Weather {
-        if (0..2).any(|s| !self.sides[s].mons.is_empty() && !self.act(s).fainted() && (self.act(s).has_ab("Air Lock") || self.act(s).has_ab("Cloud Nine"))) {
+        if (0..2).any(|s| !self.sides[s & 1].mons.is_empty() && !self.act(s).fainted() && (self.act(s).has_ab("Air Lock") || self.act(s).has_ab("Cloud Nine"))) {
             Weather::None
         } else {
             self.weather
@@ -512,20 +583,20 @@ impl Battle {
     }
 
     fn cside(&self, s: usize) -> calc::Side {
-        let x = &self.sides[s];
+        let x = &self.sides[s & 1];
         calc::Side {
             reflect: x.reflect > 0,
             light_screen: x.light_screen > 0,
             stealth_rock: x.rocks,
             spikes: x.spikes,
             helping_hand: false,
-            foresight: x.mons.get(x.active).is_some_and(|m| m.v.foresight),
+            foresight: self.present(s) && self.act(s).v.foresight,
             switching: false,
         }
     }
 
     fn field(&self, att: usize, def: usize) -> calc::Field {
-        calc::Field { weather: self.weather, doubles: false, gravity: self.gravity > 0, atk: self.cside(att), def: self.cside(def) }
+        calc::Field { weather: self.weather, doubles: self.doubles(), gravity: self.gravity > 0, atk: self.cside(att), def: self.cside(def) }
     }
 
     fn cmon(&self, s: usize) -> calc::Mon {
@@ -559,7 +630,7 @@ impl Battle {
     pub fn speed(&self, s: usize) -> u32 {
         let f = calc::Field { weather: self.weather, ..Default::default() };
         let mut sp = calc::final_speed(&self.cmon(s), &f);
-        if self.sides[s].tailwind > 0 {
+        if self.sides[s & 1].tailwind > 0 {
             sp *= 2;
         }
         sp
@@ -615,8 +686,8 @@ impl Battle {
         if m.v.cant_escape {
             return Some(format!("{} can't escape!", m.name));
         }
-        let o = self.act(1 - s);
-        if !o.fainted() {
+        for f in self.foes(s) {
+            let o = self.act(f);
             if o.has_ab("Shadow Tag") && !m.has_ab("Shadow Tag") {
                 return Some(format!("{}'s Shadow Tag stops it leaving.", o.name));
             }
@@ -630,16 +701,22 @@ impl Battle {
         None
     }
 
-    /// Run one turn: your action and theirs.
+    /// Run one turn in singles: your action and theirs.
+    #[allow(dead_code)]
     pub fn play(&mut self, mine: Action, theirs: Action) {
+        self.play_all(vec![(0, mine), (1, theirs)]);
+    }
+
+    /// Run one turn: an action for each battler on the field.
+    pub fn play_all(&mut self, acts: Vec<(usize, Action)>) {
         if self.result.is_some() || self.ask.is_some() {
             return;
         }
         self.turn += 1;
         self.ev(Ev::Turn(self.turn));
         self.order.clear();
-        for s in 0..2 {
-            let m = self.actm(s);
+        for b in self.battlers() {
+            let m = self.actm(b);
             m.v.flinch = false;
             m.v.protect = false;
             m.v.endure = false;
@@ -647,13 +724,13 @@ impl Battle {
             m.v.moved = false;
             m.v.roost = false;
         }
-        let acts = [self.fill(0, mine), self.fill(1, theirs)];
+        let acts: Vec<(usize, Action)> = acts.into_iter().filter(|(b, _)| self.present(*b)).map(|(b, a)| (b, self.fill(b, a))).collect();
         // running, balls, items and switches go before moves
         let mut first: Vec<(usize, Action)> = Vec::new();
         let mut moves: Vec<(usize, Action)> = Vec::new();
-        for (s, a) in acts.into_iter().enumerate() {
+        for (s, a) in acts {
             match a {
-                Action::Move(_) | Action::Auto => moves.push((s, a)),
+                Action::Move(_) | Action::At(..) | Action::Auto => moves.push((s, a)),
                 _ => first.push((s, a)),
             }
         }
@@ -679,18 +756,21 @@ impl Battle {
         if v.recharge {
             return Action::Auto;
         }
-        if let Action::Move(i) = a {
-            if let Some((e, _)) = v.encore {
-                return Action::Move(e);
+        match a {
+            Action::Move(i) | Action::At(i, _) if v.encore.is_some() => {
+                let e = v.encore.map(|x| x.0).unwrap_or(i);
+                match a {
+                    Action::At(_, t) => Action::At(e, t),
+                    _ => Action::Move(e),
+                }
             }
-            return Action::Move(i);
+            _ => a,
         }
-        a
     }
 
     fn priority(&self, s: usize, a: &Action) -> i8 {
         match a {
-            Action::Move(i) => self.act(s).moves.get(*i).map(|m| m.pri).unwrap_or(0),
+            Action::Move(i) | Action::At(i, _) => self.act(s).moves.get(*i).map(|m| m.pri).unwrap_or(0),
             _ => 0,
         }
     }
@@ -716,12 +796,9 @@ impl Battle {
             let sp = if b.trick_room > 0 { -sp } else { sp };
             (pri, bracket, sp, b.rng.below(1000))
         };
-        let k0 = key(self, moves[0].0, &moves[0].1);
-        let k1 = key(self, moves[1].0, &moves[1].1);
-        if k1 > k0 {
-            moves.swap(0, 1);
-        }
-        moves
+        let mut keyed: Vec<((i8, i8, i64, u32), (usize, Action))> = moves.drain(..).map(|(s, a)| (key(self, s, &a), (s, a))).collect();
+        keyed.sort_by(|a, b| b.0.cmp(&a.0));
+        keyed.into_iter().map(|(_, x)| x).collect()
     }
 
     fn run(&mut self) {
@@ -745,36 +822,42 @@ impl Battle {
 
     /// Your pick of who goes in (when `ask` is set).
     pub fn answer(&mut self, mon: usize) {
-        let Some(Ask::Switch { baton }) = self.ask.clone() else { return };
+        let Some(Ask::Switch { slot, baton }) = self.ask.clone() else { return };
         if !self.sides[0].can_switch_to(mon) {
             return;
         }
+        let b = slot * 2;
         self.ask = None;
-        if !self.act(0).fainted() {
-            let n = self.act(0).name.clone();
+        if !self.act(b).fainted() {
+            let n = self.act(b).name.clone();
             self.say(format!("{n}, come back!"));
         }
-        self.switch_to(0, mon, baton);
+        self.switch_to(b, mon, baton);
         self.run();
     }
 
-    /// Who should go in for this side (the AI's pick), for after a faint.
+    /// Someone not on the field who can still fight.
+    fn has_bench(&self, side: usize) -> bool {
+        (0..self.sides[side].mons.len()).any(|k| self.sides[side].can_switch_to(k))
+    }
+
+    /// Fill the places of fainted Pokémon: you choose, the AI picks for them.
     fn replace(&mut self) -> bool {
-        // yours first: ask
-        for s in 0..2 {
-            if !self.act(s).fainted() || self.sides[s].left() == 0 {
+        for b in self.battlers() {
+            let side = b & 1;
+            if !self.act(b).fainted() || !self.has_bench(side) {
                 continue;
             }
-            if s == 0 {
+            if side == 0 {
                 if self.ask.is_none() {
-                    self.ask = Some(Ask::Switch { baton: false });
+                    self.ask = Some(Ask::Switch { slot: b >> 1, baton: false });
                 }
                 return false;
             }
-            let i = self.ai_replacement(1);
+            let i = self.ai_replacement(b);
             let n = self.sides[1].mons[i].name.clone();
             self.say(format!("{} sent out {n}!", self.sides[1].name));
-            self.switch_to(1, i, false);
+            self.switch_to(b, i, false);
         }
         true
     }
@@ -825,19 +908,20 @@ impl Battle {
             Action::Ball(b) => self.throw_ball(s, b),
             Action::Item(name, mon) => self.use_item(s, &name, mon),
             Action::Switch(i) => {
-                if !self.sides[s].can_switch_to(i) {
+                if !self.sides[s & 1].can_switch_to(i) {
                     return;
                 }
-                if s == 0 {
-                    let n = self.act(0).name.clone();
+                if s & 1 == 0 {
+                    let n = self.act(s).name.clone();
                     self.say(format!("{n}, come back!"));
                 } else {
                     let n = self.sides[1].name.clone();
-                    self.say(format!("{n} withdrew {}!", self.act(1).name));
+                    self.say(format!("{n} withdrew {}!", self.act(s).name));
                 }
                 self.switch_to(s, i, false);
             }
-            Action::Move(i) => self.use_move(s, i, false),
+            Action::Move(i) => self.use_move(s, i, false, None),
+            Action::At(i, t) => self.use_move(s, i, false, Some(t)),
             Action::Auto => {
                 if self.act(s).v.recharge {
                     self.actm(s).v.recharge = false;
@@ -862,7 +946,7 @@ impl Battle {
         }
         self.run_tries += 1;
         let a = self.speed(0);
-        let b = self.speed(1);
+        let b = self.speed(self.foe(0));
         let ok = self.act(0).has_ab("Run Away") || self.act(0).has_item("Smoke Ball") || a >= b || {
             let f = (a * 128 / ((b / 4) % 256).max(1)) + 30 * self.run_tries;
             f > 255 || self.rng.below(256) < f
@@ -876,15 +960,21 @@ impl Battle {
     }
 
     fn throw_ball(&mut self, s: usize, b: Ball) {
-        let you = s == 0;
-        self.tally[s].balls.push(b);
+        let you = s & 1 == 0;
+        self.tally[s & 1].balls.push(b);
         if !self.wild || !you {
             self.say(format!("You threw a {}!", b.name()));
             self.say("The Trainer blocked the Ball! Don't be a thief!".into());
             return;
         }
+        let foes = self.foes(s);
+        if foes.len() > 1 {
+            self.say("It's no good! It's impossible to aim when there are two Pokémon!".into());
+            return;
+        }
+        let at = self.foe(s);
         self.say(format!("You threw a {}!", b.name()));
-        let m = self.act(1).clone();
+        let m = self.act(at).clone();
         if m.v.hidden.is_some() {
             self.say("But it missed!".into());
             return;
@@ -896,7 +986,7 @@ impl Battle {
         sit.water_or_bug = m.types.iter().any(|t| t == "Water" || t == "Bug");
         let mult = sim::ball_mult(b, &sit);
         let (shakes, caught) = sim::throw(rate, m.max() as u32, m.hp as u32, mult, sim::status_mult(m.status), &mut self.rng);
-        self.ev(Ev::Throw { ball: b, shakes, caught });
+        self.ev(Ev::Throw { at, ball: b, shakes, caught });
         if caught {
             self.say(format!("Gotcha! {} was caught!", m.name));
             self.finish(Outcome::Caught);
@@ -914,19 +1004,21 @@ impl Battle {
     }
 
     fn use_item(&mut self, s: usize, name: &str, mon: usize) {
-        if s == 1 {
+        if s & 1 == 1 {
             if let Some(x) = self.sides[1].items.iter_mut().find(|x| x.0 == name && x.1 > 0) {
                 x.1 -= 1;
             } else {
                 return;
             }
         }
-        self.tally[s].items += 1;
-        let user = if s == 0 { "You".to_string() } else { self.sides[1].name.clone() };
-        let mon = if self.sides[s].mons.get(mon).is_some() { mon } else { self.sides[s].active };
-        let is_active = mon == self.sides[s].active;
-        let target_name = self.sides[s].mons[mon].name.clone();
-        self.say(format!("{user} used {name}{}!", if s == 0 { format!(" on {target_name}") } else { String::new() }));
+        self.tally[s & 1].items += 1;
+        let user = if s & 1 == 0 { "You".to_string() } else { self.sides[1].name.clone() };
+        let mon = if self.sides[s & 1].mons.get(mon).is_some() { mon } else { self.mi(s) };
+        let on_field = self.battler_of(s & 1, mon);
+        let is_active = on_field.is_some();
+        let fb = on_field.unwrap_or(s);
+        let target_name = self.sides[s & 1].mons[mon].name.clone();
+        self.say(format!("{user} used {name}{}!", if s & 1 == 0 { format!(" on {target_name}") } else { String::new() }));
         if let Some(i) = match name {
             "X Attack" => Some(1),
             "X Defend" => Some(2),
@@ -937,13 +1029,13 @@ impl Battle {
             _ => None,
         } {
             if is_active {
-                self.boost(s, i, 1, true);
+                self.boost(fb, i, 1, true);
             } else {
                 self.say("But it had no effect.".into());
             }
             return;
         }
-        let m = &mut self.sides[s].mons[mon];
+        let m = &mut self.sides[s & 1].mons[mon];
         let max = m.max();
         let mut words: Vec<String> = Vec::new();
         let revive = matches!(name, "Revive" | "Max Revive");
@@ -989,29 +1081,29 @@ impl Battle {
                 words.push(format!("{target_name} is getting pumped!"));
             }
             "Guard Spec." => {
-                self.sides[s].mist = 5;
+                self.sides[s & 1].mist = 5;
                 words.push("Your team became shrouded in mist!".into());
             }
             _ => words.push("But it had no effect.".into()),
         }
-        let st = self.sides[s].mons[mon].status;
+        let st = self.sides[s & 1].mons[mon].status;
         for w in words {
             self.say(w);
         }
         if is_active {
-            self.hp_ev(s);
-            self.ev(Ev::Status { side: s, status: st });
+            self.hp_ev(fb);
+            self.ev(Ev::Status { side: fb, status: st });
         }
     }
 
     // ───────────────────────────── switching ─────────────────────────────
 
     fn switch_to(&mut self, s: usize, i: usize, baton: bool) {
-        let old = self.sides[s].active;
-        let carried = if baton { Some((self.sides[s].mons[old].boosts, self.sides[s].mons[old].v.clone())) } else { None };
+        let old = self.mi(s);
+        let carried = if baton { Some((self.sides[s & 1].mons[old].boosts, self.sides[s & 1].mons[old].v.clone())) } else { None };
         // leaving
         {
-            let m = &mut self.sides[s].mons[old];
+            let m = &mut self.sides[s & 1].mons[old];
             if m.has_ab("Natural Cure") && !m.fainted() {
                 m.status = Status::None;
             }
@@ -1027,13 +1119,16 @@ impl Battle {
             }
             m.v = Vol::default();
         }
-        // a foe bound to this one is let go
-        let o = self.sides[1 - s].active;
-        self.sides[1 - s].mons[o].v.bound = None;
-        self.sides[1 - s].mons[o].v.cant_escape = false;
-        self.sides[1 - s].mons[o].v.attract = false;
+        // foes held by this one are let go
+        for f in self.foes(s) {
+            let m = self.actm(f);
+            m.v.bound = None;
+            m.v.cant_escape = false;
+            m.v.attract = false;
+        }
         self.ev(Ev::Out { side: s });
-        self.sides[s].active = i;
+        let slot = (s >> 1).min(self.sides[s & 1].slots.len().saturating_sub(1));
+        self.sides[s & 1].slots[slot] = i;
         if let Some((b, v)) = carried {
             let m = self.actm(s);
             m.boosts = b;
@@ -1051,8 +1146,8 @@ impl Battle {
             m.v.cant_escape = v.cant_escape;
             m.v.no_ability = v.no_ability;
         }
-        if s == 0 {
-            let n = self.act(0).name.clone();
+        if s & 1 == 0 {
+            let n = self.act(s).name.clone();
             self.say(format!("Go! {n}!"));
         }
         self.enter(s);
@@ -1065,11 +1160,11 @@ impl Battle {
             m.seen = true;
             m.v.turns_out = 0;
         }
-        let i = self.sides[s].active;
+        let i = self.mi(s);
         let (hp, max, status) = (self.act(s).hp, self.act(s).max(), self.act(s).status);
         self.ev(Ev::SwitchIn { side: s, mon: i, hp, max, status });
-        if self.sides[s].healing_wish {
-            self.sides[s].healing_wish = false;
+        if self.sides[s & 1].healing_wish {
+            self.sides[s & 1].healing_wish = false;
             let m = self.actm(s);
             m.hp = m.max();
             m.status = Status::None;
@@ -1081,7 +1176,7 @@ impl Battle {
         // hazards
         let m = self.act(s).clone();
         if !m.has_ab("Magic Guard") {
-            if self.sides[s].rocks {
+            if self.sides[s & 1].rocks {
                 let e = calc::eff("Rock", &m.types, self.world);
                 let d = ((e * m.max() as f32 / 8.0).floor() as u16).max(1);
                 let w = self.who(s);
@@ -1094,8 +1189,8 @@ impl Battle {
                 }
             }
             let ground = m.grounded(self.gravity > 0);
-            if ground && self.sides[s].spikes > 0 {
-                let d = m.max() / [8, 6, 4][(self.sides[s].spikes as usize - 1).min(2)];
+            if ground && self.sides[s & 1].spikes > 0 {
+                let d = m.max() / [8, 6, 4][(self.sides[s & 1].spikes as usize - 1).min(2)];
                 let w = self.who(s);
                 self.say(format!("{w} is hurt by spikes!"));
                 self.damage_raw(s, d.max(1));
@@ -1103,13 +1198,13 @@ impl Battle {
                     return;
                 }
             }
-            if ground && self.sides[s].tspikes > 0 {
+            if ground && self.sides[s & 1].tspikes > 0 {
                 if m.is("Poison") {
-                    self.sides[s].tspikes = 0;
+                    self.sides[s & 1].tspikes = 0;
                     let w = self.who(s);
                     self.say(format!("{w} absorbed the poison spikes!"));
                 } else {
-                    let st = if self.sides[s].tspikes >= 2 { Status::Toxic } else { Status::Poison };
+                    let st = if self.sides[s & 1].tspikes >= 2 { Status::Toxic } else { Status::Poison };
                     self.set_status(s, st, None, false);
                 }
             }
@@ -1119,22 +1214,24 @@ impl Battle {
 
     fn on_enter_ability(&mut self, s: usize) {
         let m = self.act(s).clone();
-        let o = 1 - s;
-        if self.sides[o].mons.is_empty() {
+        if self.sides[(s & 1) ^ 1].mons.is_empty() {
             return;
         }
+        let o = self.foe(s);
         let ab = if m.v.no_ability { "" } else { m.ability.as_str() };
         match ab {
-            "Intimidate" if !self.act(o).fainted() => {
-                let w = self.whos(s);
-                self.say(format!("{w} Intimidate cuts {}'s Attack!", self.who_l(o)));
-                let om = self.act(o);
-                if om.has_ab("Clear Body") || om.has_ab("White Smoke") || om.has_ab("Hyper Cutter") || om.v.sub > 0 {
-                    let n = self.whos(o);
-                    self.say(format!("{n} Attack was not lowered!"));
-                } else {
-                    let n = if om.has_ab("Simple") { -2 } else { -1 };
-                    self.boost(o, 1, n, false);
+            "Intimidate" => {
+                for o in self.foes(s) {
+                    let w = self.whos(s);
+                    self.say(format!("{w} Intimidate cuts {}'s Attack!", self.who_l(o)));
+                    let om = self.act(o);
+                    if om.has_ab("Clear Body") || om.has_ab("White Smoke") || om.has_ab("Hyper Cutter") || om.v.sub > 0 {
+                        let n = self.whos(o);
+                        self.say(format!("{n} Attack was not lowered!"));
+                    } else {
+                        let n = if om.has_ab("Simple") { -2 } else { -1 };
+                        self.boost(o, 1, n, false);
+                    }
                 }
             }
             "Drizzle" => self.set_weather(Weather::Rain, 0, Some(s)),
@@ -1241,7 +1338,7 @@ impl Battle {
         let m = self.actm(s);
         m.status = Status::None;
         m.v = Vol::default();
-        if self.wild && s == 1 {
+        if self.wild && s & 1 == 1 && self.sides[1].left() == 0 {
             self.finish(Outcome::Won);
         }
     }
@@ -1261,7 +1358,7 @@ impl Battle {
             n = (n * 2).clamp(-6, 6);
         }
         if n < 0 && !own {
-            if self.sides[s].mist > 0 {
+            if self.sides[s & 1].mist > 0 {
                 let n = self.who(s);
                 self.say(format!("{n} is protected by the mist!"));
                 return false;
@@ -1328,7 +1425,7 @@ impl Battle {
             }
             return false;
         }
-        if by.is_some_and(|b| b != s) && self.sides[s].safeguard > 0 {
+        if by.is_some_and(|b| b != s) && self.sides[s & 1].safeguard > 0 {
             if loud {
                 self.say(format!("{w} is protected by Safeguard!"));
             }
@@ -1549,7 +1646,7 @@ impl Battle {
             }
         }
         if m.v.attract {
-            let o = self.act(1 - s).name.clone();
+            let o = self.act(self.foe(s)).name.clone();
             self.say(format!("{w} is in love with {o}!"));
             if self.rng.chance(0.5) {
                 self.say(format!("{w} is immobilized by love!"));
@@ -1563,8 +1660,12 @@ impl Battle {
         true
     }
 
-    fn use_move(&mut self, s: usize, i: usize, called: bool) {
-        let o = 1 - s;
+    fn use_move(&mut self, s: usize, i: usize, called: bool, want: Option<usize>) {
+        // the one it's aimed at (moves that hit several work it out below)
+        let o = match want {
+            Some(t) if self.present(t) && t != s => t,
+            _ => self.foe(s),
+        };
         // Struggle when nothing has PP
         let me = self.act(s).clone();
         let mut mv = if me.moves.iter().all(|m| m.pp == 0) || me.moves.is_empty() { MoveSlot::struggle() } else { me.moves.get(i).cloned().unwrap_or_else(MoveSlot::struggle) };
@@ -1607,7 +1708,7 @@ impl Battle {
         let w = self.who(s);
         // PP (charging turn 2 and locked turns don't use more)
         if !struggle && !called && !charging_now && !locked_now {
-            let cost = if self.act(o).has_ab("Pressure") && !self.act(o).fainted() { 2 } else { 1 };
+            let cost = if self.foes(s).iter().any(|f| self.act(*f).has_ab("Pressure")) { 2 } else { 1 };
             let mm = self.actm(s);
             if let Some(m) = mm.moves.get_mut(i) {
                 m.pp = m.pp.saturating_sub(cost);
@@ -1673,7 +1774,7 @@ impl Battle {
                         self.say(format!("Waggling a finger let it use {}!", p.name));
                         self.actm(s).moves.push(MoveSlot { pp: 1, ..p });
                         let idx = self.act(s).moves.len() - 1;
-                        self.use_move(s, idx, true);
+                        self.use_move(s, idx, true, want);
                         if !self.act(s).moves.is_empty() && self.act(s).moves.len() > idx {
                             self.actm(s).moves.truncate(idx);
                         }
@@ -1693,7 +1794,7 @@ impl Battle {
                     return;
                 }
                 let k = opts[self.rng.below(opts.len() as u32) as usize];
-                self.use_move(s, k, true);
+                self.use_move(s, k, true, want);
                 return;
             }
             "mirrormove" | "copycat" => {
@@ -1702,7 +1803,7 @@ impl Battle {
                     Some(m2) if m2.id != "mirrormove" && m2.id != "copycat" => {
                         self.actm(s).moves.push(MoveSlot { pp: 1, ..m2 });
                         let idx = self.act(s).moves.len() - 1;
-                        self.use_move(s, idx, true);
+                        self.use_move(s, idx, true, want);
                         self.actm(s).moves.pop();
                     }
                     _ => self.say("But it failed!".into()),
@@ -1768,14 +1869,17 @@ impl Battle {
             }
             _ => {}
         }
-        // does it reach?
-        let target_self = matches!(mv.fx.target.as_str(), "self" | "allySide" | "all" | "allyTeam" | "adjacentAllyOrSelf") || mv.fx.side_condition.is_some() && mv.fx.target != "foeSide";
+        // who it reaches
+        let targets = self.targets_for(s, &mv, want);
+        let target_self = targets.first() == Some(&s);
         let targets_foe = !target_self;
-        let om = self.act(o).clone();
-        if targets_foe && om.fainted() {
+        if targets.is_empty() || (targets_foe && !targets.iter().any(|t| self.present(*t))) {
             self.say("But there was no target...".into());
+            self.end_lock(s, i);
             return;
         }
+        let o = if targets_foe { targets.iter().copied().find(|t| self.present(*t)).unwrap_or(o) } else { o };
+        let om = self.act(o).clone();
         // Sucker Punch / Focus Punch / Fake Out conditions
         match mv.id.as_str() {
             "suckerpunch" => {
@@ -1811,63 +1915,136 @@ impl Battle {
             }
             _ => {}
         }
-        // Protect
-        if targets_foe && om.v.protect && mv.flag("protect") {
-            let n = self.who(o);
-            self.say(format!("{n} protected itself!"));
-            if mv.fx.crash {
-                self.crash(s, &mv);
+        let multi = targets.len() > 1;
+        self.spread_now = multi && !mv.status();
+        self.lo_done = false;
+        let mut hit_any = false;
+        for t in targets {
+            if self.result.is_some() || self.act(s).fainted() {
+                break;
             }
-            self.end_lock(s, i);
-            return;
-        }
-        // semi-invulnerable targets
-        if targets_foe {
-            if let Some(h) = &om.v.hidden {
-                let hits = match h.as_str() {
-                    "fly" => matches!(mv.id.as_str(), "thunder" | "gust" | "twister" | "skyuppercut"),
-                    "dig" => matches!(mv.id.as_str(), "earthquake" | "magnitude"),
-                    "dive" => matches!(mv.id.as_str(), "surf" | "whirlpool"),
-                    _ => false,
-                };
-                if !hits && !self.act(s).has_ab("No Guard") && !om.has_ab("No Guard") {
-                    self.say(format!("{} avoided the attack!", self.who(o)));
-                    self.end_lock(s, i);
-                    return;
+            let on_foe = t != s;
+            if on_foe && !self.present(t) {
+                continue;
+            }
+            let tm = self.act(t).clone();
+            // Protect
+            if on_foe && tm.v.protect && mv.flag("protect") {
+                let n = self.who(t);
+                self.say(format!("{n} protected itself!"));
+                if mv.fx.crash && !multi {
+                    self.crash(s, t, &mv);
+                }
+                continue;
+            }
+            // semi-invulnerable targets
+            if on_foe {
+                if let Some(h) = &tm.v.hidden {
+                    let hits = match h.as_str() {
+                        "fly" => matches!(mv.id.as_str(), "thunder" | "gust" | "twister" | "skyuppercut"),
+                        "dig" => matches!(mv.id.as_str(), "earthquake" | "magnitude"),
+                        "dive" => matches!(mv.id.as_str(), "surf" | "whirlpool"),
+                        _ => false,
+                    };
+                    if !hits && !self.act(s).has_ab("No Guard") && !tm.has_ab("No Guard") {
+                        self.say(format!("{} avoided the attack!", self.who(t)));
+                        continue;
+                    }
                 }
             }
-        }
-        // accuracy
-        if targets_foe && !self.hits(s, o, &mv) {
-            self.tally[s].misses += 1;
-            self.say(format!("{w}'s attack missed!"));
-            if mv.fx.crash {
-                self.crash(s, &mv);
+            // accuracy
+            if on_foe && !self.hits(s, t, &mv) {
+                self.tally[s & 1].misses += 1;
+                if multi {
+                    self.say(format!("{} avoided the attack!", self.who(t)));
+                } else {
+                    self.say(format!("{w}'s attack missed!"));
+                }
+                if mv.fx.crash && !multi {
+                    self.crash(s, t, &mv);
+                }
+                continue;
             }
-            self.end_lock(s, i);
-            return;
+            hit_any = true;
+            if mv.status() {
+                self.status_move(s, i, &mv, t);
+            } else {
+                self.damaging_move(s, i, &mv, t);
+            }
         }
-        if mv.status() {
-            self.status_move(s, i, &mv);
-        } else {
-            self.damaging_move(s, i, &mv);
+        // Life Orb after a move that hit several
+        if self.spread_now && self.lo_done && mv.fx.selfdestruct.is_none() && !self.act(s).fainted() && self.act(s).has_item("Life Orb") && !self.act(s).has_ab("Magic Guard") {
+            let d = (self.act(s).max() / 10).max(1);
+            self.say(format!("{w} lost some of its HP!"));
+            self.damage_raw(s, d);
+        }
+        self.spread_now = false;
+        if !hit_any {
+            self.end_lock(s, i);
+        }
+        // Explosion takes the user down whatever happened
+        if mv.fx.selfdestruct.is_some() && !self.act(s).fainted() && self.result.is_none() {
+            self.actm(s).hp = 0;
+            self.hp_ev(s);
+            self.faint(s);
         }
         // a lock (Outrage) counts down (not for a move another move called)
-        if self.result.is_none() && !called {
+        if self.result.is_none() && !called && hit_any {
             self.tick_lock(s, i, &mv);
+        }
+    }
+
+    /// Who a move hits: one chosen foe, both foes, everyone near it, its
+    /// ally, a random foe, or itself (and the field).
+    fn targets_for(&mut self, s: usize, mv: &MoveSlot, want: Option<usize>) -> Vec<usize> {
+        let foes = self.foes(s);
+        match mv.fx.target.as_str() {
+            "self" | "allySide" | "all" | "allyTeam" | "adjacentAllyOrSelf" => vec![s],
+            _ if mv.fx.side_condition.is_some() && mv.fx.target != "foeSide" => vec![s],
+            "foeSide" => vec![self.foe(s)],
+            "allAdjacentFoes" => {
+                if foes.is_empty() {
+                    vec![self.foe(s)]
+                } else {
+                    foes
+                }
+            }
+            "allAdjacent" => {
+                let mut v = foes;
+                if let Some(a) = self.ally(s) {
+                    v.push(a);
+                }
+                if v.is_empty() {
+                    v.push(self.foe(s));
+                }
+                v
+            }
+            "adjacentAlly" => self.ally(s).into_iter().collect(),
+            "randomNormal" => {
+                if foes.is_empty() {
+                    vec![self.foe(s)]
+                } else {
+                    let k = self.rng.below(foes.len() as u32) as usize;
+                    vec![foes[k]]
+                }
+            }
+            _ => match want {
+                Some(t) if t != s && self.present(t) => vec![t],
+                _ => vec![self.foe(s)],
+            },
         }
     }
 
     fn pending_move(&self, s: usize) -> Option<&MoveSlot> {
         self.steps.iter().find_map(|st| match st {
-            Step::Act { side, action: Action::Move(k) } if *side == s => self.act(s).moves.get(*k),
+            Step::Act { side, action: Action::Move(k) | Action::At(k, _) } if *side == s => self.act(s).moves.get(*k),
             _ => None,
         })
     }
 
     fn find_move(&self, id: &str) -> Option<MoveSlot> {
         for s in 0..2 {
-            for m in &self.sides[s].mons {
+            for m in &self.sides[s & 1].mons {
                 if let Some(x) = m.moves.iter().find(|x| x.id == id) {
                     return Some(x.clone());
                 }
@@ -1917,8 +2094,7 @@ impl Battle {
         }
     }
 
-    fn crash(&mut self, s: usize, mv: &MoveSlot) {
-        let o = 1 - s;
+    fn crash(&mut self, s: usize, o: usize, mv: &MoveSlot) {
         let (h, _) = self.calc_hit(s, o, mv, false);
         let d = ((h.rolls[8] / 2) as u16).min(self.act(o).max() / 2).max(1);
         let w = self.who(s);
@@ -2026,7 +2202,7 @@ impl Battle {
             sound: mv.flag("sound"),
             recoil: mv.fx.recoil.is_some(),
             crash: mv.fx.crash,
-            spread: false,
+            spread: self.spread_now,
             crit,
         };
         (calc::damage(&a, &d, &cm, &f, self.world), cm)
@@ -2035,7 +2211,7 @@ impl Battle {
     fn crit_roll(&mut self, s: usize, o: usize, mv: &MoveSlot) -> bool {
         let a = self.act(s);
         let d = self.act(o);
-        if d.has_ab("Battle Armor") || d.has_ab("Shell Armor") || self.sides[o].lucky_chant > 0 {
+        if d.has_ab("Battle Armor") || d.has_ab("Shell Armor") || self.sides[o & 1].lucky_chant > 0 {
             return false;
         }
         if mv.fx.will_crit {
@@ -2064,8 +2240,7 @@ impl Battle {
         self.rng.chance(chance)
     }
 
-    fn damaging_move(&mut self, s: usize, i: usize, mv: &MoveSlot) {
-        let o = 1 - s;
+    fn damaging_move(&mut self, s: usize, i: usize, mv: &MoveSlot, o: usize) {
         let w = self.who(s);
         let om = self.act(o).clone();
         let am = self.act(s).clone();
@@ -2107,7 +2282,7 @@ impl Battle {
                 }
                 self.end_lock(s, i);
                 if mv.fx.crash {
-                    self.crash(s, mv);
+                    self.crash(s, o, mv);
                 }
                 return;
             }
@@ -2158,7 +2333,7 @@ impl Battle {
             };
             if crit {
                 any_crit = true;
-                self.tally[s].crits += 1;
+                self.tally[s & 1].crits += 1;
             }
             // a resist berry was used up
             if fixed.is_none() && calc::berry_resist_type(&self.act(o).item).is_some_and(|t| t == mv.t) && (eff > 1.0 || mv.t == "Normal") && self.act(o).v.embargo == 0 {
@@ -2242,9 +2417,9 @@ impl Battle {
                 // the effectiveness line comes before the faint
                 if hits == 1 && fixed.is_none() {
                     if eff > 1.0 {
-                        self.say("It's super effective!".into());
+                        self.say(self.eff_line(true, o));
                     } else if eff < 1.0 && eff > 0.0 {
-                        self.say("It's not very effective...".into());
+                        self.say(self.eff_line(false, o));
                     }
                     said_eff = true;
                 }
@@ -2269,9 +2444,9 @@ impl Battle {
         }
         if !said_eff {
             if eff > 1.0 && fixed.is_none() {
-                self.say("It's super effective!".into());
+                self.say(self.eff_line(true, o));
             } else if eff < 1.0 && eff > 0.0 && fixed.is_none() {
-                self.say("It's not very effective...".into());
+                self.say(self.eff_line(false, o));
             }
         }
         let _ = any_crit;
@@ -2281,7 +2456,7 @@ impl Battle {
         if mv.fx.ohko.is_some() && self.act(o).fainted() {
             self.say("It's a one-hit KO!".into());
         }
-        self.tally[s].damage += total;
+        self.tally[s & 1].damage += total;
         self.actm(s).dealt += total;
         let fainted_now = self.act(o).fainted();
         if fainted_now {
@@ -2333,7 +2508,11 @@ impl Battle {
                     self.say(format!("{w} restored a little HP using its Shell Bell!"));
                 }
             }
-            if self.act(s).has_item("Life Orb") && !self.act(s).has_ab("Magic Guard") {
+            if self.spread_now && mv.fx.selfdestruct.is_none() {
+                // on a move that hits several, it takes its toll once, after them all
+                self.lo_done = true;
+            } else if self.act(s).has_item("Life Orb") && !self.act(s).has_ab("Magic Guard") && mv.fx.selfdestruct.is_none() && !self.lo_done {
+                self.lo_done = true;
                 let d = (self.act(s).max() / 10).max(1);
                 self.say(format!("{w} lost some of its HP!"));
                 self.lose_hp(s, d);
@@ -2370,7 +2549,7 @@ impl Battle {
         // moves with more to them
         match mv.id.as_str() {
             "rapidspin" if !self.act(s).fainted() => {
-                let sd = &mut self.sides[s];
+                let sd = &mut self.sides[s & 1];
                 sd.spikes = 0;
                 sd.tspikes = 0;
                 sd.rocks = false;
@@ -2379,9 +2558,9 @@ impl Battle {
                 m.v.bound = None;
             }
             "brickbreak" => {
-                if self.sides[o].reflect > 0 || self.sides[o].light_screen > 0 {
-                    self.sides[o].reflect = 0;
-                    self.sides[o].light_screen = 0;
+                if self.sides[o & 1].reflect > 0 || self.sides[o & 1].light_screen > 0 {
+                    self.sides[o & 1].reflect = 0;
+                    self.sides[o & 1].light_screen = 0;
                     self.say("It shattered the barrier!".into());
                 }
             }
@@ -2430,12 +2609,7 @@ impl Battle {
         if user_down {
             self.faint(s);
         }
-        // the user faints (Explosion), Destiny Bond
-        if mv.fx.selfdestruct.is_some() && !user_down {
-            self.actm(s).hp = 0;
-            self.hp_ev(s);
-            self.faint(s);
-        }
+        // Destiny Bond
         if fainted_now && om.v.destiny_bond {
             if !self.act(s).fainted() && !user_down {
                 let n = self.who(o);
@@ -2450,6 +2624,16 @@ impl Battle {
             self.self_switch(s, false);
         }
         // Roar-like damaging moves (none in Gen 4) are status moves
+    }
+
+    /// "It's super effective!" (on whom, when the move hit more than one).
+    fn eff_line(&self, sup: bool, o: usize) -> String {
+        let base = if sup { "It's super effective" } else { "It's not very effective" };
+        if self.spread_now {
+            format!("{base} on {}{}", self.who_l(o), if sup { "!" } else { "..." })
+        } else {
+            format!("{base}{}", if sup { "!" } else { "..." })
+        }
     }
 
     /// Volt Absorb, Water Absorb, Flash Fire, Motor Drive, Dry Skin…
@@ -2585,24 +2769,24 @@ impl Battle {
     }
 
     fn self_switch(&mut self, s: usize, baton: bool) {
-        let others = (0..self.sides[s].mons.len()).filter(|&k| self.sides[s].can_switch_to(k)).count();
+        let others = (0..self.sides[s & 1].mons.len()).filter(|&k| self.sides[s & 1].can_switch_to(k)).count();
         if others == 0 {
             return;
         }
-        if s == 0 {
-            self.ask = Some(Ask::Switch { baton });
+        if s & 1 == 0 {
+            self.ask = Some(Ask::Switch { slot: s >> 1, baton });
         } else {
-            let k = self.ai_replacement(1);
+            let k = self.ai_replacement(s);
             let n = self.sides[1].name.clone();
-            let w = self.who(1);
+            let w = self.who(s);
             self.say(format!("{w} went back to {n}!"));
             self.say(format!("{n} sent out {}!", self.sides[1].mons[k].name));
-            self.switch_to(1, k, baton);
+            self.switch_to(s, k, baton);
         }
     }
 
-    fn status_move(&mut self, s: usize, i: usize, mv: &MoveSlot) {
-        let o = 1 - s;
+    fn status_move(&mut self, s: usize, i: usize, mv: &MoveSlot, t: usize) {
+        let o = if t == s { self.foe(s) } else { t };
         let w = self.who(s);
         let fx = mv.fx.clone();
         let target_self = fx.target == "self" || fx.target == "allySide" || fx.target == "adjacentAllyOrSelf";
@@ -2718,7 +2902,7 @@ impl Battle {
                     return;
                 }
                 if self.wild {
-                    if s == 1 {
+                    if s & 1 == 1 {
                         self.say("You were blown away!".into());
                         self.finish(Outcome::Ran);
                     } else {
@@ -2727,19 +2911,15 @@ impl Battle {
                     }
                     return;
                 }
-                let opts: Vec<usize> = (0..self.sides[o].mons.len()).filter(|&k| self.sides[o].can_switch_to(k)).collect();
+                let opts: Vec<usize> = (0..self.sides[o & 1].mons.len()).filter(|&k| self.sides[o & 1].can_switch_to(k)).collect();
                 if opts.is_empty() {
                     self.say("But it failed!".into());
                     return;
                 }
                 let k = opts[self.rng.below(opts.len() as u32) as usize];
-                let n = self.sides[o].mons[k].name.clone();
+                let n = self.sides[o & 1].mons[k].name.clone();
                 self.switch_to(o, k, false);
-                if o == 1 {
-                    self.say(format!("{n} was dragged out!"));
-                } else {
-                    self.say(format!("{n} was dragged out!"));
-                }
+                self.say(format!("{n} was dragged out!"));
                 return;
             }
             "batonpass" => {
@@ -2747,7 +2927,7 @@ impl Battle {
                 return;
             }
             "teleport" => {
-                if self.wild && s == 0 {
+                if self.wild && s & 1 == 0 {
                     self.say("Got away safely!".into());
                     self.finish(Outcome::Ran);
                 } else if self.wild {
@@ -2774,16 +2954,16 @@ impl Battle {
                 return;
             }
             "wish" => {
-                if self.sides[s].wish.is_some() {
+                if self.sides[s & 1].wish.is_some() {
                     self.say("But it failed!".into());
                 } else {
-                    self.sides[s].wish = Some((2, self.act(s).max() / 2));
+                    self.sides[s & 1].wish = Some((2, self.act(s).max() / 2, s >> 1));
                     self.say(format!("{w} made a wish!"));
                 }
                 return;
             }
             "healbell" | "aromatherapy" => {
-                for m in &mut self.sides[s].mons {
+                for m in &mut self.sides[s & 1].mons {
                     if !m.fainted() && !(mv.id == "healbell" && m.has_ab("Soundproof")) {
                         m.status = Status::None;
                     }
@@ -2840,11 +3020,11 @@ impl Battle {
                 return;
             }
             "healingwish" | "lunardance" => {
-                if self.sides[s].left() <= 1 {
+                if self.sides[s & 1].left() <= 1 {
                     self.say("But it failed!".into());
                     return;
                 }
-                self.sides[s].healing_wish = true;
+                self.sides[s & 1].healing_wish = true;
                 self.actm(s).hp = 0;
                 self.hp_ev(s);
                 self.faint(s);
@@ -2942,13 +3122,13 @@ impl Battle {
                 return;
             }
             "futuresight" | "doomdesire" => {
-                if self.sides[o].future.is_some() {
+                if self.sides[o & 1].future.is_some() {
                     self.say("But it failed!".into());
                     return;
                 }
                 let (h, _) = self.calc_hit(s, o, &MoveSlot { cat: "Special".into(), bp: if mv.id == "futuresight" { 80 } else { 120 }, t: if mv.id == "futuresight" { "???".into() } else { "Steel".into() }, ..mv.clone() }, false);
                 let dmg = h.rolls[self.rng.below(16) as usize] as u16;
-                self.sides[o].future = Some((3, dmg, mv.name.clone()));
+                self.sides[o & 1].future = Some((3, dmg, mv.name.clone(), o >> 1));
                 self.say(format!("{w} foresaw an attack!"));
                 return;
             }
@@ -2987,7 +3167,7 @@ impl Battle {
         }
         if let Some(sc) = &fx.side_condition {
             let mine = fx.target != "foeSide";
-            let side = if mine { s } else { o };
+            let side = if mine { s & 1 } else { o & 1 };
             let light_clay = self.act(s).has_item("Light Clay");
             let sd = &mut self.sides[side];
             let line = match sc.as_str() {
@@ -3091,6 +3271,7 @@ impl Battle {
                         false
                     } else {
                         self.actm(o).v.seeded = true;
+                        self.actm(o).v.seeder = s;
                         self.say(format!("{} was seeded!", self.who(o)));
                         true
                     }
@@ -3155,7 +3336,7 @@ impl Battle {
                     true
                 }
                 "yawn" => {
-                    if d.status != Status::None || d.v.yawn > 0 || self.sides[o].safeguard > 0 {
+                    if d.status != Status::None || d.v.yawn > 0 || self.sides[o & 1].safeguard > 0 {
                         false
                     } else {
                         self.actm(o).v.yawn = 2;
@@ -3273,15 +3454,9 @@ impl Battle {
     // ───────────────────────────── end of turn ─────────────────────────────
 
     fn end_of_turn(&mut self) {
-        let order: Vec<usize> = {
-            let a = self.speed(0);
-            let b = self.speed(1);
-            if b > a {
-                vec![1, 0]
-            } else {
-                vec![0, 1]
-            }
-        };
+        // the faster ones first
+        let mut order: Vec<usize> = self.battlers();
+        order.sort_by_key(|b| std::cmp::Reverse(self.speed(*b)));
         // weather
         if self.weather != Weather::None {
             if self.weather_turns > 0 {
@@ -3356,29 +3531,31 @@ impl Battle {
             }
         }
         // Future Sight, Wish
-        for s in 0..2 {
-            if let Some((t, dmg, name)) = self.sides[s].future.clone() {
+        for side in 0..2 {
+            if let Some((t, dmg, name, slot)) = self.sides[side].future.clone() {
+                let s = (slot * 2 + side).min(self.sides[side].slots.len().saturating_sub(1) * 2 + side);
                 if t <= 1 {
-                    self.sides[s].future = None;
-                    if !self.act(s).fainted() {
+                    self.sides[side].future = None;
+                    if self.present(s) {
                         let w = self.who(s);
                         self.say(format!("{w} took the {name} attack!"));
                         self.ev(Ev::Hit { side: s, eff: 1.0, crit: false });
                         self.damage_raw(s, dmg.max(1));
                     }
                 } else {
-                    self.sides[s].future = Some((t - 1, dmg, name));
+                    self.sides[side].future = Some((t - 1, dmg, name, slot));
                 }
             }
-            if let Some((t, h)) = self.sides[s].wish {
+            if let Some((t, h, slot)) = self.sides[side].wish {
+                let s = (slot * 2 + side).min(self.sides[side].slots.len().saturating_sub(1) * 2 + side);
                 if t <= 1 {
-                    self.sides[s].wish = None;
-                    if !self.act(s).fainted() && self.heal(s, h) > 0 {
+                    self.sides[side].wish = None;
+                    if self.present(s) && self.heal(s, h) > 0 {
                         let w = self.who(s);
                         self.say(format!("{w}'s wish came true!"));
                     }
                 } else {
-                    self.sides[s].wish = Some((t - 1, h));
+                    self.sides[side].wish = Some((t - 1, h, slot));
                 }
             }
         }
@@ -3416,19 +3593,19 @@ impl Battle {
                 continue;
             }
             // Leech Seed
-            if m.v.seeded && !self.act(1 - s).fainted() && !m.has_ab("Magic Guard") {
+            let seeder = if self.present(m.v.seeder) && (m.v.seeder & 1) != (s & 1) { m.v.seeder } else { self.foe(s) };
+            if m.v.seeded && self.present(seeder) && !m.has_ab("Magic Guard") {
                 let d = (max / 8).max(1).min(self.act(s).hp);
                 self.say(format!("{w}'s health is sapped by Leech Seed!"));
                 self.damage_raw(s, d);
                 let mut h = d;
-                if self.act(1 - s).has_item("Big Root") {
+                if self.act(seeder).has_item("Big Root") {
                     h = h * 13 / 10;
                 }
                 if m.has_ab("Liquid Ooze") {
-                    let o = 1 - s;
-                    self.damage_raw(o, h);
+                    self.damage_raw(seeder, h);
                 } else {
-                    self.heal(1 - s, h);
+                    self.heal(seeder, h);
                 }
                 if self.act(s).fainted() {
                     continue;
@@ -3560,7 +3737,7 @@ impl Battle {
         }
         // the field counts down
         for s in 0..2 {
-            let sd = &mut self.sides[s];
+            let sd = &mut self.sides[s & 1];
             let mut ended: Vec<&str> = Vec::new();
             for (v, name) in [(&mut sd.reflect, "Reflect"), (&mut sd.light_screen, "Light Screen"), (&mut sd.safeguard, "Safeguard"), (&mut sd.mist, "Mist"), (&mut sd.tailwind, "Tailwind"), (&mut sd.lucky_chant, "Lucky Chant")] {
                 if *v > 0 {
@@ -3591,9 +3768,14 @@ impl Battle {
 
     // ───────────────────────────── the AI ─────────────────────────────
 
-    /// Damage as a share of the target's current HP (min, max) for one use.
+    /// Damage as a share of the usual target's max HP (min, max) for one use.
+    #[allow(dead_code)]
     pub fn estimate(&self, s: usize, i: usize) -> Option<(f32, f32)> {
-        let o = 1 - s;
+        self.estimate_vs(s, i, self.foe(s))
+    }
+
+    /// The same against battler `o`.
+    pub fn estimate_vs(&self, s: usize, i: usize, o: usize) -> Option<(f32, f32)> {
         let mv = self.act(s).moves.get(i)?;
         if mv.status() || self.act(o).fainted() {
             return None;
@@ -3628,14 +3810,13 @@ impl Battle {
     }
 
     /// How good a move looks right now (higher is better).
-    fn score_move(&self, s: usize, i: usize, ai: Ai) -> f32 {
-        let o = 1 - s;
+    fn score_move(&self, s: usize, i: usize, o: usize, ai: Ai) -> f32 {
         let me = self.act(s);
         let them = self.act(o);
         let Some(mv) = me.moves.get(i) else { return -1.0 };
         let acc = self.acc_of(s, mv);
         if !mv.status() {
-            let Some((lo, hi)) = self.estimate(s, i) else { return 0.0 };
+            let Some((lo, hi)) = self.estimate_vs(s, i, o) else { return 0.0 };
             let hp = them.hp_frac();
             let avg = (lo + hi) / 2.0;
             let mut sc = avg.min(hp) / hp.max(0.01) * 100.0 * acc;
@@ -3677,7 +3858,7 @@ impl Battle {
         let mut sc: f32 = 8.0;
         if let Some(st) = &fx.status {
             let target_self = fx.target == "self";
-            if !target_self && them.status == Status::None && them.v.sub == 0 && self.sides[o].safeguard == 0 {
+            if !target_self && them.status == Status::None && them.v.sub == 0 && self.sides[o & 1].safeguard == 0 {
                 sc = match st.as_str() {
                     "slp" => 70.0,
                     "par" => {
@@ -3724,19 +3905,19 @@ impl Battle {
                 let cur: i32 = b.keys().filter_map(|k| ["", "atk", "def", "spa", "spd", "spe", "accuracy", "evasion"].iter().position(|x| x == k)).map(|k| me.boosts[k] as i32).max().unwrap_or(0);
                 sc = if healthy > 0.65 && cur < 2 { 30.0 + 8.0 * total as f32 } else { 3.0 };
                 // don't set up into a KO
-                if ai == Ai::Expert && self.threat(o) >= healthy {
+                if ai == Ai::Expert && self.threat_to(o, s) >= healthy {
                     sc = 1.0;
                 }
             } else {
                 sc = if them.hp_frac() > 0.5 { 18.0 } else { 6.0 };
             }
         } else if let Some(sc_name) = &fx.side_condition {
-            let side = if fx.target == "foeSide" { o } else { s };
+            let side = if fx.target == "foeSide" { o & 1 } else { s & 1 };
             let sd = &self.sides[side];
             sc = match sc_name.as_str() {
-                "stealthrock" if !sd.rocks && self.sides[o].left() > 1 => 40.0,
-                "spikes" if sd.spikes < 3 && self.sides[o].left() > 1 => 30.0,
-                "toxicspikes" if sd.tspikes < 2 && self.sides[o].left() > 1 => 25.0,
+                "stealthrock" if !sd.rocks && self.sides[o & 1].left() > 1 => 40.0,
+                "spikes" if sd.spikes < 3 && self.sides[o & 1].left() > 1 => 30.0,
+                "toxicspikes" if sd.tspikes < 2 && self.sides[o & 1].left() > 1 => 25.0,
                 "reflect" if sd.reflect == 0 => 28.0,
                 "lightscreen" if sd.light_screen == 0 => 28.0,
                 "safeguard" if sd.safeguard == 0 => 10.0,
@@ -3772,34 +3953,71 @@ impl Battle {
         sc
     }
 
-    /// The most damage (share of max HP) `s` can do to the other side with one move.
-    fn threat(&self, s: usize) -> f32 {
-        (0..self.act(s).moves.len()).filter_map(|i| self.estimate(s, i)).map(|(_, hi)| hi).fold(0.0, f32::max)
+    /// The most damage (share of max HP) `a` can do to `d` with one move.
+    fn threat_to(&self, a: usize, d: usize) -> f32 {
+        (0..self.act(a).moves.len()).filter_map(|i| self.estimate_vs(a, i, d)).map(|(_, hi)| hi).fold(0.0, f32::max)
     }
 
-    /// How well `mon` of side `s` would face their current Pokémon (higher is better).
+    /// How well `mon` (of the side of battler `s`) would face the foes on the field.
     fn matchup(&self, s: usize, mon: usize) -> f32 {
-        let o = 1 - s;
-        let m = &self.sides[s].mons[mon];
-        let them = self.act(o);
+        let m = &self.sides[s & 1].mons[mon];
         if m.fainted() {
             return -999.0;
         }
-        // how hard they hit us: their types against ours
-        let hurt = them.types.iter().map(|t| calc::eff(t, &m.types, self.world)).fold(0.0, f32::max);
-        // how hard we hit them
-        let hit = m.moves.iter().filter(|x| !x.status() && x.bp > 0).map(|x| calc::eff(&x.t, &them.types, self.world) * if m.types.contains(&x.t) { 1.5 } else { 1.0 }).fold(0.0, f32::max);
-        hit * 2.0 - hurt * 2.0 + m.hp_frac() * 2.0
+        let mut foes = self.foes(s);
+        if foes.is_empty() {
+            foes.push(self.foe(s));
+        }
+        let mut total = 0.0;
+        for &o in &foes {
+            let them = self.act(o);
+            // how hard they hit us: their types against ours
+            let hurt = them.types.iter().map(|t| calc::eff(t, &m.types, self.world)).fold(0.0, f32::max);
+            // how hard we hit them
+            let hit = m.moves.iter().filter(|x| !x.status() && x.bp > 0).map(|x| calc::eff(&x.t, &them.types, self.world) * if m.types.contains(&x.t) { 1.5 } else { 1.0 }).fold(0.0, f32::max);
+            total += hit * 2.0 - hurt * 2.0;
+        }
+        total / foes.len() as f32 + m.hp_frac() * 2.0
+    }
+
+    /// How good a move looks against the best target, and that target.
+    fn best_use(&self, s: usize, i: usize, ai: Ai) -> (f32, usize) {
+        let Some(mv) = self.act(s).moves.get(i) else { return (-1.0, self.foe(s)) };
+        let foes = self.foes(s);
+        if foes.is_empty() {
+            return (self.score_move(s, i, self.foe(s), ai), self.foe(s));
+        }
+        let t = mv.fx.target.as_str();
+        if !mv.status() && (t == "allAdjacentFoes" || t == "allAdjacent") && self.doubles() {
+            // both foes (and the ally, for Earthquake and friends) at 0.75
+            let mut sc: f32 = foes.iter().map(|&o| self.score_move(s, i, o, ai) * 0.75).sum();
+            if t == "allAdjacent" {
+                if let Some(a) = self.ally(s) {
+                    let (_, hi) = self.estimate_vs(s, i, a).unwrap_or((0.0, 0.0));
+                    let ahp = self.act(a).hp_frac();
+                    sc -= hi.min(ahp) * 140.0 + if hi >= ahp && hi > 0.0 { 150.0 } else { 0.0 };
+                }
+            }
+            return (sc, foes[0]);
+        }
+        let mut best = (f32::MIN, foes[0]);
+        for &o in &foes {
+            let sc = self.score_move(s, i, o, ai);
+            if sc > best.0 {
+                best = (sc, o);
+            }
+        }
+        best
     }
 
     /// Who the AI sends out next.
     pub fn ai_replacement(&self, s: usize) -> usize {
-        let side = &self.sides[s];
+        let side = &self.sides[s & 1];
         let opts: Vec<usize> = (0..side.mons.len()).filter(|&k| side.can_switch_to(k)).collect();
         if opts.is_empty() {
-            return side.active;
+            return self.mi(s);
         }
-        if side.ai == Ai::Random && s == 1 {
+        if side.ai == Ai::Random && s & 1 == 1 {
             return opts[0];
         }
         opts.iter().copied().max_by(|a, b| self.matchup(s, *a).partial_cmp(&self.matchup(s, *b)).unwrap_or(std::cmp::Ordering::Equal)).unwrap_or(opts[0])
@@ -3807,7 +4025,7 @@ impl Battle {
 
     /// What the AI does this turn for side `s`.
     pub fn ai_action(&mut self, s: usize) -> Action {
-        self.ai_action_with(s, self.sides[s].ai)
+        self.ai_action_with(s, self.sides[s & 1].ai)
     }
 
     /// The same with a chosen AI (also used for "what would the AI do" for you).
@@ -3820,55 +4038,263 @@ impl Battle {
         if usable.is_empty() {
             return Action::Move(0);
         }
+        let doubles = self.doubles();
         if ai == Ai::Random {
-            return Action::Move(usable[self.rng.below(usable.len() as u32) as usize]);
+            let i = usable[self.rng.below(usable.len() as u32) as usize];
+            let foes = self.foes(s);
+            if doubles && !foes.is_empty() {
+                let t = foes[self.rng.below(foes.len() as u32) as usize];
+                return Action::At(i, t);
+            }
+            return Action::Move(i);
         }
         // items (trainers): heal when low, like the games
-        if s == 1 && !self.wild {
+        let here = self.mi(s);
+        if s & 1 == 1 && !self.wild {
             let hpf = me.hp_frac();
             let items = self.sides[1].items.clone();
             let has = |n: &str| items.iter().any(|x| x.0 == n && x.1 > 0);
             if hpf < 0.25 && self.rng.chance(if ai == Ai::Expert { 0.9 } else { 0.6 }) {
                 for it in ["Full Restore", "Max Potion", "Hyper Potion", "Super Potion", "Potion"] {
                     if has(it) {
-                        return Action::Item(it.into(), self.sides[1].active);
+                        return Action::Item(it.into(), here);
                     }
                 }
             }
             if me.status != Status::None && me.status != Status::Poison && has("Full Heal") && self.rng.chance(0.5) {
-                return Action::Item("Full Heal".into(), self.sides[1].active);
+                return Action::Item("Full Heal".into(), here);
             }
             if me.v.turns_out == 0 && hpf > 0.7 {
                 for (it, k) in [("X Attack", 1), ("X Special", 3), ("X Speed", 5), ("X Defend", 2)] {
                     if has(it) && me.boosts[k] == 0 && self.rng.chance(0.4) {
-                        return Action::Item(it.into(), self.sides[1].active);
+                        return Action::Item(it.into(), here);
                     }
                 }
             }
         }
         // Expert switches out of a bad spot
         if ai == Ai::Expert && self.trapped(s).is_none() {
-            let danger = self.threat(1 - s) >= me.hp_frac() && self.speed(1 - s) > self.speed(s);
-            let best_hit = usable.iter().filter_map(|&i| self.estimate(s, i)).map(|(_, hi)| hi).fold(0.0, f32::max);
+            let foes = self.foes(s);
+            let danger = foes.iter().any(|&f| self.threat_to(f, s) >= me.hp_frac() && self.speed(f) > self.speed(s));
+            let best_hit = usable.iter().flat_map(|&i| foes.iter().filter_map(move |&f| Some((i, f)))).filter_map(|(i, f)| self.estimate_vs(s, i, f)).map(|(_, hi)| hi).fold(0.0, f32::max);
             let hopeless = best_hit < 0.15;
             if (danger || hopeless) && me.v.turns_out > 0 || hopeless && danger {
-                let here = self.matchup(s, self.sides[s].active);
+                let now = self.matchup(s, here);
                 let k = self.ai_replacement(s);
-                if k != self.sides[s].active && self.matchup(s, k) > here + 1.5 && self.rng.chance(0.75) {
+                if k != here && self.matchup(s, k) > now + 1.5 && self.rng.chance(0.75) {
                     return Action::Switch(k);
                 }
             }
         }
-        let mut best = (usable[0], f32::MIN);
+        let mut best = (usable[0], f32::MIN, self.foe(s));
         for &i in &usable {
             let noise = if ai == Ai::Expert { self.rng.below(6) as f32 } else { self.rng.below(16) as f32 };
-            let sc = self.score_move(s, i, ai) + noise;
-            if sc > best.1 {
-                best = (i, sc);
+            let (sc, t) = self.best_use(s, i, ai);
+            if sc + noise > best.1 {
+                best = (i, sc + noise, t);
             }
         }
-        Action::Move(best.0)
+        if doubles {
+            Action::At(best.0, best.2)
+        } else {
+            Action::Move(best.0)
+        }
     }
+}
+
+// ───────────────────────────── auto-sim ─────────────────────────────
+
+/// How one Pokémon did over many battles.
+#[derive(Clone, Debug, Default)]
+pub struct MonReport {
+    pub name: String,
+    pub species: String,
+    pub shiny: bool,
+    /// Battles it got onto the field.
+    pub fielded: u32,
+    pub kos: u32,
+    pub damage: u64,
+    pub fainted: u32,
+}
+
+/// Many battles, added up.
+#[derive(Clone, Debug, Default)]
+pub struct Report {
+    pub n: u32,
+    pub won: u32,
+    pub lost: u32,
+    pub draw: u32,
+    /// Ran, caught, fled.
+    pub other: u32,
+    /// Battles that hit the turn limit (counted as draws).
+    pub capped: u32,
+    /// How many turns each battle took.
+    pub turns: Vec<u32>,
+    pub ours: Vec<MonReport>,
+    pub theirs: Vec<MonReport>,
+    /// Your Pokémon left standing when you won, summed.
+    pub left_standing: u32,
+}
+
+impl Report {
+    fn add(&mut self, b: &Battle, capped: bool) {
+        self.n += 1;
+        match b.result {
+            Some(Outcome::Won) => self.won += 1,
+            Some(Outcome::Lost) => self.lost += 1,
+            Some(Outcome::Draw) | None => self.draw += 1,
+            _ => self.other += 1,
+        }
+        if capped {
+            self.capped += 1;
+        }
+        if b.result == Some(Outcome::Won) {
+            self.left_standing += b.sides[0].left() as u32;
+        }
+        self.turns.push(b.turn);
+        for (side, out) in [(0usize, &mut self.ours), (1, &mut self.theirs)] {
+            if out.is_empty() {
+                *out = b.sides[side].mons.iter().map(|m| MonReport { name: m.name.clone(), species: m.species.clone(), shiny: m.shiny, ..Default::default() }).collect();
+            }
+            for (r, m) in out.iter_mut().zip(&b.sides[side].mons) {
+                if m.seen {
+                    r.fielded += 1;
+                }
+                r.kos += m.kos;
+                r.damage += m.dealt as u64;
+                if m.fainted() {
+                    r.fainted += 1;
+                }
+            }
+        }
+    }
+
+    fn merge(&mut self, o: Report) {
+        if self.ours.is_empty() {
+            self.ours = o.ours.clone();
+            self.theirs = o.theirs.clone();
+            for r in self.ours.iter_mut().chain(self.theirs.iter_mut()) {
+                *r = MonReport { name: r.name.clone(), species: r.species.clone(), shiny: r.shiny, ..Default::default() };
+            }
+        }
+        self.n += o.n;
+        self.won += o.won;
+        self.lost += o.lost;
+        self.draw += o.draw;
+        self.other += o.other;
+        self.capped += o.capped;
+        self.left_standing += o.left_standing;
+        self.turns.extend(o.turns);
+        for (a, b) in self.ours.iter_mut().zip(o.ours).chain(self.theirs.iter_mut().zip(o.theirs)) {
+            a.fielded += b.fielded;
+            a.kos += b.kos;
+            a.damage += b.damage;
+            a.fainted += b.fainted;
+        }
+    }
+
+    /// Share won (0–1).
+    pub fn win_rate(&self) -> f64 {
+        if self.n == 0 {
+            0.0
+        } else {
+            self.won as f64 / self.n as f64
+        }
+    }
+
+    /// The 95% range for the true win rate (Wilson interval).
+    pub fn win_range(&self) -> (f64, f64) {
+        let n = self.n as f64;
+        if n == 0.0 {
+            return (0.0, 1.0);
+        }
+        let p = self.win_rate();
+        let z = 1.96;
+        let d = 1.0 + z * z / n;
+        let c = (p + z * z / (2.0 * n)) / d;
+        let h = z * ((p * (1.0 - p) / n + z * z / (4.0 * n * n)).sqrt()) / d;
+        ((c - h).max(0.0), (c + h).min(1.0))
+    }
+
+    pub fn avg_turns(&self) -> f64 {
+        if self.turns.is_empty() {
+            0.0
+        } else {
+            self.turns.iter().map(|t| *t as f64).sum::<f64>() / self.turns.len() as f64
+        }
+    }
+}
+
+/// Play one battle out with the AI on both sides. `template` is a battle
+/// that hasn't started yet.
+pub fn auto_battle(template: &Battle, our_ai: Ai, seed: u64) -> (Battle, bool) {
+    let mut b = template.clone();
+    b.rng = Rng::new(seed);
+    b.sides[0].ai = our_ai;
+    b.start("");
+    let mut steps = 0;
+    while b.result.is_none() && steps < 400 {
+        steps += 1;
+        if b.ask.is_some() {
+            let slot = match b.ask {
+                Some(Ask::Switch { slot, .. }) => slot,
+                None => 0,
+            };
+            let k = b.ai_replacement(slot * 2);
+            b.answer(k);
+            continue;
+        }
+        let mut acts = Vec::new();
+        for x in b.battlers() {
+            if b.present(x) {
+                let a = if x & 1 == 0 { b.ai_action_with(x, our_ai) } else { b.ai_action(x) };
+                // the auto-sim fights: no running, no balls
+                let a = match a {
+                    Action::Run | Action::Ball(_) => b.ai_action_with(x, Ai::Smart),
+                    a => a,
+                };
+                acts.push((x, a));
+            }
+        }
+        b.play_all(acts);
+    }
+    let capped = b.result.is_none();
+    (b, capped)
+}
+
+/// Many battles, split over the CPU's cores. `progress` counts battles
+/// done; set `cancel` to stop early.
+pub fn simulate(template: &Battle, n: u32, our_ai: Ai, seed: u64, progress: &std::sync::atomic::AtomicU32, cancel: &std::sync::atomic::AtomicBool) -> Report {
+    use std::sync::atomic::Ordering;
+    let workers = std::thread::available_parallelism().map(|x| x.get()).unwrap_or(2).clamp(1, 8) as u32;
+    let mut total = Report::default();
+    std::thread::scope(|sc| {
+        let handles: Vec<_> = (0..workers)
+            .map(|w| {
+                let template = template;
+                sc.spawn(move || {
+                    let mut r = Report::default();
+                    let mut k = w;
+                    while k < n {
+                        if cancel.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        let (b, capped) = auto_battle(template, our_ai, seed.wrapping_add(k as u64 * 7919 + 1));
+                        r.add(&b, capped);
+                        progress.fetch_add(1, Ordering::Relaxed);
+                        k += workers;
+                    }
+                    r
+                })
+            })
+            .collect();
+        for h in handles {
+            if let Ok(r) = h.join() {
+                total.merge(r);
+            }
+        }
+    });
+    total
 }
 
 // ───────────────────────────── tests ─────────────────────────────
@@ -3966,9 +4392,9 @@ mod tests {
         let mut b = Battle::new(vec![mon("Infernape", 60, &["U-turn"]), mon("Swampert", 50, &["Surf"])], vec![mon("Snorlax", 60, &["Splash"]), mon("Bidoof", 5, &["Tackle"])], false, World::Platinum, 5);
         b.start("t");
         b.play(Action::Move(0), Action::Move(0));
-        assert_eq!(b.ask, Some(Ask::Switch { baton: false }));
+        assert_eq!(b.ask, Some(Ask::Switch { slot: 0, baton: false }));
         b.answer(1);
-        assert_eq!(b.sides[0].active, 1);
+        assert_eq!(b.sides[0].active(), 1);
         assert!(b.ask.is_none());
     }
 
@@ -4145,7 +4571,7 @@ mod fuzz {
                 } else if r == 1 && wild {
                     Action::Ball(Ball::Great)
                 } else if r == 2 {
-                    Action::Item("Hyper Potion".into(), b.sides[0].active)
+                    Action::Item("Hyper Potion".into(), b.sides[0].active())
                 } else {
                     b.ai_action_with(0, if r < 10 { Ai::Random } else { Ai::Expert })
                 };
@@ -4170,5 +4596,254 @@ mod fuzz {
         }
         eprintln!("{ends:?}");
         assert!(ends.get("None").copied().unwrap_or(0) <= 3, "{ends:?}");
+    }
+}
+
+#[cfg(test)]
+mod doubles {
+    use super::*;
+
+    fn w() -> &'static Wiki {
+        static W: std::sync::OnceLock<Wiki> = std::sync::OnceLock::new();
+        W.get_or_init(|| Wiki::parse(include_bytes!("../assets/wiki.json")).expect("wiki"))
+    }
+    fn mon(sp: &str, lv: u8, mv: &[&str]) -> BMon {
+        let mut m = Member::new(sp, World::Platinum);
+        m.level = lv;
+        m.moves = mv.iter().map(|s| s.to_string()).collect();
+        BMon::from_member(&m, World::Platinum, Some(w())).unwrap()
+    }
+
+    #[test]
+    fn spread_moves_hit_both_and_the_ally() {
+        let mut b = Battle::new_format(
+            vec![mon("Garchomp", 60, &["Earthquake"]), mon("Snorlax", 60, &["Splash"])],
+            vec![mon("Snorlax", 60, &["Splash"]), mon("Snorlax", 60, &["Splash"])],
+            false,
+            World::Platinum,
+            7,
+            true,
+        );
+        b.start("t");
+        assert!(b.doubles());
+        assert_eq!(b.battlers(), vec![0, 1, 2, 3]);
+        let hp: Vec<u16> = (0..4).map(|x| b.act(x).hp).collect();
+        b.play_all(vec![(0, Action::Move(0)), (2, Action::Move(0)), (1, Action::Move(0)), (3, Action::Move(0))]);
+        assert!(b.act(1).hp < hp[1] && b.act(3).hp < hp[3], "both foes hit");
+        assert!(b.act(2).hp < hp[2], "the ally is hit by Earthquake");
+        // a Flying ally isn't
+        let mut b = Battle::new_format(
+            vec![mon("Garchomp", 60, &["Earthquake"]), mon("Staraptor", 60, &["Splash"])],
+            vec![mon("Snorlax", 60, &["Splash"]), mon("Snorlax", 60, &["Splash"])],
+            false,
+            World::Platinum,
+            7,
+            true,
+        );
+        b.start("t");
+        let ally = b.act(2).hp;
+        b.play_all(vec![(0, Action::Move(0)), (2, Action::Move(0)), (1, Action::Move(0)), (3, Action::Move(0))]);
+        assert_eq!(b.act(2).hp, ally);
+    }
+
+    #[test]
+    fn a_chosen_target_is_the_one_hit() {
+        let mut b = Battle::new_format(
+            vec![mon("Garchomp", 60, &["Dragon Claw"]), mon("Snorlax", 60, &["Splash"])],
+            vec![mon("Snorlax", 60, &["Splash"]), mon("Blissey", 60, &["Splash"])],
+            false,
+            World::Platinum,
+            3,
+            true,
+        );
+        b.start("t");
+        let (a, c) = (b.act(1).hp, b.act(3).hp);
+        b.play_all(vec![(0, Action::At(0, 3)), (2, Action::Move(0)), (1, Action::Move(0)), (3, Action::Move(0))]);
+        assert_eq!(b.act(1).hp, a);
+        assert!(b.act(3).hp < c || b.tally[0].misses > 0);
+    }
+
+    #[test]
+    fn wild_doubles_no_ball_with_two() {
+        let mut b = Battle::new_format(vec![mon("Garchomp", 60, &["Dragon Claw"]), mon("Snorlax", 60, &["Splash"])], vec![mon("Bidoof", 5, &["Tackle"]), mon("Starly", 5, &["Tackle"])], true, World::Platinum, 3, true);
+        b.start("t");
+        b.play_all(vec![(0, Action::Ball(Ball::Master)), (2, Action::Move(0)), (1, Action::Move(0)), (3, Action::Move(0))]);
+        assert!(b.result != Some(Outcome::Caught));
+        assert!(b.log.iter().any(|e| matches!(e, Ev::Text(t) if t.contains("impossible to aim"))));
+    }
+
+    /// Random doubles: nothing panics, every battle ends, fainted places
+    /// get filled when there's someone left to send.
+    #[test]
+    fn random_doubles() {
+        let d = battle::data();
+        let sets: Vec<_> = d.sets.iter().filter(|s| d.species(&s.s).is_some()).collect();
+        let mut rng = Rng::new(99);
+        let pick = |rng: &mut Rng| {
+            let s = sets[rng.below(sets.len() as u32) as usize];
+            let mut m = Member::new(&s.s, World::Platinum);
+            m.level = 50;
+            m.item = s.item.clone();
+            m.ability = s.ab.clone();
+            m.nature = s.nat.clone();
+            m.evs = s.ev;
+            m.ivs = s.iv;
+            m.moves = s.m.clone();
+            BMon::from_member(&m, World::Platinum, Some(w()))
+        };
+        let mut ends = std::collections::HashMap::new();
+        for game in 0..150u64 {
+            let n_ours = 2 + (game % 3) as usize;
+            let ours: Vec<BMon> = (0..n_ours).filter_map(|_| pick(&mut rng)).collect();
+            let theirs: Vec<BMon> = (0..4).filter_map(|_| pick(&mut rng)).collect();
+            let wild = game % 6 == 0;
+            let theirs: Vec<BMon> = if wild { theirs.into_iter().take(2).collect() } else { theirs };
+            let mut b = Battle::new_format(ours, theirs, wild, World::Platinum, game + 1, true).with_wiki(w());
+            b.sides[1].ai = [Ai::Random, Ai::Smart, Ai::Expert][(game % 3) as usize];
+            b.start("go");
+            let mut n = 0;
+            while b.result.is_none() && n < 800 {
+                n += 1;
+                if let Some(Ask::Switch { .. }) = b.ask.clone() {
+                    let opts: Vec<usize> = (0..b.sides[0].mons.len()).filter(|&k| b.sides[0].can_switch_to(k)).collect();
+                    b.answer(opts[rng.below(opts.len() as u32) as usize]);
+                    continue;
+                }
+                let mut acts = Vec::new();
+                for x in b.battlers() {
+                    if !b.present(x) {
+                        continue;
+                    }
+                    let a = if x & 1 == 0 { b.ai_action_with(x, if rng.below(2) == 0 { Ai::Random } else { Ai::Expert }) } else { b.ai_action(x) };
+                    acts.push((x, a));
+                }
+                b.play_all(acts);
+                for s in 0..2 {
+                    for m in &b.sides[s].mons {
+                        assert!(m.hp <= m.max());
+                    }
+                    let mut sl = b.sides[s].slots.clone();
+                    sl.sort();
+                    sl.dedup();
+                    assert_eq!(sl.len(), b.sides[s].slots.len(), "game {game}: one Pokémon in two places");
+                }
+                if b.result.is_none() && b.ask.is_none() {
+                    for x in b.battlers() {
+                        let side = x & 1;
+                        let bench = (0..b.sides[side].mons.len()).any(|k| b.sides[side].can_switch_to(k));
+                        assert!(!(b.act(x).fainted() && bench), "game {game}: battler {x} left fainted with someone on the bench");
+                    }
+                }
+            }
+            *ends.entry(format!("{:?}", b.result)).or_insert(0) += 1;
+        }
+        eprintln!("{ends:?}");
+        assert!(ends.get("None").copied().unwrap_or(0) <= 2, "{ends:?}");
+    }
+}
+
+#[cfg(test)]
+mod doubles_dump {
+    use super::*;
+    #[test]
+    #[ignore]
+    fn print_doubles() {
+        let w = Box::leak(Box::new(Wiki::parse(include_bytes!("../assets/wiki.json")).unwrap()));
+        let mk = |sp: &str, mv: &[&str], item: &str| {
+            let mut m = Member::new(sp, World::Platinum);
+            m.level = 50;
+            m.item = item.into();
+            m.moves = mv.iter().map(|s| s.to_string()).collect();
+            BMon::from_member(&m, World::Platinum, Some(w)).unwrap()
+        };
+        let mut b = Battle::new_format(
+            vec![mk("Garchomp", &["Earthquake", "Dragon Claw", "Protect", "Fire Fang"], "Life Orb"), mk("Gyarados", &["Waterfall", "Dragon Dance", "Ice Fang", "Protect"], "Leftovers"), mk("Togekiss", &["Air Slash", "Thunder Wave", "Roost", "Tailwind"], "Leftovers")],
+            vec![mk("Tyranitar", &["Rock Slide", "Crunch", "Protect", "Earthquake"], "Choice Band"), mk("Metagross", &["Meteor Mash", "Explosion", "Bullet Punch", "Protect"], "Life Orb"), mk("Salamence", &["Draco Meteor", "Flamethrower", "Hydro Pump", "Protect"], "Life Orb")],
+            false,
+            World::Platinum,
+            21,
+            true,
+        )
+        .with_wiki(w);
+        b.sides[1].name = "Cool Couple Ana & Bo".into();
+        b.sides[1].ai = Ai::Expert;
+        b.start("Cool Couple Ana & Bo would like to battle!");
+        let mut n = 0;
+        while b.result.is_none() && n < 40 {
+            n += 1;
+            if b.ask.is_some() {
+                let k = b.ai_replacement(0);
+                b.answer(k);
+                continue;
+            }
+            let mut acts = Vec::new();
+            for x in b.battlers() {
+                if b.present(x) {
+                    let a = if x & 1 == 0 { b.ai_action_with(x, Ai::Expert) } else { b.ai_action(x) };
+                    acts.push((x, a));
+                }
+            }
+            b.play_all(acts);
+        }
+        for e in &b.log {
+            match e {
+                Ev::Text(t) => println!("  {t}"),
+                Ev::Turn(t) => println!("— Turn {t} —"),
+                _ => {}
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod boom {
+    use super::*;
+    #[test]
+    #[ignore]
+    fn explosion_in_doubles() {
+        let w = Box::leak(Box::new(Wiki::parse(include_bytes!("../assets/wiki.json")).unwrap()));
+        let mk = |sp: &str, mv: &[&str]| {
+            let mut m = Member::new(sp, World::Platinum);
+            m.level = 50;
+            m.moves = mv.iter().map(|s| s.to_string()).collect();
+            BMon::from_member(&m, World::Platinum, Some(w)).unwrap()
+        };
+        let mut b = Battle::new_format(vec![mk("Snorlax", &["Splash"]), mk("Snorlax", &["Splash"])], vec![mk("Metagross", &["Explosion"]), mk("Snorlax", &["Splash"])], false, World::Platinum, 2, true);
+        b.start("x");
+        println!("{:?}", b.act(1).moves[0].fx);
+        b.play_all(vec![(0, Action::Move(0)), (2, Action::Move(0)), (1, Action::Move(0)), (3, Action::Move(0))]);
+        for e in &b.log { println!("{e:?}"); }
+    }
+}
+
+#[cfg(test)]
+mod autosim {
+    use super::*;
+    #[test]
+    fn many_battles_add_up() {
+        let w = Box::leak(Box::new(Wiki::parse(include_bytes!("../assets/wiki.json")).unwrap()));
+        let mk = |sp: &str, lv: u8, mv: &[&str]| {
+            let mut m = Member::new(sp, World::Platinum);
+            m.level = lv;
+            m.moves = mv.iter().map(|s| s.to_string()).collect();
+            BMon::from_member(&m, World::Platinum, Some(w)).unwrap()
+        };
+        // a strong team against a weak one wins nearly always
+        let t = Battle::new(vec![mk("Garchomp", 60, &["Dragon Claw", "Earthquake"])], vec![mk("Bidoof", 10, &["Tackle"]), mk("Starly", 10, &["Tackle"])], false, World::Platinum, 1);
+        let p = std::sync::atomic::AtomicU32::new(0);
+        let c = std::sync::atomic::AtomicBool::new(false);
+        let r = simulate(&t, 60, Ai::Expert, 5, &p, &c);
+        assert_eq!(r.n, 60);
+        assert_eq!(p.load(std::sync::atomic::Ordering::Relaxed), 60);
+        assert!(r.win_rate() > 0.95, "{r:?}");
+        assert_eq!(r.turns.len(), 60);
+        assert!(r.ours[0].kos >= 110);
+        let (lo, hi) = r.win_range();
+        assert!(lo < r.win_rate() && r.win_rate() <= hi + 1e-9);
+        // doubles too
+        let t = Battle::new_format(vec![mk("Garchomp", 50, &["Earthquake"]), mk("Staraptor", 50, &["Brave Bird"])], vec![mk("Infernape", 50, &["Close Combat"]), mk("Lucario", 50, &["Aura Sphere"])], false, World::Platinum, 1, true);
+        let r = simulate(&t, 40, Ai::Expert, 9, &p, &c);
+        assert_eq!(r.n, 40);
+        assert_eq!(r.won + r.lost + r.draw + r.other, 40);
     }
 }

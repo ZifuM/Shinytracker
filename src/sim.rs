@@ -546,6 +546,8 @@ pub struct Setup {
     pub trainer: Option<u64>,
     pub world: World,
     pub when: u64,
+    /// The last auto-sim of this setup: (won, battles).
+    pub last_sim: Option<(u32, u32)>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

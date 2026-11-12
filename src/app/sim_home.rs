@@ -35,6 +35,11 @@ pub(super) struct SimState {
     /// The battle on screen, if one's going.
     pub battle: Option<Box<super::sim_battle::BattleView>>,
     pub speed: super::sim_battle::Speed,
+    /// The auto-sim running, its last results, how many to run, and which AI plays you.
+    pub auto: Option<super::sim_auto::AutoRun>,
+    pub auto_done: Option<super::sim_auto::AutoDone>,
+    pub auto_n: u32,
+    pub auto_ai: Option<crate::sim::Ai>,
     /// No damage odds on the move buttons.
     pub hide_odds: bool,
 }
@@ -132,9 +137,14 @@ impl App {
         }
         self.sim_modes(ui);
         ui.add_space(14.0);
+        let mode = self.setup.sim.setup.mode;
+        // the auto-sim's results sit above the board: they're what you came for
+        if mode != Mode::Catch && (self.setup.sim.auto.is_some() || self.setup.sim.auto_done.is_some()) {
+            self.sim_auto_card(ui);
+            ui.add_space(14.0);
+        }
         self.sim_board(ui);
         ui.add_space(14.0);
-        let mode = self.setup.sim.setup.mode;
         if mode != Mode::Trainer {
             self.sim_catch(ui);
         }
@@ -367,9 +377,16 @@ impl App {
             let resp = match &ready {
                 Err(why) => resp.on_disabled_hover_text(why.as_str()),
                 Ok(()) if s.mode == Mode::Catch => resp.on_hover_text("Go to the throws in the Catch Lab"),
-                Ok(()) => resp.on_hover_text("The battle screen is still being built: for now this saves the setup to Recent"),
+                Ok(()) => resp.on_hover_text("Play this battle yourself"),
             };
             *start = resp.clicked();
+        };
+        let n_auto = super::sim_auto::auto_count(self.setup.sim.auto_n);
+        let mut auto = false;
+        let auto_link = |ui: &mut egui::Ui, auto: &mut bool| {
+            if s.mode != Mode::Catch && ready.is_ok() {
+                *auto = ui.link(RichText::new(format!("or simulate {} battles", thousands(n_auto))).size(12.0)).on_hover_text("Both sides played by the AI, many times over: your win rate and who does what").clicked();
+            }
         };
         if compact {
             ui.add_space(14.0);
@@ -379,6 +396,7 @@ impl App {
                 formats(ui, &mut f);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     button(ui, &mut start);
+                    auto_link(ui, &mut auto);
                 });
             });
         } else {
@@ -391,12 +409,17 @@ impl App {
             });
             ui.add_space(16.0);
             button(ui, &mut start);
+            ui.add_space(6.0);
+            ui.vertical_centered(|ui| auto_link(ui, &mut auto));
         }
         if f != s.format {
             self.setup.sim.setup.format = f;
         }
         if start {
             self.sim_start();
+        }
+        if auto {
+            self.sim_auto_start();
         }
         if let Some(n) = &self.setup.sim.note {
             ui.add_space(6.0);
@@ -570,7 +593,11 @@ impl App {
                     };
                     let (icon, _, _, col) = mode_meta(r.mode);
                     let fmt = if r.format == Format::Doubles { " · doubles" } else { "" };
-                    if chip(ui, &format!("{icon}  {team} vs {them}{fmt}"), false, col).clicked() {
+                    let sim = match r.last_sim {
+                        Some((won, n)) if n > 0 => format!(" · wins {:.0}%", won as f64 * 100.0 / n as f64),
+                        _ => String::new(),
+                    };
+                    if chip(ui, &format!("{icon}  {team} vs {them}{fmt}{sim}"), false, col).clicked() {
                         load = Some(r.clone());
                     }
                 }

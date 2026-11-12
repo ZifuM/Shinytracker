@@ -701,11 +701,12 @@ impl App {
         let mut export = false;
         let mut dup = false;
         let mut del = false;
+        let mut battle = false;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
             back = ui.add(egui::Button::new(RichText::new("‹  Teams").size(13.0)).fill(kit::btn_fill()).min_size(egui::vec2(0.0, 30.0))).clicked();
             ui.add_space(4.0);
-            let w = (ui.available_width() - 470.0).clamp(160.0, 420.0);
+            let w = (ui.available_width() - 580.0).clamp(160.0, 420.0);
             ui.add(
                 egui::TextEdit::singleline(&mut name)
                     .font(crate::fonts::sans_bold_font(20.0))
@@ -715,10 +716,25 @@ impl App {
             )
             .on_hover_text("Rename the team");
             kit::segmented(ui, &mut world, &[(World::Platinum, "Platinum"), (World::Modern, "MODERN")]);
+            battle = soft(ui, "⚔  Battle Sim").on_hover_text("Take this team into the Battle Sim").clicked();
             export = soft(ui, "Export").clicked();
             dup = soft(ui, "Duplicate").clicked();
             del = soft(ui, "Delete").clicked();
         });
+        if battle {
+            let n = t.members.len().min(6);
+            self.setup.sim.file();
+            self.setup.sim.started = true;
+            let s = &mut self.setup.sim.setup;
+            s.team = Some(t.id);
+            s.picks = (0..n).collect();
+            if s.mode == crate::sim::Mode::Catch {
+                s.mode = crate::sim::Mode::Wild;
+            }
+            self.go_to(super::Tab::Sim);
+            self.setup.scroll_top = true;
+            return;
+        }
         ui.horizontal(|ui| {
             ui.add_space(96.0);
             ui.label(caps("FOLDER"));

@@ -26,6 +26,7 @@ mod info_places;
 mod info_story;
 mod sim_catch;
 mod sim_battle;
+mod sim_auto;
 mod battlebacks;
 mod sim_foes;
 mod sim_home;

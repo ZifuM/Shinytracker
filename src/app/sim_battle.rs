@@ -13,7 +13,7 @@ use super::App;
 use crate::battle::{self, World};
 use crate::calc::{Status, Weather};
 use crate::engine::{Action, BMon, Battle, Ev, Outcome};
-use crate::sim::{self, Ai, Ball, Mode};
+use crate::sim::{self, Ai, Ball, Format, Mode};
 use crate::theme;
 use eframe::egui::{self, Align2, Color32, Pos2, Rect, RichText, Sense, Stroke, TextureHandle};
 use std::collections::HashMap;
@@ -73,23 +73,31 @@ pub(super) struct BattleView {
     undo: Vec<Battle>,
     /// Log events already played.
     played: usize,
-    disp: [Disp; 2],
+    /// By battler (0, 2 yours; 1, 3 theirs).
+    disp: [Disp; 4],
     /// The weather as the screen has got to it.
     weather: Weather,
     /// The HP bars as drawn (share of max), easing toward `disp`.
-    bar: [f32; 2],
+    bar: [f32; 4],
     text: Option<(String, Instant)>,
     /// The whole battle in words: (turn, line).
     lines: Vec<(u32, String)>,
-    flash: [Option<Instant>; 2],
+    flash: [Option<Instant>; 4],
     hold: Option<Instant>,
-    throw: Option<(Ball, u8, bool, Instant)>,
+    throw: Option<(usize, Ball, u8, bool, Instant)>,
+    /// This turn's choices so far (doubles: one for each of yours), and
+    /// whose turn it is to choose.
+    chosen: Vec<(usize, Action)>,
+    cur: usize,
+    /// A move waiting for you to pick its target (doubles).
+    aim: Option<usize>,
     panel: Panel,
     /// An item waiting for you to pick who it's for.
     item: Option<String>,
     speed: Speed,
     odds: bool,
-    suggest: Option<usize>,
+    /// The AI's pick for the one choosing: (move, target).
+    suggest: Option<(usize, Option<usize>)>,
     scene: Scene,
     light: Light,
     tex: HashMap<String, TextureHandle>,
@@ -102,6 +110,18 @@ pub(super) struct BattleView {
     /// column shows this, so it doesn't give away what's coming).
     snap: Option<Box<Battle>>,
     snap_len: usize,
+    /// Leave and run the auto-sim of this battle.
+    auto_after: bool,
+}
+
+/// A battle built from the setup, not started yet.
+pub(super) struct Built {
+    pub b: Battle,
+    pub title: String,
+    pub sub: String,
+    pub intro: String,
+    pub scene: Scene,
+    pub trainer: Option<sim::Trainer>,
 }
 
 fn now() -> Instant {
@@ -197,16 +217,26 @@ fn trainer_scene(class: &str) -> Scene {
 
 impl BattleView {
     fn sync(&mut self) {
-        for s in 0..2 {
-            let side = &self.b.sides[s];
-            if side.mons.is_empty() {
+        self.disp = [Disp { out: true, ..Default::default() }; 4];
+        for b in self.b.battlers() {
+            if self.b.sides[b & 1].mons.is_empty() {
                 continue;
             }
-            let m = side.act();
-            self.disp[s] = Disp { mon: side.active, hp: m.hp, max: m.max(), status: m.status, out: m.fainted() };
-            self.bar[s] = m.hp_frac();
+            let m = self.b.act(b);
+            self.disp[b] = Disp { mon: self.b.mi(b), hp: m.hp, max: m.max(), status: m.status, out: m.fainted() };
+            self.bar[b] = m.hp_frac();
         }
         self.weather = self.b.weather;
+    }
+
+    /// Yours on the field, in order.
+    fn mine(&self) -> Vec<usize> {
+        self.b.battlers().into_iter().filter(|b| b & 1 == 0 && self.b.present(*b)).collect()
+    }
+
+    /// The next of yours that still has to choose this turn.
+    fn next_to_choose(&self) -> Option<usize> {
+        self.mine().into_iter().find(|b| !self.chosen.iter().any(|(x, _)| x == b))
     }
 
     fn busy(&self) -> bool {
@@ -218,7 +248,7 @@ impl BattleView {
         let speed = self.speed.secs();
         // HP bars move at a steady pace
         let mut moving = false;
-        for s in 0..2 {
+        for s in 0..4 {
             let target = self.disp[s].hp as f32 / self.disp[s].max.max(1) as f32;
             let d = target - self.bar[s];
             if d.abs() > 0.001 {
@@ -279,8 +309,8 @@ impl BattleView {
                     self.disp[side].out = true;
                     self.hold = hold(0.25);
                 }
-                Ev::Throw { ball, shakes, caught } => {
-                    self.throw = Some((ball, shakes, caught, now()));
+                Ev::Throw { at, ball, shakes, caught } => {
+                    self.throw = Some((at, ball, shakes, caught, now()));
                     self.hold = hold(0.4 + 0.35 * shakes as f32);
                 }
                 Ev::Weather(w) => self.weather = w,
@@ -305,17 +335,61 @@ impl BattleView {
         self.hold = None;
     }
 
-    /// Run a turn with your action and the AI's.
+    /// Your choice for the one choosing now. Once all of yours have chosen
+    /// (or you run), the AI picks for theirs and the turn plays.
     fn go(&mut self, mine: Action) {
         if self.b.result.is_some() {
             return;
         }
-        self.push_undo();
-        let theirs = if self.b.wild { self.b.ai_action_with(1, self.wild_ai) } else { self.b.ai_action(1) };
-        self.b.play(mine, theirs);
+        let run = matches!(mine, Action::Run);
+        self.chosen.retain(|(b, _)| *b != self.cur);
+        self.chosen.push((self.cur, mine));
         self.suggest = None;
         self.item = None;
+        self.aim = None;
         self.panel = Panel::Fight;
+        // the ones that can't choose (recharging, locked in) go along
+        while let Some(b) = self.next_to_choose() {
+            if self.b.forced(b) {
+                self.chosen.push((b, Action::Auto));
+            } else {
+                break;
+            }
+        }
+        if let (Some(b), false) = (self.next_to_choose(), run) {
+            self.cur = b;
+            return;
+        }
+        self.push_undo();
+        let mut all = std::mem::take(&mut self.chosen);
+        let theirs: Vec<usize> = self.b.battlers().into_iter().filter(|b| b & 1 == 1 && self.b.present(*b)).collect();
+        for b in theirs {
+            let a = if self.b.wild { self.b.ai_action_with(b, self.wild_ai) } else { self.b.ai_action(b) };
+            all.push((b, a));
+        }
+        self.b.play_all(all);
+        self.cur = self.mine().first().copied().unwrap_or(0);
+    }
+
+    /// A move picked: in doubles a one-target move asks which foe.
+    fn pick_move(&mut self, i: usize) {
+        let foes = self.b.foes(self.cur);
+        let single = self.b.act(self.cur).moves.get(i).is_some_and(|m| matches!(m.fx.target.as_str(), "" | "normal" | "any" | "adjacentFoe"));
+        if self.b.doubles() && single && foes.len() > 1 {
+            self.aim = Some(i);
+        } else {
+            self.go(Action::Move(i));
+        }
+    }
+
+    /// Go back to the previous one's choice (doubles).
+    fn back(&mut self) {
+        if let Some((b, _)) = self.chosen.pop() {
+            self.cur = b;
+        }
+        self.aim = None;
+        self.item = None;
+        self.suggest = None;
     }
 
     fn push_undo(&mut self) {
@@ -332,7 +406,10 @@ impl BattleView {
             self.text = None;
             self.hold = None;
             self.throw = None;
-            self.flash = [None, None];
+            self.flash = [None; 4];
+            self.chosen.clear();
+            self.aim = None;
+            self.cur = 0;
             let keep = self.b.log.iter().filter(|e| matches!(e, Ev::Text(_) | Ev::Turn(_))).count();
             self.lines.truncate(keep);
             self.sync();
@@ -358,7 +435,8 @@ impl BattleView {
 
 impl App {
     /// Start the battle that's set up (wild or trainer, singles).
-    pub(super) fn sim_begin(&mut self) -> Result<(), String> {
+    /// The battle that's set up, ready to start (the auto-sim plays it many times).
+    pub(super) fn sim_build(&mut self) -> Result<Built, String> {
         let s = self.setup.sim.setup.clone();
         let w = self.wiki.clone().ok_or("The game data is still loading. Try again in a moment.")?;
         let team = s.team.and_then(|id| self.setup.team.teams().teams.iter().find(|t| t.id == id).cloned()).ok_or("Pick one of your teams")?;
@@ -379,17 +457,24 @@ impl App {
                 (mons, false, format!("vs {name}"), format!("{} · {} AI", world_name(t.world), ai_name(t.ai)), format!("{name} would like to battle!"), sc, Some(t))
             }
             _ => {
-                let f = s.foes.first().cloned().ok_or("Pick a wild Pokémon")?;
-                let m = BMon::from_member(&f, world, Some(&w)).ok_or("That wild Pokémon can't battle (check its species).")?;
-                let n = m.name.clone();
+                s.foes.first().ok_or("Pick a wild Pokémon")?;
+                // two wild ones in doubles (Platinum's double grass, Sweet Scent with a partner…)
+                let take = if s.format == Format::Doubles { 2 } else { 1 };
+                let mons: Vec<BMon> = s.foes.iter().take(take).filter_map(|m| BMon::from_member(m, world, Some(&w))).collect();
+                if mons.is_empty() {
+                    return Err("That wild Pokémon can't battle (check its species).".into());
+                }
+                let names: Vec<String> = mons.iter().map(|m| m.name.clone()).collect();
                 let cave = self.setup.sim.foe.area.is_empty().then_some(false).unwrap_or_else(|| w.place(&self.setup.sim.foe.area).is_some_and(|p| p.cave));
                 let sc = wild_scene(&s.place, cave, &s.method);
                 let place = if s.place.is_empty() { "Wild encounter".to_string() } else { s.place.clone() };
-                (vec![m], true, format!("Wild {n}"), format!("{place} · Lv {}", f.level), format!("A wild {n} appeared!"), sc, None)
+                let lv: Vec<String> = mons.iter().map(|m| m.level.to_string()).collect();
+                (mons, true, format!("Wild {}", names.join(" & ")), format!("{place} · Lv {}", lv.join(" & ")), format!("A wild {} appeared!", names.join(" and a wild ")), sc, None)
             }
         };
         let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(1);
-        let mut b = Battle::new(ours, theirs, wild, world, seed).with_wiki(&w);
+        let doubles = s.format == Format::Doubles;
+        let mut b = Battle::new_format(ours, theirs, wild, world, seed, doubles).with_wiki(&w);
         if let Some(t) = &trainer {
             b.sides[1].name = format!("{} {}", t.class, t.name.trim()).trim().to_string();
             b.sides[1].ai = t.ai;
@@ -401,6 +486,14 @@ impl App {
             b.catch.water = sit.water;
             b.catch.caught_before = sit.caught_before;
         }
+        Ok(Built { b, title, sub, intro, scene, trainer })
+    }
+
+    /// Start the battle that's set up (wild or trainer, singles or doubles).
+    pub(super) fn sim_begin(&mut self) -> Result<(), String> {
+        let s = self.setup.sim.setup.clone();
+        let Built { mut b, title, sub, intro, scene, trainer } = self.sim_build()?;
+        let wild = b.wild;
         let mut first = b.clone();
         first.log.clear();
         b.start(&intro);
@@ -414,12 +507,15 @@ impl App {
             played: 0,
             disp: Default::default(),
             weather: Weather::None,
-            bar: [0.0, 0.0],
+            bar: [0.0; 4],
             text: None,
             lines: Vec::new(),
-            flash: [None, None],
+            flash: [None; 4],
             hold: None,
             throw: None,
+            chosen: Vec::new(),
+            cur: 0,
+            aim: None,
             panel: Panel::Fight,
             item: None,
             speed: self.setup.sim.speed,
@@ -435,9 +531,10 @@ impl App {
             wild_ai: Ai::Random,
             snap: Some(Box::new(first)),
             snap_len: usize::MAX,
+            auto_after: false,
         };
         // nothing's on the field until the intro plays
-        v.disp = [Disp { out: true, ..Default::default() }, Disp { out: true, ..Default::default() }];
+        v.disp = [Disp { out: true, ..Default::default() }; 4];
         self.setup.sim.battle = Some(Box::new(v));
         self.setup.scroll_top = true;
         Ok(())
@@ -492,13 +589,18 @@ impl App {
             v.text = None;
             v.hold = None;
         }
+        // the one choosing is always one of yours that's there
+        if !v.busy() && v.b.result.is_none() && !v.b.present(v.cur) {
+            v.chosen.clear();
+            v.cur = v.mine().first().copied().unwrap_or(0);
+        }
         if let (Some(k), false) = (num, v.busy()) {
-            if v.b.result.is_none() && v.b.ask.is_none() && v.panel == Panel::Fight && v.b.usable(0).get(k).is_some_and(|(_, why)| why.is_none()) {
-                v.go(Action::Move(k));
+            if v.b.result.is_none() && v.b.ask.is_none() && v.panel == Panel::Fight && v.b.usable(v.cur).get(k).is_some_and(|(_, why)| why.is_none()) {
+                v.pick_move(k);
             }
         }
         // locked in (Outrage, charging, recharging): the turn plays on its own
-        if !v.busy() && v.b.result.is_none() && v.b.ask.is_none() && v.b.forced(0) {
+        if !v.busy() && v.b.result.is_none() && v.b.ask.is_none() && v.b.present(v.cur) && v.b.forced(v.cur) {
             v.go(Action::Auto);
             ui.ctx().request_repaint();
         }
@@ -516,6 +618,10 @@ impl App {
             self.setup.sim.battle = Some(v);
         } else {
             self.setup.scroll_top = true;
+            if v.auto_after {
+                self.setup.sim.setup = v.setup.clone();
+                self.sim_auto_start();
+            }
         }
     }
 
@@ -619,27 +725,89 @@ impl App {
                     v.go(Action::Run);
                 }
             }
+            if !v.chosen.is_empty() && soft(ui, "‹  Back").on_hover_text("Change what the one before chose").clicked() {
+                v.back();
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if v.panel == Panel::Fight {
                     kit::checkbox(ui, &mut v.odds, "Show damage").on_hover_text("Damage range and KO chance on each move, against the Pokémon in front of you");
                     if soft(ui, "What would the AI do?").on_hover_text("Ask the Expert AI which move it would pick here").clicked() {
                         let mut probe = v.b.clone();
-                        v.suggest = match probe.ai_action_with(0, Ai::Expert) {
-                            Action::Move(k) => Some(k),
-                            _ => None,
-                        };
-                        if v.suggest.is_none() {
-                            v.suggest = Some(usize::MAX);
-                        }
+                        v.suggest = Some(match probe.ai_action_with(v.cur, Ai::Expert) {
+                            Action::Move(k) => (k, None),
+                            Action::At(k, t) => (k, Some(t)),
+                            _ => (usize::MAX, None),
+                        });
                     }
                 }
             });
         });
         ui.add_space(10.0);
         match v.panel {
+            Panel::Fight if v.aim.is_some() => self.battle_targets(ui, v),
             Panel::Fight => self.battle_moves(ui, v),
             Panel::Party => self.battle_party(ui, v, false),
             Panel::Bag => self.battle_bag(ui, v),
+        }
+    }
+
+    /// Doubles: which foe the move is for, with the damage on each.
+    fn battle_targets(&mut self, ui: &mut egui::Ui, v: &mut BattleView) {
+        let Some(i) = v.aim else { return };
+        let me = v.b.act(v.cur).clone();
+        let mv = me.moves.get(i).cloned().unwrap_or_default();
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(format!("{} on which one?", mv.name)).font(crate::fonts::sans_bold_font(14.0)).color(TEXT()));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if soft(ui, "Cancel").clicked() {
+                    v.aim = None;
+                }
+            });
+        });
+        ui.add_space(8.0);
+        let foes = v.b.foes(v.cur);
+        let w = ui.available_width();
+        let tile_w = ((w - 10.0) / 2.0).max(160.0);
+        let mut pick: Option<usize> = None;
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
+            for t in foes {
+                let m = v.b.act(t).clone();
+                let (r, resp) = ui.allocate_exact_size(egui::vec2(tile_w, 64.0), Sense::click());
+                let ht = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered(), kit::QUICK);
+                let p = ui.painter().clone();
+                p.rect_filled(r, kit::r(10.0), theme::blend(CARD(), RED, 0.06 + 0.12 * ht));
+                p.rect_stroke(r, kit::r(10.0), Stroke::new(1.0f32, theme::blend(LINE(), RED, 0.4 + 0.4 * ht)));
+                if !self.team_sprite(&p, &m.species, m.shiny, r.min + egui::vec2(32.0, 32.0), egui::vec2(52.0, 52.0)) {
+                    p.text(r.min + egui::vec2(32.0, 32.0), Align2::CENTER_CENTER, m.name.chars().take(2).collect::<String>(), kit::font_bold(14.0), MUTED());
+                }
+                p.text(r.min + egui::vec2(64.0, 12.0), Align2::LEFT_TOP, format!("{} · Lv {}", m.name, m.level), crate::fonts::sans_bold_font(13.5), TEXT());
+                let line = match v.b.estimate_vs(v.cur, i, t) {
+                    Some((lo, hi)) if hi > 0.0 => {
+                        let hp = m.hp_frac();
+                        let pct = |x: f32| ((x * 100.0).round() as u32).min(100);
+                        if lo >= hp {
+                            "KOs".to_string()
+                        } else if hi >= hp {
+                            format!("{}–{}% · may KO", pct(lo), pct(hi))
+                        } else {
+                            format!("{}–{}%", pct(lo), pct(hi))
+                        }
+                    }
+                    Some(_) => "No effect".into(),
+                    None => format!("{}% HP", (m.hp_frac() * 100.0).ceil()),
+                };
+                p.text(r.min + egui::vec2(64.0, 36.0), Align2::LEFT_TOP, line, kit::font_small(12.0), MUTED());
+                if v.suggest.is_some_and(|(k, tt)| k == i && tt == Some(t)) {
+                    p.text(egui::pos2(r.max.x - 10.0, r.min.y + 12.0), Align2::RIGHT_TOP, "AI PICK", kit::font_bold(9.5), super::charts::ink(kit::C_GOLD));
+                }
+                if resp.clicked() {
+                    pick = Some(t);
+                }
+            }
+        });
+        if let Some(t) = pick {
+            v.go(Action::At(i, t));
         }
     }
 
@@ -676,17 +844,18 @@ impl App {
         if let Some(c) = wt {
             p.rect_filled(rect, 0.0, c);
         }
-        // the Pokémon
-        for s in [1usize, 0] {
+        // the Pokémon (the far ones first)
+        let dbl = v.b.doubles();
+        for s in [3usize, 1, 2, 0] {
             let d = v.disp[s];
-            if d.out {
+            if d.out || (s >> 1) >= v.b.sides[s & 1].slots.len() {
                 continue;
             }
             // inside a ball while it shakes
-            if s == 1 && v.throw.is_some() {
+            if v.throw.is_some_and(|t| t.0 == s) {
                 continue;
             }
-            let Some(m) = v.b.sides[s].mons.get(d.mon).cloned() else { continue };
+            let Some(m) = v.b.sides[s & 1].mons.get(d.mon).cloned() else { continue };
             // the hit indicator: a few quick blinks
             let blink = v.flash[s].map(|t| t.elapsed().as_secs_f32()).filter(|e| *e < 0.36);
             if blink.is_some() {
@@ -696,41 +865,54 @@ impl App {
                 continue;
             }
             let Some(sp) = self.team_species(&m.species) else { continue };
+            let (x, y, size) = spot(s, dbl);
+            let size = egui::vec2(size * k, size * k);
             // theirs stands further off, so it's drawn smaller
-            let drawn = if s == 1 {
-                self.draw_sprite(&p, &sp, m.shiny, at(384.0, 192.0), egui::vec2(150.0 * k, 150.0 * k))
+            let drawn = if s & 1 == 1 {
+                self.draw_sprite(&p, &sp, m.shiny, at(x, y), size)
             } else {
-                let size = egui::vec2(205.0 * k, 205.0 * k);
-                self.draw_back_sprite(&p, &sp, m.shiny, at(128.0, 300.0), size) || self.draw_sprite(&p, &sp, m.shiny, at(128.0, 292.0), size * 0.8)
+                self.draw_back_sprite(&p, &sp, m.shiny, at(x, y), size) || self.draw_sprite(&p, &sp, m.shiny, at(x, y - 8.0), size * 0.8)
             };
             if !drawn {
-                let c = if s == 1 { at(384.0, 140.0) } else { at(128.0, 230.0) };
+                let c = at(x, y - if s & 1 == 1 { 52.0 } else { 70.0 });
                 p.text(c, Align2::CENTER_CENTER, &m.name, kit::font_bold(16.0 * k.max(0.8)), Color32::WHITE);
                 ctx.request_repaint_after(std::time::Duration::from_millis(250));
             }
         }
         // a thrown ball
-        if let Some((ball, shakes, caught, t0)) = v.throw {
+        if let Some((tb, ball, shakes, caught, t0)) = v.throw {
             let e = t0.elapsed().as_secs_f32();
             let total = 0.4 + 0.35 * shakes as f32 + 0.6;
             if e < total {
                 ctx.request_repaint();
-                let c = at(384.0, 186.0);
+                let (x, y, _) = spot(tb, dbl);
+                let c = at(x, y - 6.0);
                 let tilt = if e > 0.4 && !caught || e > 0.4 { (((e - 0.4) / 0.35).floor() as i32 % 2 * 2 - 1) as f32 * 0.25 * ((e - 0.4) < 0.35 * shakes as f32) as i32 as f32 } else { 0.0 };
                 super::sim_catch::draw_ball(&p, c, 13.0 * k.max(0.7), tilt, ball);
             } else {
                 v.throw = None;
             }
         }
-        // the HP boxes
-        let fw = (220.0 * k).clamp(190.0, 300.0);
-        if !v.disp[1].out || v.b.result.is_some() {
-            let r = Rect::from_min_size(at(14.0, 14.0), egui::vec2(fw, 62.0));
-            self.hp_box(&p, r, v, 1);
+        // the HP boxes: theirs top left, yours bottom right
+        let fw = if dbl { (200.0 * k).clamp(176.0, 260.0) } else { (220.0 * k).clamp(190.0, 300.0) };
+        let gap = 6.0;
+        let theirs: Vec<usize> = [1usize, 3].into_iter().filter(|b| (b >> 1) < v.b.sides[1].slots.len()).collect();
+        for (n, b) in theirs.into_iter().enumerate() {
+            if !v.disp[b].out || (v.b.result.is_some() && !dbl) {
+                let r = Rect::from_min_size(at(14.0, 14.0) + egui::vec2(0.0, n as f32 * (62.0 + gap)), egui::vec2(fw, 62.0));
+                self.hp_box(&p, r, v, b);
+            }
         }
-        if !v.disp[0].out {
-            let r = Rect::from_min_size(egui::pos2(rect.max.x - fw - 14.0 * k, rect.max.y - 74.0 - 10.0 * k), egui::vec2(fw, 74.0));
-            self.hp_box(&p, r, v, 0);
+        let ours: Vec<usize> = [0usize, 2].into_iter().filter(|b| (b >> 1) < v.b.sides[0].slots.len()).collect();
+        let k_ours = ours.len() as f32;
+        // two of yours: shorter boxes, so they stay clear of their base
+        let oh = if dbl { 56.0 } else { 74.0 };
+        for (n, b) in ours.into_iter().enumerate() {
+            if !v.disp[b].out {
+                let top = rect.max.y - 10.0 * k - k_ours * oh - (k_ours - 1.0) * gap + n as f32 * (oh + gap);
+                let r = Rect::from_min_size(egui::pos2(rect.max.x - fw - 14.0 * k, top), egui::vec2(fw, oh));
+                self.hp_box(&p, r, v, b);
+            }
         }
         // weather and field words
         let mut tags: Vec<(String, Color32)> = Vec::new();
@@ -758,11 +940,13 @@ impl App {
 
     fn hp_box(&mut self, p: &egui::Painter, r: Rect, v: &BattleView, s: usize) {
         let d = v.disp[s];
-        let Some(m) = v.b.sides[s].mons.get(d.mon) else { return };
+        let Some(m) = v.b.sides[s & 1].mons.get(d.mon) else { return };
         let bg = theme::blend(CARD(), Color32::BLACK, 0.06).gamma_multiply(0.94);
         p.rect_filled(r.translate(egui::vec2(0.0, 2.0)), 10.0, Color32::from_black_alpha(40));
         p.rect_filled(r, 10.0, bg);
-        p.rect_stroke(r, 10.0, Stroke::new(1.0f32, LINE()));
+        // in doubles, the one choosing now is outlined
+        let choosing = v.b.doubles() && s == v.cur && !v.busy() && v.b.result.is_none() && v.b.ask.is_none();
+        p.rect_stroke(r, 10.0, if choosing { Stroke::new(2.0f32, OURS) } else { Stroke::new(1.0f32, LINE()) });
         let x = r.min.x + 12.0;
         let mut name = m.name.clone();
         if let Some(g) = m.gender {
@@ -781,25 +965,26 @@ impl App {
         }
         let _ = tx;
         p.text(egui::pos2(r.max.x - 12.0, r.min.y + 9.0), Align2::RIGHT_TOP, format!("Lv {}", m.level), kit::font_bold(12.0), MUTED());
-        // the bar
-        let bar = Rect::from_min_max(egui::pos2(x, r.min.y + 32.0), egui::pos2(r.max.x - 12.0, r.min.y + 40.0));
+        // the bar (a little higher in a short box)
+        let by = if r.height() < 60.0 { 28.0 } else { 32.0 };
+        let bar = Rect::from_min_max(egui::pos2(x, r.min.y + by), egui::pos2(r.max.x - 12.0, r.min.y + by + 8.0));
         p.rect_filled(bar, 4.0, kit::sunken());
         let f = v.bar[s].clamp(0.0, 1.0);
         if f > 0.0 {
             p.rect_filled(Rect::from_min_max(bar.min, egui::pos2(bar.min.x + bar.width() * f, bar.max.y)), 4.0, hp_color(f));
         }
-        if s == 0 {
+        if s & 1 == 0 {
             let hp = (f * d.max as f32).round() as u32;
-            p.text(egui::pos2(r.max.x - 12.0, bar.max.y + 6.0), Align2::RIGHT_TOP, format!("{hp} / {}", d.max), kit::font_bold(13.0), TEXT());
+            p.text(egui::pos2(r.max.x - 12.0, bar.max.y + if r.height() < 60.0 { 4.0 } else { 6.0 }), Align2::RIGHT_TOP, format!("{hp} / {}", d.max), kit::font_bold(13.0), TEXT());
             // stat changes, when nothing's playing
-            let boosts = v.b.act(0).boosts;
+            let boosts = v.b.act(s).boosts;
             let names = ["", "Atk", "Def", "SpA", "SpD", "Spe", "Acc", "Eva"];
             let txt: Vec<String> = (1..8).filter(|i| boosts[*i] != 0).map(|i| format!("{} {:+}", names[i], boosts[i])).collect();
             if !txt.is_empty() && !v.busy() {
-                p.text(egui::pos2(x, bar.max.y + 7.0), Align2::LEFT_TOP, txt.join("  "), kit::font_small(11.0), MUTED());
+                p.text(egui::pos2(x, bar.max.y + if r.height() < 60.0 { 5.0 } else { 7.0 }), Align2::LEFT_TOP, txt.join("  "), kit::font_small(11.0), MUTED());
             }
         } else if !v.busy() {
-            let boosts = v.b.act(1).boosts;
+            let boosts = v.b.act(s).boosts;
             let names = ["", "Atk", "Def", "SpA", "SpD", "Spe", "Acc", "Eva"];
             let txt: Vec<String> = (1..8).filter(|i| boosts[*i] != 0).map(|i| format!("{} {:+}", names[i], boosts[i])).collect();
             let pct = format!("{}%", (f * 100.0).ceil() as u32);
@@ -815,7 +1000,7 @@ impl App {
             None if v.b.result.is_some() || v.busy() => v.lines.iter().rev().find(|(_, t)| !t.is_empty()).map(|(_, t)| t.clone()).unwrap_or_default(),
             None if v.b.ask.is_some() => "Which Pokémon will you send out?".to_string(),
             None => {
-                let n = &v.b.act(0).name;
+                let n = &v.b.act(v.cur).name;
                 if v.item.is_some() {
                     "Use it on which Pokémon?".to_string()
                 } else {
@@ -841,8 +1026,8 @@ impl App {
     }
 
     fn battle_moves(&mut self, ui: &mut egui::Ui, v: &mut BattleView) {
-        let me = v.b.act(0).clone();
-        let usable = v.b.usable(0);
+        let me = v.b.act(v.cur).clone();
+        let usable = v.b.usable(v.cur);
         if me.moves.is_empty() || me.moves.iter().all(|m| m.pp == 0) {
             ui.label(small(format!("{} has no moves it can use, so it will Struggle.", me.name)));
             ui.add_space(6.0);
@@ -851,7 +1036,7 @@ impl App {
             }
             return;
         }
-        if v.suggest == Some(usize::MAX) {
+        if v.suggest.is_some_and(|x| x.0 == usize::MAX) {
             ui.label(small("The AI would switch out here (or use an item)."));
             ui.add_space(6.0);
         }
@@ -868,8 +1053,8 @@ impl App {
                 let p = ui.painter();
                 let fill = if why.is_some() { kit::sunken() } else { theme::blend(CARD(), col, 0.10 + 0.10 * ht) };
                 p.rect_filled(r, kit::r(10.0), fill);
-                let ring = if v.suggest == Some(i) { kit::C_GOLD } else { theme::blend(LINE(), col, 0.5 + 0.3 * ht) };
-                p.rect_stroke(r, kit::r(10.0), Stroke::new(if v.suggest == Some(i) { 2.0f32 } else { 1.0 }, ring));
+                let ring = if v.suggest.is_some_and(|x| x.0 == i) { kit::C_GOLD } else { theme::blend(LINE(), col, 0.5 + 0.3 * ht) };
+                p.rect_stroke(r, kit::r(10.0), Stroke::new(if v.suggest.is_some_and(|x| x.0 == i) { 2.0f32 } else { 1.0 }, ring));
                 p.rect_filled(Rect::from_min_size(r.min + egui::vec2(0.0, 10.0), egui::vec2(4.0, r.height() - 20.0)), 2.0, col);
                 let ink = if why.is_some() { MUTED() } else { TEXT() };
                 p.text(r.min + egui::vec2(16.0, 10.0), Align2::LEFT_TOP, format!("{}", mv.name), crate::fonts::sans_bold_font(15.0), ink);
@@ -881,7 +1066,7 @@ impl App {
                 };
                 p.text(r.min + egui::vec2(16.0 + tw + 8.0, 46.0), Align2::LEFT_CENTER, cat, kit::font_small(11.5), MUTED());
                 let pp = p.text(egui::pos2(r.max.x - 12.0, r.min.y + 12.0), Align2::RIGHT_TOP, format!("PP {}/{}", mv.pp, mv.max_pp), kit::font_bold(12.0), if mv.pp == 0 { kit::C_RED } else { MUTED() });
-                if v.suggest == Some(i) {
+                if v.suggest.is_some_and(|x| x.0 == i) {
                     let g = p.layout_no_wrap("AI PICK".into(), kit::font_bold(9.5), Color32::from_rgb(40, 30, 0));
                     let tag = Rect::from_min_size(egui::pos2(pp.min.x - g.size().x - 18.0, pp.center().y - g.size().y / 2.0 - 2.0), g.size() + egui::vec2(10.0, 4.0));
                     p.rect_filled(tag, 4.0, kit::C_GOLD);
@@ -889,16 +1074,26 @@ impl App {
                 }
                 // damage odds
                 if v.odds && why.is_none() {
-                    let line = match v.b.estimate(0, i) {
+                    // in doubles: against the foe it hurts most, by name
+                    let foes = v.b.foes(v.cur);
+                    let best_foe = foes.iter().copied().max_by(|a, b| {
+                        let ea = v.b.estimate_vs(v.cur, i, *a).map(|x| x.1 / v.b.act(*a).hp_frac().max(0.01)).unwrap_or(0.0);
+                        let eb = v.b.estimate_vs(v.cur, i, *b).map(|x| x.1 / v.b.act(*b).hp_frac().max(0.01)).unwrap_or(0.0);
+                        ea.partial_cmp(&eb).unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                    let tgt = best_foe.unwrap_or_else(|| v.b.foe(v.cur));
+                    let named = foes.len() > 1;
+                    let line = match v.b.estimate_vs(v.cur, i, tgt) {
                         Some((lo, hi)) if hi > 0.0 => {
-                            let hp = v.b.act(1).hp_frac();
+                            let hp = v.b.act(tgt).hp_frac();
                             let pct = |x: f32| ((x * 100.0).round() as u32).min(100);
+                            let on = if named { format!(" on {}", v.b.act(tgt).name) } else { String::new() };
                             if lo >= hp {
-                                "KOs".to_string()
+                                format!("KOs{on}")
                             } else if hi >= hp {
-                                format!("{}–{}%  ·  may KO", pct(lo), pct(hi))
+                                format!("{}–{}% · may KO{on}", pct(lo), pct(hi))
                             } else {
-                                format!("{}–{}%", pct(lo), pct(hi))
+                                format!("{}–{}%{on}", pct(lo), pct(hi))
                             }
                         }
                         Some(_) => "No effect".into(),
@@ -923,12 +1118,12 @@ impl App {
             }
         });
         if let Some(i) = pick {
-            v.go(Action::Move(i));
+            v.pick_move(i);
         }
     }
 
     fn battle_party(&mut self, ui: &mut egui::Ui, v: &mut BattleView, forced: bool) {
-        let trapped = if forced { None } else { v.b.trapped(0) };
+        let trapped = if forced || v.item.is_some() { None } else { v.b.trapped(v.cur) };
         if let Some(t) = &trapped {
             ui.label(RichText::new(t).size(13.0).color(kit::C_ORANGE));
             ui.add_space(6.0);
@@ -938,7 +1133,9 @@ impl App {
             ui.add_space(6.0);
         }
         let mons = v.b.sides[0].mons.clone();
-        let active = v.b.sides[0].active;
+        let on_field: Vec<usize> = v.b.sides[0].slots.clone();
+        // a partner already picked to come in this turn
+        let coming: Vec<usize> = v.chosen.iter().filter_map(|(_, a)| if let Action::Switch(k) = a { Some(*k) } else { None }).collect();
         let w = ui.available_width();
         let cols = if w > 700.0 { 3 } else if w > 440.0 { 2 } else { 1 };
         let tile_w = (w - 10.0 * (cols as f32 - 1.0)) / cols as f32;
@@ -949,13 +1146,13 @@ impl App {
                 let ok = match &item {
                     Some(it) if it == "Revive" || it == "Max Revive" => m.fainted(),
                     Some(_) => !m.fainted(),
-                    None => !m.fainted() && i != active && trapped.is_none(),
+                    None => !m.fainted() && !on_field.contains(&i) && !coming.contains(&i) && trapped.is_none(),
                 };
                 let (r, resp) = ui.allocate_exact_size(egui::vec2(tile_w, 62.0), if ok { Sense::click() } else { Sense::hover() });
                 let ht = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered() && ok, kit::QUICK);
                 let p = ui.painter().clone();
                 p.rect_filled(r, kit::r(10.0), if ok { theme::blend(CARD(), OURS, 0.06 + 0.10 * ht) } else { kit::sunken() });
-                p.rect_stroke(r, kit::r(10.0), Stroke::new(1.0f32, if i == active && !m.fainted() { theme::blend(LINE(), OURS, 0.8) } else { LINE() }));
+                p.rect_stroke(r, kit::r(10.0), Stroke::new(1.0f32, if on_field.contains(&i) && !m.fainted() { theme::blend(LINE(), OURS, 0.8) } else { LINE() }));
                 if !self.team_sprite(&p, &m.species, m.shiny, r.min + egui::vec2(32.0, 31.0), egui::vec2(52.0, 52.0)) {
                     p.text(r.min + egui::vec2(32.0, 31.0), Align2::CENTER_CENTER, &m.name.chars().take(2).collect::<String>(), kit::font_bold(14.0), MUTED());
                 }
@@ -964,7 +1161,7 @@ impl App {
                 let mut tag = format!("Lv {}", m.level);
                 if m.fainted() {
                     tag.push_str(" · fainted");
-                } else if i == active {
+                } else if on_field.contains(&i) {
                     tag.push_str(" · in battle");
                 }
                 p.text(egui::pos2(r.max.x - 10.0, r.min.y + 11.0), Align2::RIGHT_TOP, tag, kit::font_small(11.0), MUTED());
@@ -1002,8 +1199,13 @@ impl App {
 
     fn battle_bag(&mut self, ui: &mut egui::Ui, v: &mut BattleView) {
         let mut act: Option<Action> = None;
-        if v.b.wild {
-            let them = v.b.act(1).clone();
+        if v.b.wild && v.b.foes(0).len() > 1 {
+            ui.label(caps("POKÉ BALLS"));
+            ui.add_space(4.0);
+            ui.label(small("You can't aim a ball while there are two wild Pokémon. Knock one out first, like in the game."));
+            ui.add_space(10.0);
+        } else if v.b.wild {
+            let them = v.b.act(v.b.foe(0)).clone();
             let rate = battle::data().species(&them.species).and_then(|sp| sim::data().catch_rate(sp.num)).unwrap_or(45);
             let mut sit = v.b.catch;
             sit.level = them.level;
@@ -1046,7 +1248,7 @@ impl App {
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
             for it in ["X Attack", "X Defend", "X Special", "X Sp. Def", "X Speed", "X Accuracy", "Dire Hit", "Guard Spec."] {
                 if chip(ui, it, false, kit::C_INDIGO).clicked() {
-                    act = Some(Action::Item(it.to_string(), v.b.sides[0].active));
+                    act = Some(Action::Item(it.to_string(), v.b.mi(v.cur)));
                 }
             }
         });
@@ -1099,6 +1301,11 @@ impl App {
                 }
                 if !v.undo.is_empty() && soft(ui, "Take back the last turn").clicked() {
                     v.take_back();
+                }
+                let n = super::sim_auto::auto_count(self.setup.sim.auto_n);
+                if soft(ui, &format!("Simulate {} like this", thousands(n))).on_hover_text("The AI plays this battle on both sides, many times: how often would you win?").clicked() {
+                    v.auto_after = true;
+                    *leave = true;
                 }
             });
         });
@@ -1235,6 +1442,18 @@ impl App {
                 }
             });
         });
+    }
+}
+
+/// Where a battler stands on the 512×288 field: (x, y of its feet, size).
+fn spot(b: usize, doubles: bool) -> (f32, f32, f32) {
+    match (b, doubles) {
+        (1, false) => (384.0, 192.0, 150.0),
+        (_, false) => (128.0, 300.0, 205.0),
+        (1, true) => (336.0, 198.0, 126.0),
+        (3, true) => (440.0, 184.0, 126.0),
+        (0, true) => (84.0, 302.0, 178.0),
+        (_, true) => (218.0, 306.0, 178.0),
     }
 }
 
