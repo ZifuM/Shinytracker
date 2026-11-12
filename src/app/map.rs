@@ -1295,7 +1295,8 @@ impl App {
                     });
                     // layers (outdoors only)
                     if area == Area::World {
-                        {
+                        // the same grey as the search box, under all the tabs
+                        egui::Frame::none().fill(ui.visuals().extreme_bg_color).rounding(8.0).show(ui, |ui| {
                             {
                                 let mut layer = self.mapui.layer;
                                 if kit::segmented(
@@ -1313,7 +1314,7 @@ impl App {
                                     self.mapui.selected = None;
                                 }
                             }
-                        }
+                        });
                     }
                 });
                 if let Some(title) = &showing {
