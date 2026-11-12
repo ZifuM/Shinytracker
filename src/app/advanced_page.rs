@@ -39,6 +39,9 @@ impl App {
         let w = ui.available_width();
         let jump = self.setup.adv_jump.take();
         let mut jump_to: Option<Rect> = None;
+        // where each card is this frame, so the highlight follows its card
+        // while the page scrolls to it
+        let mut rects: Vec<(AdvTab, Rect)> = Vec::new();
         let mut card = |this: &mut App, ui: &mut egui::Ui, which: AdvTab| {
             let r = ui
                 .scope(|ui| match which {
@@ -58,6 +61,7 @@ impl App {
             if jump == Some(which) {
                 jump_to = Some(r);
             }
+            rects.push((which, r));
             ui.add_space(18.0);
         };
         if w >= 1000.0 {
@@ -83,20 +87,27 @@ impl App {
                 card(self, ui, c);
             }
         }
+        let glow_id = egui::Id::new("adv-glow");
+        let now = ui.input(|i| i.time);
         if let Some(r) = jump_to {
             ui.scroll_to_rect(r, Some(egui::Align::Min));
-            // a short glow so the eye finds it
-            // read the time first: asking for it inside data_mut would wait on
-            // the lock data_mut already holds, and the app would freeze
-            let now = ui.input(|i| i.time);
-            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("adv-glow"), (r, now)));
+            // a short glow so the eye finds it (read the time before data_mut:
+            // asking for it inside would wait on data_mut's own lock and freeze)
+            let tab = jump.unwrap_or_default();
+            ui.ctx().data_mut(|d| d.insert_temp(glow_id, (tab, now)));
         }
-        if let Some((r, t)) = ui.ctx().data(|d| d.get_temp::<(Rect, f64)>(egui::Id::new("adv-glow"))) {
-            let age = (ui.input(|i| i.time) - t) as f32;
-            if age < 1.6 {
-                let k = 1.0 - age / 1.6;
-                ui.painter().rect_stroke(r.expand(3.0), 26.0, Stroke::new(2.5f32, ch::faint(kit::primary(), k)));
-                ui.ctx().request_repaint();
+        if let Some((tab, t)) = ui.ctx().data(|d| d.get_temp::<(AdvTab, f64)>(glow_id)) {
+            let age = (now - t) as f32;
+            match rects.iter().find(|(w, _)| *w == tab) {
+                Some((_, r)) if age < 1.6 => {
+                    // full strength while the page is still scrolling there,
+                    // then a gentle fade
+                    let k = (1.0 - (age - 0.5).max(0.0) / 1.1).clamp(0.0, 1.0);
+                    let k = k * k * (3.0 - 2.0 * k);
+                    ui.painter().rect_stroke(r.expand(3.0), 26.0, Stroke::new(2.5f32, ch::faint(kit::primary(), k)));
+                    ui.ctx().request_repaint();
+                }
+                _ => ui.ctx().data_mut(|d| d.remove::<(AdvTab, f64)>(glow_id)),
             }
         }
         ui.add_space(12.0);
