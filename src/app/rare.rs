@@ -182,10 +182,21 @@ impl App {
 
     /// Home's "Rare grass today" section.
     pub(super) fn rare_home(&mut self, ui: &mut egui::Ui) {
+        self.rare_home_titled(ui, None);
+    }
+
+    /// `rare_home`, optionally with a heading inside the card; the heading
+    /// closure draws it and returns true when its link was clicked.
+    pub(super) fn rare_home_titled(&mut self, ui: &mut egui::Ui, head: Option<&dyn Fn(&mut egui::Ui, usize) -> bool>) -> bool {
         let ready = self.game_map().is_some();
         let spots = self.rare_spots_today();
+        let mut clicked = false;
         kit::card(ui, |ui| {
             ui.set_width(ui.available_width());
+            if let Some(h) = head {
+                clicked = h(ui, spots.len());
+                ui.add_space(10.0);
+            }
             if !ready {
                 ui.label(
                     RichText::new("Today's rare grass shows here once the Map has read your game's map files.")
@@ -281,6 +292,7 @@ impl App {
                 }
             }
         });
+        clicked
     }
 }
 

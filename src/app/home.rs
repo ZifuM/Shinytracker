@@ -13,54 +13,182 @@ impl App {
     pub(super) fn page_home_modern(&mut self, ui: &mut egui::Ui) {
         kit::page_header(ui, "HOME", &self.greeting());
         self.home_notices(ui);
+        // the hunt you're on: the card from before, front and centre
         self.hunt_hero(ui, true);
+        ui.add_space(16.0);
+        self.home_today(ui);
         ui.add_space(18.0);
 
-        // Today, at a glance.
         let avail = ui.available_width();
+        let wide = avail >= 980.0;
+        let gap = 18.0;
+        if wide {
+            let left_w = ((avail - gap) * 0.6).floor();
+            let right_w = avail - gap - left_w;
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = gap;
+                ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                    ui.set_width(left_w);
+                    if self.home_runs(ui) {
+                        ui.add_space(gap);
+                    }
+                    self.home_rare(ui);
+                });
+                ui.allocate_ui_with_layout(egui::vec2(right_w, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                    ui.set_width(right_w);
+                    self.home_almost(ui);
+                    ui.add_space(gap);
+                    self.recent_shinies(ui);
+                });
+            });
+            ui.add_space(gap);
+            self.home_jump(ui);
+        } else {
+            if self.home_runs(ui) {
+                ui.add_space(gap);
+            }
+            self.home_almost(ui);
+            ui.add_space(gap);
+            self.recent_shinies(ui);
+            ui.add_space(gap);
+            self.home_rare(ui);
+            ui.add_space(gap);
+            self.home_jump(ui);
+        }
+    }
+
+    /// Encounters per day over every run (day → encounters).
+    fn home_days(&self) -> std::collections::BTreeMap<i64, u64> {
+        let mut m = std::collections::BTreeMap::new();
+        let mut add = |st: &crate::stats::RunStats| {
+            for d in &st.days {
+                *m.entry(d.day).or_insert(0) += d.encounters;
+            }
+        };
+        add(&self.cfg.run_stats);
+        for r in self.cfg.saved_runs.iter().filter(|r| r.id != self.cfg.run_id) {
+            add(&r.stats);
+        }
+        for h in self.cfg.history.iter().filter(|h| !h.phase) {
+            if let Some(st) = &h.stats {
+                add(st);
+            }
+        }
+        m
+    }
+
+    /// Today in four tiles: what you've done, your goal, your streak and your
+    /// trainer level, each with a little picture of where it stands.
+    fn home_today(&mut self, ui: &mut egui::Ui) {
+        let days = self.home_days();
+        let today_n = crate::stats::local_day(crate::stats::now_unix());
         let (today, _) = self.day_totals();
+        let week: Vec<u64> = (0..7).map(|k| days.get(&(today_n - 6 + k)).copied().unwrap_or(0)).collect();
         let goal = self.cfg.daily_goal;
         let streak = self.daily_streak();
-        let level = self.cfg.level_seen.max(1);
-        let cols = if avail >= 800.0 { 5 } else if avail >= 520.0 { 3 } else { 2 };
+        let l = self.lifetime_full();
+        let xp = self.total_xp(&l).total();
+        let level = crate::progress::level_for(xp);
+        let (into, need) = crate::progress::level_progress(xp);
+        let avail = ui.available_width();
+        let cols = if avail >= 860.0 { 4 } else { 2 };
         let gap = 12.0;
         let tw = ((avail - gap * (cols as f32 - 1.0)) / cols as f32).floor();
-        let goal_note = (goal > 0).then(|| {
-            let f = today as f64 / goal as f64;
-            if f >= 1.0 {
-                ("Goal reached ✔".to_string(), theme::GREEN)
-            } else {
-                (format!("{:.0}% of today's goal", f * 100.0), MUTED())
-            }
-        });
-        let tiles: [(&str, Color32, &str, String, Option<(String, Color32)>); 5] = [
-            ("⚔", kit::C_VIOLET, "Encounters today", theme::thousands(today), None),
-            ("⏱", kit::C_CYAN, "Hunted today", fmt_duration(self.today_hunt_secs()), None),
-            (
-                "🎯",
-                kit::C_PINK,
-                "Daily goal",
-                if goal > 0 { format!("{} / {}", theme::thousands(today.min(goal)), theme::thousands(goal)) } else { "Off".into() },
-                goal_note,
-            ),
-            ("🔥", kit::C_ORANGE, "Streak", format!("{streak} day{}", if streak == 1 { "" } else { "s" }), None),
-            ("⭐", kit::C_GOLD, "Trainer level", level.to_string(), Some((crate::progress::title(level).to_string(), MUTED()))),
-        ];
-        let any_note = tiles.iter().any(|t| t.4.is_some());
         let mut open: Option<usize> = None;
-        for row in tiles.chunks(cols) {
+        let idx: Vec<usize> = (0..4).collect();
+        for row in idx.chunks(cols) {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = gap;
-                for t in row {
-                    let i = tiles.iter().position(|x| x.2 == t.2).unwrap_or(0);
-                    let note = t.4.as_ref().map(|(s, c)| (s.as_str(), *c));
-                    let note = if any_note { note.or(Some(("", MUTED()))) } else { None };
+                for &i in row {
+                    let (r, resp) = ui.allocate_exact_size(egui::vec2(tw, 112.0), Sense::click());
+                    let ht = kit::anim(ui.ctx(), resp.id.with("lift"), resp.hovered(), kit::QUICK);
+                    let r = r.translate(egui::vec2(0.0, -2.0 * ht));
+                    let p = ui.painter_at(r.expand(14.0));
+                    let (icon, col, label) = [("⚔", kit::C_VIOLET, "Today"), ("🎯", kit::C_PINK, "Daily goal"), ("🔥", kit::C_ORANGE, "Streak"), ("⭐", kit::C_GOLD, "Trainer level")][i];
+                    p.add(kit::shadow_tier(if ht > 0.0 { 2 } else { 1 }).as_shape(r, 16.0));
+                    p.rect_filled(r, 16.0, CARD());
+                    p.rect_stroke(r, 16.0, Stroke::new(1.0f32, if resp.hovered() { theme::blend(LINE(), col, 0.6) } else { LINE() }));
+                    let chip = Rect::from_min_size(r.min + egui::vec2(14.0, 14.0), egui::vec2(28.0, 28.0));
+                    kit::icon_chip(&p, chip, icon, col, false);
+                    p.text(egui::pos2(chip.max.x + 10.0, chip.center().y), Align2::LEFT_CENTER, label, crate::fonts::sans_font(12.5), MUTED());
+                    let vy = chip.max.y + 22.0;
+                    let big = crate::fonts::sans_bold_font(22.0);
+                    let small = crate::fonts::sans_font(11.5);
+                    // the picture on the right of each tile
+                    let art = Rect::from_min_max(egui::pos2(r.max.x - (tw * 0.42).min(150.0), r.min.y + 16.0), egui::pos2(r.max.x - 14.0, r.max.y - 14.0));
+                    match i {
+                        0 => {
+                            p.text(egui::pos2(r.min.x + 16.0, vy), Align2::LEFT_CENTER, theme::thousands(today), big, TEXT());
+                            p.text(egui::pos2(r.min.x + 16.0, r.max.y - 18.0), Align2::LEFT_CENTER, format!("encounters · {}", fmt_duration(self.today_hunt_secs())), small, MUTED());
+                            // the last 7 days, today brightest
+                            let max = week.iter().copied().max().unwrap_or(1).max(1) as f32;
+                            let slot = art.width() / 7.0;
+                            let bw = (slot * 0.56).min(12.0);
+                            for (k, v) in week.iter().enumerate() {
+                                let cx = art.min.x + slot * (k as f32 + 0.5);
+                                let h = ((art.height() - 8.0) * (*v as f32 / max)).max(3.0);
+                                let br = Rect::from_min_max(egui::pos2(cx - bw / 2.0, art.max.y - h), egui::pos2(cx + bw / 2.0, art.max.y));
+                                p.rect_filled(br, bw / 2.0, if k == 6 { col } else { theme::blend(CARD(), col, if *v > 0 { 0.45 } else { 0.15 }) });
+                            }
+                        }
+                        1 => {
+                            let (v, note, f) = if goal > 0 {
+                                let f = (today as f32 / goal as f32).min(1.0);
+                                (format!("{} / {}", theme::thousands(today.min(goal)), theme::thousands(goal)), if f >= 1.0 { "Goal reached ✔".to_string() } else { format!("{} to go", theme::thousands(goal - today)) }, f)
+                            } else {
+                                ("Off".to_string(), "Set one on your Profile".to_string(), 0.0)
+                            };
+                            p.text(egui::pos2(r.min.x + 16.0, vy), Align2::LEFT_CENTER, v, big, TEXT());
+                            p.text(egui::pos2(r.min.x + 16.0, r.max.y - 18.0), Align2::LEFT_CENTER, note, small, if f >= 1.0 { theme::GREEN } else { MUTED() });
+                            // a ring
+                            let c = egui::pos2(art.max.x - 30.0, art.center().y + 4.0);
+                            p.circle_stroke(c, 24.0, Stroke::new(6.0f32, theme::blend(CARD(), TEXT(), 0.1)));
+                            let g = kit::grow(ui.ctx(), resp.id.with("ring"), f);
+                            if g > 0.0 {
+                                let n = (g * 48.0).ceil().max(2.0) as usize;
+                                let pts: Vec<egui::Pos2> = (0..=n).map(|k| {
+                                    let a = -std::f32::consts::FRAC_PI_2 + std::f32::consts::TAU * g * k as f32 / n as f32;
+                                    c + egui::vec2(a.cos(), a.sin()) * 24.0
+                                }).collect();
+                                p.add(egui::Shape::line(pts, Stroke::new(6.0f32, if f >= 1.0 { theme::GREEN } else { col })));
+                            }
+                            p.text(c, Align2::CENTER_CENTER, format!("{:.0}%", f * 100.0), crate::fonts::sans_bold_font(11.0), TEXT());
+                        }
+                        2 => {
+                            p.text(egui::pos2(r.min.x + 16.0, vy), Align2::LEFT_CENTER, format!("{streak} day{}", if streak == 1 { "" } else { "s" }), big, TEXT());
+                            let hunted_today = week[6] > 0;
+                            let note = if streak == 0 { "Hunt today to start one".to_string() } else if hunted_today { "Kept going today".to_string() } else { "Hunt today to keep it".to_string() };
+                            p.text(egui::pos2(r.min.x + 16.0, r.max.y - 18.0), Align2::LEFT_CENTER, note, small, if !hunted_today && streak > 0 { kit::C_ORANGE } else { MUTED() });
+                            // a dot for each of the last 7 days
+                            let slot = art.width() / 7.0;
+                            for (k, v) in week.iter().enumerate() {
+                                let c = egui::pos2(art.min.x + slot * (k as f32 + 0.5), art.center().y + 8.0);
+                                if *v > 0 {
+                                    p.circle_filled(c, 6.0, col);
+                                } else {
+                                    p.circle_stroke(c, 5.5, Stroke::new(1.5f32, theme::blend(CARD(), TEXT(), 0.18)));
+                                }
+                                let wd = crate::stats::WEEKDAYS[crate::stats::weekday(today_n - 6 + k as i64)];
+                                p.text(c + egui::vec2(0.0, 15.0), Align2::CENTER_CENTER, &wd[..1], crate::fonts::sans_font(9.5), if k == 6 { TEXT() } else { MUTED() });
+                            }
+                        }
+                        _ => {
+                            p.text(egui::pos2(r.min.x + 16.0, vy), Align2::LEFT_CENTER, level.to_string(), big, TEXT());
+                            p.text(egui::pos2(r.min.x + 16.0, r.max.y - 18.0), Align2::LEFT_CENTER, crate::progress::title(level), small, MUTED());
+                            // XP towards the next level
+                            let f = (into as f32 / need.max(1) as f32).clamp(0.0, 1.0);
+                            let bar = Rect::from_min_max(egui::pos2(art.min.x, art.center().y + 2.0), egui::pos2(art.max.x, art.center().y + 10.0));
+                            kit::paint_bar(&p, bar, kit::grow(ui.ctx(), resp.id.with("xp"), f));
+                            p.text(egui::pos2(art.max.x, bar.min.y - 10.0), Align2::RIGHT_CENTER, format!("{} / {} XP", theme::thousands(into), theme::thousands(need)), crate::fonts::sans_font(10.5), MUTED());
+                        }
+                    }
                     let tip = match i {
-                        0 | 1 => "Open this hunt's stats",
-                        2 => "Open your goals",
-                        _ => "Open your Trainer Profile",
+                        0 => "Your current hunt's stats",
+                        1 => "Your goals",
+                        2 => "Your goals and streaks",
+                        _ => "Your Trainer Profile",
                     };
-                    if kit::stat_tile(ui, tw, t.0, t.1, t.2, &t.3, note).on_hover_text(tip).clicked() {
+                    if resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                         open = Some(i);
                     }
                 }
@@ -70,12 +198,12 @@ impl App {
         if let Some(i) = open {
             self.setup.scroll_top = true;
             match i {
-                0 | 1 => {
+                0 => {
                     self.go_to(Tab::Runs);
                     self.setup.view_run = Some(super::RunRef::Current);
                     self.setup.nav_collapsed.retain(|t| *t != Tab::Shiny);
                 }
-                2 => {
+                1 | 2 => {
                     self.go_to(Tab::Profile);
                     self.setup.profile_section = super::trainer::ProfileSection::Goals;
                 }
@@ -85,33 +213,152 @@ impl App {
                 }
             }
         }
+    }
 
-        // Apps and recent shinies side by side when there's room.
-        let wide = avail >= 860.0;
-        let left_w = if wide { (avail * 0.58).floor() } else { avail };
-        let right_w = if wide { avail - left_w - 16.0 } else { avail };
-        ui.horizontal_top(|ui| {
-            ui.spacing_mut().item_spacing.x = 16.0;
-            ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                ui.set_width(left_w);
-                kit::section(ui, "Apps");
-                self.app_tiles(ui, left_w);
-            });
-            if wide {
-                ui.allocate_ui_with_layout(egui::vec2(right_w, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                    ui.set_width(right_w);
-                    kit::section(ui, "Recent shinies");
-                    self.recent_shinies(ui);
-                });
+    /// Your other hunts, most recent first, each a click from resuming.
+    /// Returns false (and draws nothing) when there are none.
+    fn home_runs(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut runs: Vec<(u64, u64)> = self.cfg.saved_runs.iter().filter(|r| r.id != self.cfg.run_id).map(|r| (r.id, r.stats.last_unix.max(r.saved_unix))).collect();
+        if runs.is_empty() {
+            return false;
+        }
+        runs.sort_by(|a, b| b.1.cmp(&a.1));
+        let total = runs.len();
+        let mut resume: Option<u64> = None;
+        let mut all = false;
+        kit::card(ui, |ui| {
+            all = super::profile_page::card_head(ui, "📜", kit::C_GREEN, "Pick up a hunt", Some(&format!("All runs ({total}) ›")));
+            ui.add_space(8.0);
+            for (k, (id, last)) in runs.iter().take(3).enumerate() {
+                let Some(info) = self.run_info(super::RunRef::Saved(*id)) else { continue };
+                if k > 0 {
+                    let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), Sense::hover());
+                    ui.painter().line_segment([r.left_center(), r.right_center()], Stroke::new(1.0f32, LINE()));
+                }
+                let (r, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 64.0), Sense::hover());
+                let p = ui.painter_at(r.expand(2.0));
+                if resp.hovered() {
+                    p.rect_filled(r.expand2(egui::vec2(6.0, 0.0)), 12.0, kit::CARD_HOVER());
+                }
+                let mult = info.odds.filter(|o| *o > 1.0).map(|o| info.count as f64 / o);
+                let col = match info.odds.filter(|o| *o > 1.0) {
+                    Some(o) => super::charts::luck_col(crate::stats::found_by(info.count, o)),
+                    None => MUTED(),
+                };
+                let sc = egui::pos2(r.min.x + 28.0, r.center().y);
+                p.circle_filled(sc, 26.0, theme::blend(CARD(), col, 0.16));
+                if let Some((_, sp)) = self.species_of(info.slug.as_deref()) {
+                    self.draw_sprite_centered(&p, &sp, false, sc, egui::vec2(48.0, 48.0));
+                }
+                let x = r.min.x + 66.0;
+                p.text(egui::pos2(x, r.center().y - 10.0), Align2::LEFT_CENTER, &info.name, crate::fonts::sans_bold_font(14.5), TEXT());
+                p.text(egui::pos2(x, r.center().y + 11.0), Align2::LEFT_CENTER, format!("{} · {}", info.method, ago(*last)), crate::fonts::sans_font(11.5), MUTED());
+                // the button, then the count and luck to its left
+                let bw = 96.0;
+                let br = Rect::from_min_size(egui::pos2(r.max.x - bw, r.center().y - 16.0), egui::vec2(bw, 32.0));
+                let b = ui.put(br, egui::Button::new(RichText::new("▶  Resume").font(crate::fonts::sans_bold_font(12.5)).color(kit::on_primary())).fill(kit::primary()).rounding(16.0));
+                if b.on_hover_text("Switch to this hunt (the one you're on is saved)").clicked() {
+                    resume = Some(*id);
+                }
+                let nx = br.min.x - 16.0;
+                p.text(egui::pos2(nx, r.center().y - 9.0), Align2::RIGHT_CENTER, theme::thousands(info.count), crate::fonts::sans_bold_font(16.0), TEXT());
+                if let Some(m) = mult {
+                    p.text(egui::pos2(nx, r.center().y + 11.0), Align2::RIGHT_CENTER, format!("{m:.2}× the odds"), crate::fonts::sans_font(11.5), super::charts::ink(col));
+                } else {
+                    p.text(egui::pos2(nx, r.center().y + 11.0), Align2::RIGHT_CENTER, "encounters", crate::fonts::sans_font(11.5), MUTED());
+                }
             }
         });
-        if !wide {
-            kit::section(ui, "Recent shinies");
-            self.recent_shinies(ui);
+        if let Some(id) = resume {
+            self.resume_run(id);
         }
+        if all {
+            self.go_to(Tab::Runs);
+            self.setup.nav_collapsed.retain(|t| *t != Tab::Shiny);
+        }
+        true
+    }
 
-        kit::section(ui, "Rare grass today");
-        self.rare_home(ui);
+    /// Today's rare grass, with a link to the Map.
+    fn home_rare(&mut self, ui: &mut egui::Ui) {
+        let head = |ui: &mut egui::Ui, n: usize| -> bool {
+            let link = if n > 0 { format!("{n} spot{} on the Map ›", if n == 1 { "" } else { "s" }) } else { "Open the Map ›".to_string() };
+            super::profile_page::card_head(ui, "🌿", kit::C_GREEN, "Rare grass today", Some(&link))
+        };
+        if self.rare_home_titled(ui, Some(&head)) {
+            self.go_to(Tab::Map);
+        }
+    }
+
+    /// The achievements you're closest to.
+    fn home_almost(&mut self, ui: &mut egui::Ui) {
+        let l = self.lifetime_full();
+        let near = self.near_achievements(&l);
+        let mut go = false;
+        kit::card(ui, |ui| {
+            go = super::profile_page::card_head(ui, "🎯", kit::C_PINK, "Almost there", Some("All ›"));
+            ui.add_space(6.0);
+            if near.is_empty() {
+                ui.label(RichText::new("Start hunting and your next achievements show up here.").size(12.5).color(MUTED()));
+                return;
+            }
+            for (a, f) in near.iter().take(3) {
+                self.near_row(ui, a, *f, &l);
+            }
+        });
+        if go {
+            self.go_to(Tab::Profile);
+            self.setup.profile_section = super::trainer::ProfileSection::Achievements;
+        }
+    }
+
+    /// Everything else, one click away: a row of four (two by two when narrow).
+    fn home_jump(&mut self, ui: &mut egui::Ui) {
+        let items: [(Tab, &str); 4] = [
+            (Tab::Pokedex, "Every Pokémon, and your Shiny Dex"),
+            (Tab::Map, "Areas, Pokémon and rare grass"),
+            (Tab::Stats, "Your hunting over time"),
+            (Tab::Runs, "Every hunt, saved and caught"),
+        ];
+        let mut go: Option<Tab> = None;
+        kit::card(ui, |ui| {
+            super::profile_page::card_head(ui, "📌", kit::C_CYAN, "Jump to", None);
+            ui.add_space(10.0);
+            let w = ui.available_width();
+            let cols = if w >= 760.0 { 4 } else { 2 };
+            let gap = 10.0;
+            let tw = ((w - gap * (cols as f32 - 1.0)) / cols as f32).floor();
+            for row in items.chunks(cols) {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = gap;
+                    for (tab, about) in row {
+                        let (icon, name, color) = tab_meta(*tab);
+                        let (r, resp) = ui.allocate_exact_size(egui::vec2(tw, 58.0), Sense::click());
+                        let p = ui.painter_at(r.expand(2.0));
+                        let ht = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered(), kit::QUICK);
+                        p.rect_filled(r, 14.0, theme::blend(kit::CARD_HOVER(), color, 0.06 * ht));
+                        p.rect_stroke(r, 14.0, Stroke::new(1.0f32, theme::blend(LINE(), color, 0.5 * ht)));
+                        let chip = Rect::from_center_size(egui::pos2(r.min.x + 26.0, r.center().y), egui::vec2(32.0, 32.0));
+                        kit::icon_chip(&p, chip, icon, color, true);
+                        let tx = chip.max.x + 12.0;
+                        let maxw = r.max.x - tx - 26.0;
+                        p.text(egui::pos2(tx, r.center().y - 8.0), Align2::LEFT_CENTER, name, crate::fonts::sans_bold_font(13.5), TEXT());
+                        p.text(egui::pos2(tx, r.center().y + 10.0), Align2::LEFT_CENTER, super::charts::clip(ui, about, &crate::fonts::sans_font(11.5), maxw), crate::fonts::sans_font(11.5), MUTED());
+                        p.text(egui::pos2(r.max.x - 14.0, r.center().y), Align2::RIGHT_CENTER, "›", egui::FontId::proportional(18.0), if ht > 0.5 { TEXT() } else { MUTED() });
+                        if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                            go = Some(*tab);
+                        }
+                    }
+                });
+                ui.add_space(gap);
+            }
+        });
+        if let Some(t) = go {
+            if t == Tab::Runs {
+                self.setup.nav_collapsed.retain(|x| *x != Tab::Shiny);
+            }
+            self.go_to(t);
+        }
     }
 
     /// "Good evening, Zifu."
@@ -253,6 +500,7 @@ impl App {
     }
 
     /// The other apps as tiles.
+    #[allow(dead_code)]
     fn app_tiles(&mut self, ui: &mut egui::Ui, width: f32) {
         self.page_tiles(
             ui,
@@ -314,7 +562,12 @@ impl App {
                 (idx, h.target.clone(), h.encounters, h.when_unix)
             })
             .collect();
+        let mut dex = false;
+        let mut trophy: Option<String> = None;
+        let slugs: Vec<Option<String>> = self.cfg.history.iter().rev().take(6).map(|h| h.slug.clone()).collect();
         kit::card(ui, |ui| {
+            dex = super::profile_page::card_head(ui, "✨", kit::C_GOLD, "Recent shinies", Some("Shiny Dex ›"));
+            ui.add_space(10.0);
             if recent.is_empty() {
                 ui.label(RichText::new("No shinies yet. Your first one shows up here, with how long it took.").size(12.5).color(MUTED()));
                 return;
@@ -326,9 +579,14 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
                     for (idx, name, enc, when) in row {
-                        let (r, resp) = ui.allocate_exact_size(egui::vec2(cw, 118.0), Sense::hover());
+                        let k = recent.iter().position(|x| x.3 == *when && x.1 == *name).unwrap_or(0);
+                        let (r, resp) = ui.allocate_exact_size(egui::vec2(cw, 118.0), Sense::click());
                         let p = ui.painter_at(r);
-                        p.rect_filled(r, 12.0, theme::blend(CARD(), GOLD, 0.06));
+                        let ht = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered(), kit::QUICK);
+                        p.rect_filled(r, 12.0, theme::blend(CARD(), GOLD, 0.06 + 0.06 * ht));
+                        if ht > 0.0 {
+                            p.rect_stroke(r, 12.0, Stroke::new(1.0f32, theme::blend(LINE(), GOLD, 0.5 * ht)));
+                        }
                         if let Some(i) = idx {
                             let sp = self.species[*i].clone();
                             self.draw_sprite(&p, &sp, true, egui::pos2(r.center().x, r.min.y + 70.0), egui::vec2(cw - 16.0, 62.0));
@@ -342,12 +600,23 @@ impl App {
                             crate::fonts::sans_font(11.5),
                             MUTED(),
                         );
-                        resp.on_hover_text(format!("{name}: {} encounters · {}", theme::thousands(*enc), ago(*when)));
+                        if resp.on_hover_text(format!("{name}: {} encounters · {}\nClick for its trophy", theme::thousands(*enc), ago(*when))).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                            trophy = slugs.get(k).cloned().flatten();
+                        }
                     }
                 });
                 ui.add_space(8.0);
             }
         });
+        if dex || trophy.is_some() {
+            self.setup.tab = Tab::Pokedex;
+            self.setup.pokedex.shiny = true;
+            self.setup.pokedex.open = None;
+            self.setup.dex.open = trophy;
+            // back from the trophy comes home
+            self.setup.trophy_back = self.setup.dex.open.as_ref().map(|_| Tab::Home);
+            self.setup.scroll_top = true;
+        }
     }
 }
 

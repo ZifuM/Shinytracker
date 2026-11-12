@@ -229,8 +229,9 @@ impl App {
         }
     }
 
-    /// The locked achievements you're closest to.
-    fn profile_almost(&mut self, ui: &mut egui::Ui, l: &Lifetime) {
+    /// The locked achievements you're closest to (one per ladder, furthest
+    /// along first).
+    pub(super) fn near_achievements(&self, l: &Lifetime) -> Vec<(&'static Achievement, f64)> {
         let mut near: Vec<(&'static Achievement, f64)> = ACHIEVEMENTS
             .iter()
             .filter(|a| self.ach_when(a.id).is_none() && !progress::is_binary(a) && !a.secret)
@@ -253,6 +254,12 @@ impl App {
                 true
             }
         });
+        near
+    }
+
+    /// The locked achievements you're closest to.
+    fn profile_almost(&mut self, ui: &mut egui::Ui, l: &Lifetime) {
+        let near = self.near_achievements(l);
         let mut go = false;
         kit::card(ui, |ui| {
             if card_head(ui, "🎯", PINK, "Almost there", Some("See all ›")) {
@@ -278,7 +285,7 @@ impl App {
         }
     }
 
-    fn near_row(&mut self, ui: &mut egui::Ui, a: &'static Achievement, f: f64, l: &Lifetime) {
+    pub(super) fn near_row(&mut self, ui: &mut egui::Ui, a: &'static Achievement, f: f64, l: &Lifetime) {
         let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 62.0), Sense::hover());
         let p = ui.painter().clone();
         let tc = tier_col(a.tier);
@@ -659,7 +666,7 @@ impl App {
 }
 
 /// A card's title row; with `link`, a link on the right (true when clicked).
-fn card_head(ui: &mut egui::Ui, icon: &str, col: Color32, title: &str, link: Option<&str>) -> bool {
+pub(super) fn card_head(ui: &mut egui::Ui, icon: &str, col: Color32, title: &str, link: Option<&str>) -> bool {
     let mut clicked = false;
     ui.horizontal(|ui| {
         let (r, _) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::hover());

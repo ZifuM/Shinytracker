@@ -626,7 +626,11 @@ impl App {
     pub(super) fn page_dex_entry(&mut self, ui: &mut egui::Ui, slug: &str) {
         // back to where it was opened from (Stats), or to the Shiny Dex
         let back = self.setup.trophy_back;
-        let back_label = if back == Some(Tab::Stats) { "Stats" } else { "Shiny Dex" };
+        let back_label = match back {
+            Some(Tab::Stats) => "Stats",
+            Some(Tab::Home) => "Home",
+            _ => "Shiny Dex",
+        };
         if super::hunt_pages::back_button(ui, back_label) {
             self.setup.dex.open = None;
             if let Some(t) = self.setup.trophy_back.take() {
