@@ -1090,53 +1090,74 @@ impl App {
         }
     }
 
-    /// "‹ Back" (to wherever you came from) and where you are.
+    /// "‹ Back" (to wherever you came from), where you are, and a pin for
+    /// the pages you can pin.
     pub(super) fn info_back_bar(&mut self, ui: &mut egui::Ui, here: &str) {
-        let back_to = self.setup.info.history.last().map(|p| self.page_label(p));
+        let back_to = self.setup.info.history.last().map(|p| self.page_label(p)).or_else(|| self.setup.info.from_tab.map(|t| super::shell::tab_meta(t).1.to_string()));
+        let page = self.setup.info.page.clone();
+        let parent: Option<(Page, &str)> = match page {
+            Page::Guide(_) => Some((Page::Guides, "How to Play")),
+            Page::Move(_) => Some((Page::Moves, "Moves")),
+            Page::Item(_) => Some((Page::Items, "Items")),
+            Page::Place(_) => Some((Page::Places, "Places")),
+            _ => None,
+        };
+        let pin_key = page.key();
+        let pinned = pin_key.as_ref().is_some_and(|k| self.cfg.info_pins.contains(k));
+        let mut go: Option<Page> = None;
         let mut back = false;
-        let mut home = false;
-        let mut lib = false;
-        let mut moves = false;
-        let mut items = false;
+        let mut flip_pin = false;
         ui.horizontal(|ui| {
             let label = format!("‹  {}", back_to.clone().unwrap_or_else(|| "Game Info".into()));
-            back = ui.add(egui::Button::new(RichText::new(label).size(13.0)).fill(kit::btn_fill())).clicked();
+            back = ui.add(egui::Button::new(RichText::new(label).size(13.0)).fill(kit::btn_fill())).on_hover_text("Back (Alt+←)").clicked();
             ui.add_space(10.0);
-            home = ui.link(RichText::new("Game Info").size(12.5)).clicked();
+            if ui.link(RichText::new("Game Info").size(12.5)).clicked() {
+                go = Some(Page::Home);
+            }
             ui.label(small("›"));
-            if matches!(self.setup.info.page, Page::Guide(_)) {
-                lib = ui.link(RichText::new("How to Play").size(12.5)).clicked();
-                ui.label(small("›"));
-            }
-            if matches!(self.setup.info.page, Page::Move(_)) {
-                moves = ui.link(RichText::new("Moves").size(12.5)).clicked();
-                ui.label(small("›"));
-            }
-            if matches!(self.setup.info.page, Page::Item(_)) {
-                items = ui.link(RichText::new("Items").size(12.5)).clicked();
+            if let Some((p, name)) = &parent {
+                if ui.link(RichText::new(*name).size(12.5)).clicked() {
+                    go = Some(p.clone());
+                }
                 ui.label(small("›"));
             }
             ui.label(RichText::new(here).size(12.5).color(TEXT()));
+            if pin_key.is_some() {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let (t, tip) = if pinned { ("📌  Pinned", "Unpin it from the Game Info front page") } else { ("📌  Pin", "Pin it to the Game Info front page") };
+                    let fill = if pinned { theme::blend(CARD(), kit::C_GOLD, 0.25) } else { kit::btn_fill() };
+                    if ui.add(egui::Button::new(RichText::new(t).size(12.5)).fill(fill)).on_hover_text(tip).clicked() {
+                        flip_pin = true;
+                    }
+                });
+            }
         });
         ui.add_space(16.0);
+        if flip_pin {
+            if let Some(k) = pin_key {
+                if pinned {
+                    self.cfg.info_pins.retain(|p| *p != k);
+                } else {
+                    self.cfg.info_pins.insert(0, k);
+                    self.cfg.info_pins.truncate(24);
+                }
+                self.cfg.save();
+            }
+        }
         if back {
             self.info_back();
-        } else if home {
-            self.info_push(Page::Home);
-        } else if lib {
-            self.info_push(Page::Guides);
-        } else if moves {
-            self.info_push(Page::Moves);
-        } else if items {
-            self.info_push(Page::Items);
+        } else if let Some(p) = go {
+            self.info_push(p);
         }
     }
 
-    fn page_label(&self, p: &Page) -> String {
+    pub(super) fn page_label(&self, p: &Page) -> String {
         match p {
             Page::Home => "Game Info".into(),
             Page::Guides => "How to Play".into(),
             Page::Moves => "Moves".into(),
+            Page::Places => "Places".into(),
+            Page::Place(n) => n.clone(),
             Page::Items => "Items".into(),
             Page::Item(id) => self.wiki.as_ref().and_then(|w| w.data.items.iter().find(|i| &i.id == id).map(|i| i.name.clone())).unwrap_or_else(|| "Item".into()),
             Page::Move(k) => self.wiki.as_ref().and_then(|w| w.move_info(k).map(|m| m.n.clone())).unwrap_or_else(|| "Move".into()),

@@ -741,6 +741,7 @@ impl App {
     /// Every way to get it, grouped by how.
     fn item_where(&mut self, ui: &mut egui::Ui, w: &Arc<Wiki>, it: &Item) {
         let mut open_mon: Option<String> = None;
+        let mut open_place: Option<String> = None;
         kit::card(ui, |ui| {
             ui.horizontal(|ui| {
                 card_head(ui, "📍", kit::C_GREEN, "Where to get it", None);
@@ -792,7 +793,16 @@ impl App {
                         ui.vertical(|ui| {
                             ui.spacing_mut().item_spacing.y = 1.0;
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(&s.place).size(13.0).strong().color(TEXT()));
+                                match super::info_places::group_of(w, &s.place) {
+                                    Some(g) => {
+                                        if ui.link(RichText::new(&s.place).size(13.0).strong()).on_hover_text(format!("Open {g}")).clicked() {
+                                            open_place = Some(g);
+                                        }
+                                    }
+                                    None => {
+                                        ui.label(RichText::new(&s.place).size(13.0).strong().color(TEXT()));
+                                    }
+                                }
                                 if let Some(p) = yen(&s.detail).filter(|_| how == "Shop") {
                                     ui.label(RichText::new(format!("₽{}", fmt_n(p))).size(12.0).strong().color(gold_ink()));
                                 }
@@ -833,6 +843,9 @@ impl App {
         });
         if let Some(id) = open_mon {
             self.info_open_dex(Some(id));
+        }
+        if let Some(p) = open_place {
+            self.info_push(Page::Place(p));
         }
     }
 

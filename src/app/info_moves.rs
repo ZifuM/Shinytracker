@@ -1031,6 +1031,7 @@ impl App {
     /// How to teach it: the TM (and where to get it) or the tutor (and the price).
     fn move_teach(&mut self, ui: &mut egui::Ui, w: &Arc<Wiki>, _key: &str, tm: Option<&str>, tutor: Option<&crate::wiki::Tutor>) {
         let mut show_item: Option<String> = None;
+        let mut open_place: Option<String> = None;
         kit::card(ui, |ui| {
             card_head(ui, "🎓", kit::C_GOLD, "How to teach it", None);
             ui.add_space(10.0);
@@ -1080,7 +1081,16 @@ impl App {
             if let Some(t) = tutor {
                 ui.horizontal(|ui| {
                     tag(ui, "TUTOR", kit::C_TEAL);
-                    ui.label(RichText::new(&t.place).font(crate::fonts::sans_bold_font(13.5)).color(TEXT()));
+                    match super::info_places::group_of(w, &t.place) {
+                        Some(g) => {
+                            if ui.link(RichText::new(&t.place).font(crate::fonts::sans_bold_font(13.5))).on_hover_text("Open this place").clicked() {
+                                open_place = Some(g);
+                            }
+                        }
+                        None => {
+                            ui.label(RichText::new(&t.place).font(crate::fonts::sans_bold_font(13.5)).color(TEXT()));
+                        }
+                    }
                 });
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
@@ -1091,6 +1101,9 @@ impl App {
         });
         if let Some(id) = show_item {
             self.info_push(Page::Item(id));
+        }
+        if let Some(p) = open_place {
+            self.info_push(Page::Place(p));
         }
     }
 

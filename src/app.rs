@@ -22,6 +22,7 @@ mod info_guides;
 mod info_md;
 mod info_moves;
 mod info_items;
+mod info_places;
 mod hunt_pages;
 mod notices;
 mod onboarding;
@@ -2757,6 +2758,15 @@ impl eframe::App for App {
         }
         while let Ok(w) = self.wiki_rx.try_recv() {
             self.wiki = Some(w);
+        }
+        // Ctrl+K: search the game from anywhere
+        if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::K)) {
+            if self.setup.tab != Tab::Info {
+                self.go_to(Tab::Info);
+            }
+            self.setup.info.reset_home();
+            self.setup.scroll_top = true;
+            ctx.memory_mut(|m| m.request_focus(egui::Id::new("game-info-search")));
         }
         self.map_tick(ctx);
         self.watch_game();

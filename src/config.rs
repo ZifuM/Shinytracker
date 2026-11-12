@@ -657,6 +657,8 @@ pub struct Config {
     pub runs_list: bool,
     /// Game Info: the how-to-play guides read to the end (guide ids).
     pub guides_read: Vec<String>,
+    /// Game Info: pages pinned to its front page ("move:surf", "place:Route 210"…).
+    pub info_pins: Vec<String>,
 }
 
 impl Default for Config {
@@ -747,6 +749,7 @@ impl Default for Config {
             star_alert_reset: false,
             star_alert_reset2: false,
             guides_read: Vec::new(),
+            info_pins: Vec::new(),
             star_alert_on3: false,
             overlay_reset1: false,
             pinned_runs: Vec::new(),

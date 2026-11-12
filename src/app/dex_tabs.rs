@@ -125,6 +125,7 @@ impl App {
 
         let map_ready = self.gamemap.as_ref().is_some_and(|r| r.is_ok());
         let mut go_map: Option<(Vec<String>, String, Option<Spots>)> = None;
+        let mut open_place: Option<String> = None;
 
         if let Some(why) = w.unobtainable(&m.id) {
             kit::card(ui, |ui| {
@@ -183,7 +184,10 @@ impl App {
                                 ui.set_min_width(140.0);
                                 ui.set_max_width(220.0);
                                 let name = if same { small(place_name(&e.area)) } else { cell(place_name(&e.area)).family(kit::strong_family(13.5)).strong() };
-                                ui.add(egui::Label::new(name).extend());
+                                let r = ui.add(egui::Label::new(name).extend().sense(Sense::click())).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Open this place in Game Info");
+                                if r.clicked() {
+                                    open_place = w.place(&e.area).map(|p| if p.group.is_empty() { p.name.clone() } else { p.group.clone() });
+                                }
                                 if !e.note.is_empty() {
                                     ui.add(egui::Label::new(small(&e.note)).wrap());
                                 }
@@ -297,6 +301,10 @@ impl App {
                 self.setup.pokedex.open = Some(id);
             }
         }
+        if let Some(p) = open_place {
+            self.info_open_page(super::info_home::Page::Place(p));
+            return;
+        }
         if let Some((places, title, spots)) = go_map {
             self.show_on_map(&places, title, spots);
         }
@@ -363,6 +371,7 @@ impl App {
 
         let kind = self.setup.pokedex.move_kind;
         let text = |k: &str| w.data.text.get(k).cloned().unwrap_or_default();
+        let mut open_move: Option<String> = None;
         kit::card(ui, |ui| {
             ui.set_width(ui.available_width());
             let (rows, first_head, note): (Vec<(String, String, bool)>, &str, String) = match kind {
@@ -414,9 +423,10 @@ impl App {
                             if stab {
                                 rt = rt.family(kit::strong_family(13.5)).strong();
                             }
-                            let r = ui.label(rt);
-                            if !mv.d.is_empty() {
-                                r.on_hover_text(&mv.d);
+                            let r = ui.add(egui::Label::new(rt).sense(Sense::click())).on_hover_cursor(egui::CursorIcon::PointingHand);
+                            let r = if mv.d.is_empty() { r.on_hover_text("Open the move in Game Info") } else { r.on_hover_text(format!("{}\n\nClick to open it in Game Info", mv.d)) };
+                            if r.clicked() {
+                                open_move = Some(key.clone());
                             }
                             if *extra {
                                 kit::pill(ui, "MODERN", PillKind::Info).on_hover_text("Only with MODERN POKéMON on");
@@ -469,7 +479,11 @@ impl App {
             if !show_effect {
                 foot.push_str(" Hover a move to see what it does.");
             }
+            foot.push_str(" Click a move for its page in Game Info.");
             ui.add(egui::Label::new(small(foot.trim())).wrap());
         });
+        if let Some(k) = open_move {
+            self.info_open_page(super::info_home::Page::Move(k));
+        }
     }
 }

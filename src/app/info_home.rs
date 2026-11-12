@@ -97,6 +97,35 @@ pub(super) enum Page {
     Items,
     /// One item, by id.
     Item(String),
+    /// Every place, in story order.
+    Places,
+    /// One place, by name ("Route 210").
+    Place(String),
+}
+
+impl Page {
+    /// A pin's key: "move:surf", "item:ITEM_LEFTOVERS", "place:Route 210", "guide:saving".
+    pub fn key(&self) -> Option<String> {
+        match self {
+            Page::Move(k) => Some(format!("move:{k}")),
+            Page::Item(k) => Some(format!("item:{k}")),
+            Page::Place(k) => Some(format!("place:{k}")),
+            Page::Guide(k) => Some(format!("guide:{k}")),
+            _ => None,
+        }
+    }
+
+    pub fn from_key(s: &str) -> Option<Page> {
+        let (kind, k) = s.split_once(':')?;
+        let k = k.to_string();
+        Some(match kind {
+            "move" => Page::Move(k),
+            "item" => Page::Item(k),
+            "place" => Page::Place(k),
+            "guide" => Page::Guide(k),
+            _ => return None,
+        })
+    }
 }
 
 #[derive(Default)]
@@ -110,6 +139,12 @@ pub(super) struct InfoState {
     pub moves: super::info_moves::MovesState,
     /// The items lists and item pages.
     pub items: super::info_items::ItemsState,
+    /// The places list and place pages.
+    pub places: super::info_places::PlacesState,
+    /// Pages looked at lately, newest first.
+    pub recent: Vec<Page>,
+    /// The app page Game Info was opened from (the Pokédex…), for "Back".
+    pub from_tab: Option<Tab>,
     pub query: String,
     /// Only this kind in the results; with no query, list all of it.
     pub kind: Option<Kind>,
@@ -133,6 +168,7 @@ impl InfoState {
     pub fn reset_home(&mut self) {
         self.page = Page::Home;
         self.history.clear();
+        self.from_tab = None;
         self.query.clear();
         self.kind = None;
         self.pick = None;
@@ -363,6 +399,8 @@ impl App {
             Page::Move(k) => return self.page_move(ui, &w, &k),
             Page::Items => return self.page_items(ui, &w),
             Page::Item(id) => return self.page_item(ui, &w, &id),
+            Page::Places => return self.page_places(ui, &w),
+            Page::Place(n) => return self.page_place(ui, &w, &n),
             Page::Home => {}
         }
         kit::page_header(
@@ -433,7 +471,7 @@ impl App {
                             Kind::Guide => "Open How to Play".to_string(),
                             Kind::Move => "Open Moves".to_string(),
                             Kind::Item => "Open Items".to_string(),
-                            _ => format!("List every {}", k.one()),
+                            Kind::Place => "Open Places".to_string(),
                         };
                         if resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                             pick_kind = Some(k);
@@ -474,6 +512,8 @@ impl App {
                 self.info_push(Page::Moves);
             } else if k == Kind::Item && self.setup.info.query.trim().is_empty() {
                 self.info_push(Page::Items);
+            } else if k == Kind::Place && self.setup.info.query.trim().is_empty() {
+                self.info_push(Page::Places);
             } else {
                 let s = &mut self.setup.info;
                 if s.kind == Some(k) && s.query.trim().is_empty() {
@@ -542,6 +582,9 @@ impl App {
             } else if h.kind == Kind::Item {
                 let k = h.key.clone();
                 self.info_push(Page::Item(k));
+            } else if h.kind == Kind::Place {
+                let k = h.key.clone();
+                self.info_push(Page::Place(k));
             } else if h.kind == Kind::Guide {
                 let id = h.key.clone();
                 self.info_read(&id, None, None);
@@ -590,6 +633,11 @@ impl App {
     /// Go to a page, remembering this one for "Back".
     pub(super) fn info_push(&mut self, page: Page) {
         let s = &mut self.setup.info;
+        if page.key().is_some() {
+            s.recent.retain(|p| *p != page);
+            s.recent.insert(0, page.clone());
+            s.recent.truncate(12);
+        }
         if s.page != page {
             let cur = std::mem::replace(&mut s.page, page);
             // coming back to a page you were on: drop the loop
@@ -607,9 +655,32 @@ impl App {
 
     pub(super) fn info_back(&mut self) {
         let s = &mut self.setup.info;
+        if s.history.is_empty() {
+            if let Some(t) = s.from_tab.take() {
+                s.page = Page::Home;
+                self.go_to(t);
+                return;
+            }
+        }
         s.page = s.history.pop().unwrap_or_default();
         s.reader.scroll_to = None;
         self.setup.scroll_top = true;
+    }
+
+    /// Open a Game Info page from anywhere in the app.
+    pub(super) fn info_open_page(&mut self, page: Page) {
+        if self.setup.tab != Tab::Info {
+            // "Back" takes you to where you were (the Pokédex entry…)
+            let from = self.setup.tab;
+            self.go_to(Tab::Info);
+            let s = &mut self.setup.info;
+            s.history.clear();
+            s.from_tab = Some(from);
+            s.page = Page::Home;
+        }
+        self.info_push(page);
+        // its Back goes to the app page, not the Game Info front page
+        self.setup.info.history.retain(|p| *p != Page::Home);
     }
 
     /// Show one thing in the search panel.
@@ -847,6 +918,7 @@ impl App {
         let mut read: Option<(String, Option<usize>)> = None;
         let mut open_move: Option<String> = None;
         let mut open_item: Option<String> = None;
+        let mut open_place: Option<String> = None;
         kit::card(ui, |ui| match cur.0 {
             Kind::Pokemon => {
                 if let Some(m) = w.mon(&cur.1).cloned() {
@@ -867,7 +939,13 @@ impl App {
                     open_item = Some(cur.1.clone());
                 }
             }
-            Kind::Place => self.look_place(ui, w, &cur.1, &mut go),
+            Kind::Place => {
+                self.look_place(ui, w, &cur.1, &mut go);
+                ui.add_space(12.0);
+                if ui.add(egui::Button::new(RichText::new("Open the place's page  ›").size(13.0)).fill(kit::btn_fill())).on_hover_text("Every Pokémon by method and time of day, its items, and the Map").clicked() {
+                    open_place = Some(cur.1.clone());
+                }
+            }
             Kind::Guide => {
                 if let Some(doc) = self.guide_doc(w, &cur.1) {
                     read = look_guide(ui, w, &cur.1, &doc);
@@ -882,6 +960,9 @@ impl App {
         }
         if let Some(k) = open_item {
             self.info_push(Page::Item(k));
+        }
+        if let Some(k) = open_place {
+            self.info_push(Page::Place(k));
         }
         if let Some(p) = go {
             // jump to it: make sure it's in the list
@@ -929,7 +1010,9 @@ impl App {
         if !wild.is_empty() {
             look_head(ui, "WHERE TO CATCH IT", &format!("best first for {} now", PERIODS[now].to_lowercase()));
             for e in wild.iter().take(5) {
-                wild_row(ui, w, e, now);
+                if wild_row(ui, w, e, now) {
+                    *go = w.place(&e.area).map(|p| (Kind::Place, if p.group.is_empty() { p.name.clone() } else { p.group.clone() }));
+                }
             }
             if wild.len() > 5 {
                 ui.label(small(format!("+ {} more in the Pokédex", wild.len() - 5)));
@@ -1069,6 +1152,7 @@ impl App {
 
     fn info_front(&mut self, ui: &mut egui::Ui, w: &Arc<Wiki>) {
         self.info_news(ui, w);
+        self.info_shortcuts(ui, w);
         let avail = ui.available_width();
         let gap = 18.0;
         if avail >= 980.0 {
@@ -1092,6 +1176,68 @@ impl App {
         }
         ui.add_space(gap);
         self.info_guides(ui, w);
+    }
+
+    /// Pinned pages and the ones looked at lately.
+    fn info_shortcuts(&mut self, ui: &mut egui::Ui, _w: &Arc<Wiki>) {
+        let pins: Vec<Page> = self.cfg.info_pins.iter().filter_map(|k| Page::from_key(k)).collect();
+        let recent: Vec<Page> = self.setup.info.recent.iter().filter(|p| !pins.contains(p)).take(8).cloned().collect();
+        if pins.is_empty() && recent.is_empty() {
+            return;
+        }
+        let mut open: Option<Page> = None;
+        let mut unpin: Option<String> = None;
+        kit::card(ui, |ui| {
+            for (title, icon, list, pinned) in [("Pinned", "📌", &pins, true), ("Recently viewed", "🕘", &recent, false)] {
+                if list.is_empty() {
+                    continue;
+                }
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                    let (r, _) = ui.allocate_exact_size(egui::vec2(132.0, 28.0), Sense::hover());
+                    ui.painter().text(r.left_center(), Align2::LEFT_CENTER, format!("{icon}  {title}"), crate::fonts::sans_bold_font(12.5), TEXT());
+                    for p in list.iter() {
+                        let (kind, col) = match p {
+                            Page::Move(_) => ("💥", kit::C_VIOLET),
+                            Page::Item(_) => ("🎒", kit::C_GOLD),
+                            Page::Place(_) => ("🗺", kit::C_GREEN),
+                            Page::Guide(_) => ("📚", kit::C_CYAN),
+                            _ => ("•", kit::C_SLATE),
+                        };
+                        let label = self.page_label(p);
+                        let g = ui.painter().layout_no_wrap(label, crate::fonts::sans_font(12.5), TEXT());
+                        let (r, resp) = ui.allocate_exact_size(g.size() + egui::vec2(38.0, 12.0), Sense::click());
+                        let ht = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered(), kit::QUICK);
+                        ui.painter().rect_filled(r, r.height() / 2.0, theme::blend(kit::sunken(), CARD_HOVER(), ht));
+                        ui.painter().rect_stroke(r, r.height() / 2.0, Stroke::new(1.0f32, theme::blend(LINE(), col, 0.3 + 0.5 * ht)));
+                        ui.painter().text(egui::pos2(r.min.x + 15.0, r.center().y), Align2::CENTER_CENTER, kind, egui::FontId::proportional(12.0), col);
+                        ui.painter().galley(egui::pos2(r.min.x + 28.0, r.min.y + 6.0), g, TEXT());
+                        let tip = if pinned { "Right-click to unpin" } else { "Open it again" };
+                        let resp = resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand);
+                        if resp.clicked() {
+                            open = Some(p.clone());
+                        }
+                        if pinned && resp.secondary_clicked() {
+                            unpin = p.key();
+                        }
+                    }
+                });
+                ui.add_space(4.0);
+            }
+        });
+        ui.add_space(18.0);
+        if let Some(k) = unpin {
+            self.cfg.info_pins.retain(|p| *p != k);
+            self.cfg.save();
+        }
+        if let Some(p) = open {
+            if let Page::Guide(id) = &p {
+                let id = id.clone();
+                self.info_read(&id, None, None);
+            } else {
+                self.info_push(p);
+            }
+        }
     }
 
     /// The game's news: the gifts (with how long is left) and the latest version.
@@ -1170,6 +1316,7 @@ impl App {
         });
         let mut dex: Option<String> = None;
         let mut pick = false;
+        let mut hunt_place: Option<String> = None;
         kit::card(ui, |ui| {
             let link = if mon.is_some() { Some("Pokédex entry ›") } else { None };
             if card_head(ui, "🎯", kit::C_PINK, "Your hunt in Sinnoh", link) {
@@ -1247,7 +1394,9 @@ impl App {
             } else {
                 look_head(ui, &format!("{} IN THE WILD", plural(wild.len(), "SPOT", "SPOTS")), "Morning · Day · Night");
                 for e in wild.iter().take(6) {
-                    wild_row(ui, w, e, now);
+                    if wild_row(ui, w, e, now) {
+                        hunt_place = w.place(&e.area).map(|p| if p.group.is_empty() { p.name.clone() } else { p.group.clone() });
+                    }
                 }
                 if wild.len() > 6 {
                     if ui.link(RichText::new(format!("All {} spots in the Pokédex ›", wild.len())).size(12.5)).clicked() {
@@ -1258,6 +1407,9 @@ impl App {
         });
         if pick {
             self.go_to(Tab::Hunt);
+        }
+        if let Some(p) = hunt_place {
+            self.info_push(Page::Place(p));
         }
         if let Some(id) = dex {
             self.info_open_dex(Some(id));
@@ -1318,7 +1470,7 @@ impl App {
                     Kind::Guide => "How to Play",
                     Kind::Move => "Moves",
                     Kind::Item => "Items",
-                    _ => "List",
+                    Kind::Place => "Places",
                 };
                 let g = p.layout_no_wrap(hint.to_string(), crate::fonts::sans_font(11.5), MUTED());
                 p.text(egui::pos2(r.max.x - 12.0, r.center().y), Align2::RIGHT_CENTER, "›", egui::FontId::proportional(18.0), if ht > 0.5 { TEXT() } else { MUTED() });
@@ -1335,12 +1487,7 @@ impl App {
             Some(Kind::Guide) => self.info_push(Page::Guides),
             Some(Kind::Move) => self.info_push(Page::Moves),
             Some(Kind::Item) => self.info_push(Page::Items),
-            Some(k) => {
-                let s = &mut self.setup.info;
-                s.query.clear();
-                s.kind = Some(k);
-                s.pick = None;
-            }
+            Some(Kind::Place) => self.info_push(Page::Places),
             None => {}
         }
     }
@@ -1568,12 +1715,17 @@ fn callout(ui: &mut egui::Ui, title: &str, text: &str) {
 }
 
 /// One wild spot: place, how and levels, stage, and the three times of day.
-fn wild_row(ui: &mut egui::Ui, w: &Wiki, e: &Wild, now: usize) {
-    let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 44.0), Sense::hover());
+/// Returns true when clicked (open the place).
+fn wild_row(ui: &mut egui::Ui, w: &Wiki, e: &Wild, now: usize) -> bool {
+    let (r, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 44.0), Sense::click());
     if !ui.is_rect_visible(r) {
-        return;
+        return false;
     }
+    let ht = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered(), kit::QUICK);
     let p = ui.painter_at(r);
+    if ht > 0.0 {
+        p.rect_filled(r, 8.0, theme::blend(CARD(), CARD_HOVER(), ht * 0.8));
+    }
     p.line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(1.0f32, kit::tint(LINE(), 0.6)));
     let place = w.place(&e.area).map(|p| p.name.clone()).unwrap_or_else(|| e.area.clone());
     let bars_w = 126.0;
@@ -1604,6 +1756,7 @@ fn wild_row(ui: &mut egui::Ui, w: &Wiki, e: &Wild, now: usize) {
         p.text(cell.center() - egui::vec2(0.0, 5.0), Align2::CENTER_CENTER, t, crate::fonts::sans_bold_font(12.0), if on { TEXT() } else { col });
         p.text(cell.center() + egui::vec2(0.0, 8.0), Align2::CENTER_CENTER, ["Morn", "Day", "Night"][i], crate::fonts::sans_font(9.0), MUTED());
     }
+    resp.on_hover_text("Open this place").on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }
 
 fn stat_box(ui: &mut egui::Ui, label: &str, value: &str, w: f32) {

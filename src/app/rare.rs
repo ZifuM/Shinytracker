@@ -35,7 +35,7 @@ pub(super) struct RareOffer {
 }
 
 impl App {
-    fn game_map(&self) -> Option<Arc<GameMap>> {
+    pub(super) fn game_map(&self) -> Option<Arc<GameMap>> {
         self.gamemap.as_ref()?.as_ref().ok().cloned()
     }
 
