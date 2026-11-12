@@ -341,11 +341,16 @@ impl App {
                                         Tab::Map => self.page_map(ui),
                                         Tab::Profile => self.page_profile(ui),
                                         Tab::Stats => self.page_stats(ui),
-                                        Tab::Dex => self.page_dex(ui),
+                                        Tab::Dex | Tab::Trophies => {
+                                            // the Shiny Dex lives in the Pokédex now
+                                            self.setup.tab = Tab::Pokedex;
+                                            self.setup.pokedex.shiny = true;
+                                            self.setup.pokedex.open = None;
+                                            self.page_pokedex(ui)
+                                        }
                                         Tab::Hunt => self.page_hunt(ui),
                                         Tab::Counting => self.page_counting(ui),
                                         Tab::Runs => self.page_runs(ui),
-                                        Tab::Trophies => self.page_dex(ui),
                                         Tab::Overlay => self.page_overlay(ui),
                                         Tab::Appearance => self.page_appearance(ui),
                                         Tab::Hotkeys => self.page_hotkeys(ui),
@@ -562,7 +567,7 @@ impl App {
     fn sidebar(&mut self, ui: &mut egui::Ui) {
         ui.add_space(2.0);
         // (group heading, tab, icon, label, parent: the app a page belongs to)
-        let items: [(Option<&str>, Tab, &str, &str, Option<Tab>); 14] = [
+        let items: [(Option<&str>, Tab, &str, &str, Option<Tab>); 13] = [
             (None, Tab::Home, "🏠", "Home", None),
             (None, Tab::Profile, "🏅", "Profile", None),
             (None, Tab::Stats, "📊", "Stats", None),
@@ -570,7 +575,6 @@ impl App {
             (None, Tab::Hunt, "🎯", "Hunt", Some(Tab::Shiny)),
             (None, Tab::Counting, "👁", "Counting", Some(Tab::Shiny)),
             (None, Tab::Runs, "📜", "Runs", Some(Tab::Shiny)),
-            (None, Tab::Dex, "⭐", "Shiny Dex", Some(Tab::Shiny)),
             (None, Tab::Overlay, "🖵", "Overlay", Some(Tab::Shiny)),
             (None, Tab::Pokedex, "📖", "Pokédex", None),
             (None, Tab::Map, "🗺", "Map", None),

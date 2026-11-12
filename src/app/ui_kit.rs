@@ -774,6 +774,26 @@ pub fn section(ui: &mut Ui, text: &str) {
     ui.add_space(4.0);
 }
 
+/// `id`, or (if another control already used it this frame) `id` with a
+/// count added, so look-alike controls never share animation state.
+pub(crate) fn unique_this_frame(ui: &Ui, id: egui::Id) -> egui::Id {
+    // read the frame number first: asking inside data_mut would deadlock
+    let frame = ui.ctx().cumulative_pass_nr();
+    // one list per window (the overlay draws in the middle of the main frame)
+    let key = egui::Id::new("kit-ids-this-frame").with(ui.ctx().viewport_id());
+    ui.ctx().data_mut(|d| {
+        let (f, seen) = d.get_temp_mut_or_default::<(u64, std::collections::HashMap<egui::Id, u32>)>(key);
+        if *f != frame {
+            *f = frame;
+            seen.clear();
+        }
+        let n = seen.entry(id).or_insert(0);
+        let out = if *n == 0 { id } else { id.with(*n) };
+        *n += 1;
+        out
+    })
+}
+
 /// Remember where the last card was drawn (its frame, without the space
 /// after it), for highlights that outline a card.
 pub(crate) fn note_card(ui: &Ui, rect: egui::Rect) {
@@ -1647,7 +1667,7 @@ pub(crate) mod modern {
         let (pad, gap) = (5.0, 4.0);
         let cw = (bar.width() - 2.0 * pad - gap * (n - 1.0)) / n;
         let rect_of = |i: usize| Rect::from_min_size(egui::pos2(bar.min.x + pad + (cw + gap) * i as f32, bar.min.y + pad), egui::vec2(cw, h - 2.0 * pad));
-        let bar_id = ui.id().with(("tab-bar", tabs.first().map(|t| t.1).unwrap_or("")));
+        let bar_id = super::unique_this_frame(ui, ui.id().with(("tab-bar", tabs.iter().map(|t| t.1).collect::<Vec<_>>().join("|"))));
         let sel = tabs.iter().position(|(v, _)| *v == *value);
         let hover_slot = p.add(egui::Shape::Noop);
         let pill = sel.map(|i| glide_rect(ui.ctx(), bar_id.with("pill"), rect_of(i), bar.min, BASE));
@@ -1701,7 +1721,9 @@ pub(crate) mod modern {
     /// a pill in the button colour that slides to the one you pick.
     pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T, &str)]) -> bool {
         let mut changed = false;
-        let seg_id = ui.id().with(("segmented", options.first().map(|o| o.1).unwrap_or("")));
+        // Keyed by every label, not just the first: two switches in one row
+        // that both start with "All" used to share (and fight over) one pill.
+        let seg_id = super::unique_this_frame(ui, ui.id().with(("segmented", options.iter().map(|o| o.1).collect::<Vec<_>>().join("|"))));
         egui::Frame::none()
             .fill(sunken())
             .stroke(Stroke::new(1.0f32, LINE()))

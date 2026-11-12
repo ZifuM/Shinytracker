@@ -467,7 +467,7 @@ impl App {
                     (Tab::Hunt, "Target, method and odds."),
                     (Tab::Counting, "Game log or screen reading."),
                     (Tab::Runs, "Every hunt, with stats."),
-                    (Tab::Dex, "The shinies you've caught."),
+                    (Tab::Dex, "Your shinies, in the Pokédex."),
                     (Tab::Overlay, "Layout, sections and sounds."),
                 ],
                 3,
@@ -478,7 +478,7 @@ impl App {
             (Tab::Hunt, "🎯", "Hunt", "Target, method and odds"),
             (Tab::Counting, "👁", "Counting", "Game log or screen reading"),
             (Tab::Runs, "📜", "Runs", "Every hunt, with stats"),
-            (Tab::Dex, "⭐", "Shiny Dex", "Shinies you've caught"),
+            (Tab::Dex, "⭐", "Shiny Dex", "Your shinies, in the Pokédex"),
             (Tab::Overlay, "🖵", "Overlay", "Layout, sections, sounds"),
         ];
         let w = ((ui.available_width() - 16.0) / 3.0).floor();

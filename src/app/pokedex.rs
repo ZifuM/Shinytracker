@@ -98,6 +98,8 @@ pub(super) struct DexState {
     pub region: Option<crate::moddex::Region>,
     /// Grid order: 0 number, 1 name, 2 most met.
     pub sort: u8,
+    /// Shiny Dex mode: also list Pokémon that can't be got yet.
+    pub show_unobtainable: bool,
 }
 
 /// What a grid tile shows.
@@ -236,6 +238,13 @@ impl App {
             self.pokedex_entry(ui, &w, &id);
             return;
         }
+        // Shiny Dex mode: a caught shiny opens its trophy page
+        if self.setup.pokedex.shiny {
+            if let Some(slug) = self.setup.dex.open.clone() {
+                self.page_dex_entry(ui, &slug);
+                return;
+            }
+        }
         self.pokedex_list(ui, &w);
     }
 
@@ -245,7 +254,11 @@ impl App {
         if self.setup.pokedex.index.as_ref().map(|(k, _)| *k) != Some(key) {
             self.setup.pokedex.index = Some((key, build_index(w)));
         }
-        kit::page_header(ui, "POKÉDEX", &format!("Every Pokémon in Platinum Together (Platinum Together Wiki v{}). Click one for everything about it.", w.data.version));
+        if self.setup.pokedex.shiny {
+            kit::page_header(ui, "POKÉDEX", "Your Shiny Dex: every shiny you've caught. Click a caught one for its trophy; right-click to mark one you caught before.");
+        } else {
+            kit::page_header(ui, "POKÉDEX", &format!("Every Pokémon in Platinum Together (Platinum Together Wiki v{}). Click one for everything about it.", w.data.version));
+        }
         let Some((ikey, index)) = self.setup.pokedex.index.take() else { return };
         let caught = self.dex_caught();
         let met = self.species_met();
@@ -284,6 +297,7 @@ impl App {
                 EraFilter::Modern => m.modern,
             })
             .filter(|m| st.region.map_or(true, |r| crate::moddex::Region::of(m.dex as u16, m.modern) == r))
+            .filter(|m| !st.shiny || !m.cant_get || st.show_unobtainable || st.how == HowFilter::CantGet)
             .filter(|m| {
                 let has = caught.contains_key(&slug_of(m));
                 match st.caught {
@@ -302,6 +316,7 @@ impl App {
         self.setup.pokedex.list_ids = list.iter().map(|m| m.id.clone()).collect();
 
         // ── count and legend
+        let mut show_unob = self.setup.pokedex.show_unobtainable;
         ui.horizontal(|ui| {
             ui.label(RichText::new(format!("{} Pokémon", list.len())).font(super::charts::bold(14.0)).color(TEXT()));
             ui.add_space(10.0);
@@ -310,7 +325,31 @@ impl App {
                 ui.label(RichText::new(t).size(12.0).color(MUTED()));
                 ui.add_space(6.0);
             }
+            if shiny {
+                ui.add_space(6.0);
+                kit::checkbox(ui, &mut show_unob, "Unobtainable").on_hover_text("Also list Pokémon that can't be got in the game yet");
+                // your hunts at a glance, as the Shiny Dex showed them
+                let hunts: Vec<&crate::config::HuntRecord> = self.cfg.history.iter().filter(|h| !h.phase).collect();
+                if !hunts.is_empty() {
+                    let n = hunts.len();
+                    let phases = self.cfg.history.len() - n;
+                    let total: u64 = hunts.iter().map(|h| h.encounters).sum();
+                    let mut txt = format!("{n} caught on hunts · avg {} encounters", theme::thousands(total / n as u64));
+                    if phases > 0 {
+                        txt.push_str(&format!(" · {phases} phase{}", if phases == 1 { "" } else { "s" }));
+                    }
+                    if let Some(h) = hunts.iter().min_by_key(|h| h.encounters) {
+                        txt.push_str(&format!(" · luckiest {} at {}", h.target, theme::thousands(h.encounters)));
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(RichText::new(txt).size(12.0).color(MUTED()));
+                    });
+                }
+            }
         });
+        if show_unob != self.setup.pokedex.show_unobtainable {
+            self.setup.pokedex.show_unobtainable = show_unob;
+        }
         ui.add_space(10.0);
         if list.is_empty() {
             let mut clear = false;
@@ -349,6 +388,8 @@ impl App {
         let tw = ((full - gap * (cols as f32 - 1.0)) / cols as f32).floor();
         let th = 150.0;
         let mut open: Option<String> = None;
+        let mut trophy: Option<String> = None;
+        let mut mark: Option<(String, bool)> = None;
         for row in list.chunks(cols) {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = gap;
@@ -358,7 +399,8 @@ impl App {
                         continue;
                     }
                     let Some(sp) = self.species.get((m.dex as usize).wrapping_sub(1)).cloned() else { continue };
-                    let has = caught.contains_key(&sp.slug);
+                    let src = caught.get(&sp.slug).cloned();
+                    let has = src.is_some();
                     let hunting = targets.contains(&sp.slug);
                     let on_rare = rare.contains(&sp.slug);
                     let n_met = met.get(&m.dex).copied().unwrap_or(0);
@@ -366,8 +408,12 @@ impl App {
                     let tm = TileMon { dex: m.dex, name: m.name.clone(), types: m.types.clone(), modern: m.modern, cant_get: m.cant_get };
                     self.dex_tile(ui, r, &sp, &tm, shiny, has, hunting, on_rare, ht);
                     let mut tip = format!("#{:04} {}  ·  {}", m.dex, m.name, m.types.join(" / "));
-                    if has {
-                        tip.push_str("\n✨ Shiny caught");
+                    match (&src, shiny) {
+                        (Some(super::extras::DexSource::Hunt(t, n)), true) => tip.push_str(&format!("\n✨ Shiny caught {} after {} encounters", crate::stats::fmt_date(*t), theme::thousands(*n))),
+                        (Some(super::extras::DexSource::Manual), true) => tip.push_str("\n✨ Shiny marked by hand"),
+                        (Some(_), false) => tip.push_str("\n✨ Shiny caught"),
+                        (None, true) if !m.cant_get => tip.push_str("\nNot caught yet"),
+                        _ => {}
                     }
                     if hunting {
                         tip.push_str("\n🎯 You're hunting it");
@@ -381,8 +427,37 @@ impl App {
                     if m.cant_get {
                         tip.push_str("\nCan't be got in the game yet");
                     }
-                    if resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                        open = Some(m.id.clone());
+                    if shiny {
+                        tip.push_str(if has { "\nClick for its trophy" } else { "\nClick for its Pokédex page" });
+                        tip.push_str(if matches!(src, Some(super::extras::DexSource::Hunt(..))) { "" } else { "\nRight-click to mark one you caught before" });
+                    }
+                    let resp = resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand);
+                    if resp.clicked() {
+                        if shiny && has {
+                            trophy = Some(sp.slug.clone());
+                        } else {
+                            open = Some(m.id.clone());
+                        }
+                    }
+                    if shiny {
+                        // right-click: mark a shiny you caught before (or take the mark off)
+                        let slug = sp.slug.clone();
+                        let manual = matches!(src, Some(super::extras::DexSource::Manual));
+                        resp.context_menu(|ui| {
+                            if !has {
+                                if ui.button("✨ Mark as caught (shiny)").clicked() {
+                                    mark = Some((slug.clone(), true));
+                                    ui.close_menu();
+                                }
+                            } else if manual {
+                                if ui.button("Remove the mark").clicked() {
+                                    mark = Some((slug.clone(), false));
+                                    ui.close_menu();
+                                }
+                            } else {
+                                ui.label("Caught on a hunt: click it to see the trophy");
+                            }
+                        });
                     }
                 }
             });
@@ -392,6 +467,21 @@ impl App {
         if let Some(id) = open {
             self.setup.pokedex.open = Some(id);
             self.setup.pokedex.tab = EntryTab::Overview;
+        }
+        if let Some(slug) = trophy {
+            self.setup.dex.open = Some(slug);
+            self.setup.note_draft.clear();
+        }
+        if let Some((slug, on)) = mark {
+            if on {
+                if !self.cfg.dex_manual.contains(&slug) {
+                    self.cfg.dex_manual.push(slug);
+                }
+            } else {
+                self.cfg.dex_manual.retain(|s| *s != slug);
+            }
+            self.dirty = true;
+            self.check_progress();
         }
     }
 
@@ -521,7 +611,7 @@ impl App {
             }
             ui.add_space((ui.available_width() - rest_w - 2.0).max(8.0));
             let start = ui.cursor().min.x;
-            kit::segmented(ui, &mut st.shiny, &[(false, "Normal"), (true, "✨ Shiny")]);
+            kit::segmented(ui, &mut st.shiny, &[(false, "Normal"), (true, "✨ Shiny Dex")]);
             egui::ComboBox::from_id_salt("pdx-sort")
                 .selected_text(["Number", "Name", "Most met"][st.sort.min(2) as usize])
                 .width(110.0)
@@ -613,13 +703,22 @@ impl App {
         if ht > 0.0 {
             p.add(kit::shadow_tier(2).as_shape(r, 18.0));
         }
-        p.rect_filled(r, 18.0, theme::blend(CARD(), tc, 0.05 + 0.04 * ht));
+        // Shiny Dex mode: caught ones glow gold, the rest are shadows to fill in
+        let fill = if shiny && has { theme::blend(CARD(), GOLD, 0.10 + 0.04 * ht) } else { theme::blend(CARD(), tc, 0.05 + 0.04 * ht) };
+        p.rect_filled(r, 18.0, fill);
         let border = if has { GOLD.gamma_multiply(0.75) } else { theme::blend(LINE(), tc, 0.5 * ht) };
         p.rect_stroke(r, 18.0, Stroke::new(if has { 1.5f32 } else { 1.0 }, border));
         // sprite on a soft circle of its type colour
         let c = pos2(r.center().x, r.min.y + 54.0);
         p.circle_filled(c, 36.0, theme::blend(CARD(), tc, 0.18));
-        let tint = if m.cant_get { Color32::from_white_alpha(110) } else { Color32::WHITE };
+        let tint = if shiny && !has {
+            // a silhouette, like a dex you haven't filled in yet
+            if m.cant_get { Color32::from_rgba_unmultiplied(10, 8, 18, 110) } else { Color32::from_rgba_unmultiplied(10, 8, 18, 200) }
+        } else if m.cant_get {
+            Color32::from_white_alpha(110)
+        } else {
+            Color32::WHITE
+        };
         self.draw_sprite_tinted(&p, sp, shiny, c + vec2(0.0, 32.0), vec2(68.0, 64.0), tint);
         p.text(r.min + vec2(10.0, 12.0), Align2::LEFT_CENTER, format!("#{:04}", m.dex), super::charts::reg(10.5), MUTED());
         // corner marks
@@ -634,10 +733,17 @@ impl App {
         }
         if on_rare {
             p.text(pos2(mx, r.min.y + 12.0), Align2::CENTER_CENTER, "🌿", egui::FontId::proportional(11.0), theme::GREEN);
+            mx -= 16.0;
+        }
+        if shiny && m.cant_get {
+            // padlock: can't be got yet
+            let c = pos2(mx, r.min.y + 13.0);
+            p.rect_filled(Rect::from_center_size(c + vec2(0.0, 2.0), vec2(9.0, 7.0)), 1.5, MUTED());
+            p.circle_stroke(c - vec2(0.0, 1.5), 3.0, Stroke::new(1.3f32, MUTED()));
         }
         // name and types
         let name = super::charts::clip(ui, &m.name, &super::charts::bold(13.0), r.width() - 12.0);
-        p.text(pos2(r.center().x, r.min.y + 104.0), Align2::CENTER_CENTER, name, super::charts::bold(13.0), if m.cant_get { MUTED() } else { TEXT() });
+        p.text(pos2(r.center().x, r.min.y + 104.0), Align2::CENTER_CENTER, name, super::charts::bold(13.0), if m.cant_get || (shiny && !has) { MUTED() } else { TEXT() });
         let font = super::charts::bold(8.5);
         let gs: Vec<_> = m.types.iter().map(|t| (type_color(t), p.layout_no_wrap(t.to_uppercase(), font.clone(), Color32::WHITE))).collect();
         let total: f32 = gs.iter().map(|(_, g)| g.size().x + 12.0).sum::<f32>() + 4.0 * (gs.len().saturating_sub(1)) as f32;

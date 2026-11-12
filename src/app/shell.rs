@@ -38,7 +38,7 @@ pub(super) fn tab_meta(t: Tab) -> (&'static str, &'static str, Color32) {
 }
 
 /// Sidebar entries: (group heading, page, parent app).
-const NAV: [(Option<&str>, Tab, Option<Tab>); 14] = [
+const NAV: [(Option<&str>, Tab, Option<Tab>); 13] = [
     (None, Tab::Home, None),
     (None, Tab::Profile, None),
     (None, Tab::Stats, None),
@@ -46,7 +46,6 @@ const NAV: [(Option<&str>, Tab, Option<Tab>); 14] = [
     (None, Tab::Hunt, Some(Tab::Shiny)),
     (None, Tab::Counting, Some(Tab::Shiny)),
     (None, Tab::Runs, Some(Tab::Shiny)),
-    (None, Tab::Dex, Some(Tab::Shiny)),
     (None, Tab::Overlay, Some(Tab::Shiny)),
     (None, Tab::Pokedex, None),
     (None, Tab::Map, None),

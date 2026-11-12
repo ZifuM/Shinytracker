@@ -273,7 +273,10 @@ impl App {
         if let Some(slug) = self.target_picker(ui, 480.0) {
             self.log_phase(slug.clone());
             self.setup.phase_pick = false;
-            self.setup.tab = Tab::Dex;
+            // its trophy, in the Pokédex's Shiny Dex view
+            self.setup.tab = Tab::Pokedex;
+            self.setup.pokedex.shiny = true;
+            self.setup.pokedex.open = None;
             self.setup.dex.open = Some(slug);
             self.setup.view_run = None;
             self.setup.share = None;
@@ -363,6 +366,7 @@ impl App {
         (caught.len() as u32, done)
     }
 
+    #[allow(dead_code)]
     pub(super) fn page_dex(&mut self, ui: &mut egui::Ui) {
         if let Some(slug) = self.setup.dex.open.clone() {
             self.page_dex_entry(ui, &slug);
@@ -619,7 +623,7 @@ impl App {
     }
 
     /// One caught species: its trophy cards (every catch), or the hand mark.
-    fn page_dex_entry(&mut self, ui: &mut egui::Ui, slug: &str) {
+    pub(super) fn page_dex_entry(&mut self, ui: &mut egui::Ui, slug: &str) {
         if super::hunt_pages::back_button(ui, "Shiny Dex") {
             self.setup.dex.open = None;
             return;
