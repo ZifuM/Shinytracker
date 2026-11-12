@@ -162,8 +162,9 @@ impl App {
                     };
                     ui.label(RichText::new(sub).size(12.5).color(MUTED()));
                 });
-                ui.add_space((ui.available_width() - 48.0).max(4.0));
-                kit::toggle(ui, &mut on).on_hover_text("Turn every hotkey off for a while (say, when you're typing in chat)");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    kit::toggle(ui, &mut on).on_hover_text("Turn every hotkey off for a while (say, when you're typing in chat)");
+                });
             });
             if !free.is_empty() || set != HotAction::ALL.len() || kb != KeyBinds::default() {
                 ui.add_space(12.0);

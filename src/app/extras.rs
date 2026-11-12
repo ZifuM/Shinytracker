@@ -1049,7 +1049,7 @@ impl App {
                 ui.label(RichText::new("Volume").size(kit::fs(13.0)).color(TEXT()));
                 ui.spacing_mut().slider_width = (ui.available_width() - kit::SLIDER_VALUE_W - 16.0).max(80.0);
                 let text = format!("{:.0}%", self.cfg.sounds.volume * 100.0);
-                self.dirty |= kit::slider(ui, egui::Slider::new(&mut self.cfg.sounds.volume, 0.0..=1.0), &text).changed();
+                self.dirty |= kit::slider_f32(ui, &mut self.cfg.sounds.volume, 0.0..=1.0, &text).changed();
             });
             ui.add_space(6.0);
             ui.horizontal(|ui| {

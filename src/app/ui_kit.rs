@@ -774,6 +774,17 @@ pub fn section(ui: &mut Ui, text: &str) {
     ui.add_space(4.0);
 }
 
+/// Remember where the last card was drawn (its frame, without the space
+/// after it), for highlights that outline a card.
+pub(crate) fn note_card(ui: &Ui, rect: egui::Rect) {
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("kit-last-card"), rect));
+}
+
+/// The frame of the card drawn most recently.
+pub fn last_card_rect(ui: &Ui) -> Option<egui::Rect> {
+    ui.ctx().data(|d| d.get_temp::<egui::Rect>(egui::Id::new("kit-last-card")))
+}
+
 /// Rounded card container.
 pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     if modern() {
@@ -782,7 +793,7 @@ pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     if clean() {
         return clean::card(ui, add);
     }
-    let r = egui::Frame::none()
+    let shown = egui::Frame::none()
         .fill(CARD())
         .rounding(10.0)
         .stroke(Stroke::new(1.0f32, LINE()))
@@ -790,8 +801,9 @@ pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             add(ui)
-        })
-        .inner;
+        });
+    note_card(ui, shown.response.rect);
+    let r = shown.inner;
     ui.add_space(10.0);
     r
 }
@@ -1328,7 +1340,7 @@ mod clean {
     }
 
     pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
-        let r = egui::Frame::none()
+        let shown = egui::Frame::none()
             .fill(CARD())
             .rounding(8.0)
             .stroke(Stroke::new(1.0f32, LINE()))
@@ -1336,8 +1348,9 @@ mod clean {
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 add(ui)
-            })
-            .inner;
+            });
+        super::note_card(ui, shown.response.rect);
+        let r = shown.inner;
         ui.add_space(12.0);
         r
     }
@@ -1603,7 +1616,7 @@ pub(crate) mod modern {
     }
 
     pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
-        let r = egui::Frame::none()
+        let shown = egui::Frame::none()
             .fill(CARD())
             .rounding(14.0)
             .stroke(Stroke::new(1.0f32, LINE()))
@@ -1612,8 +1625,9 @@ pub(crate) mod modern {
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 add(ui)
-            })
-            .inner;
+            });
+        super::note_card(ui, shown.response.rect);
+        let r = shown.inner;
         ui.add_space(14.0);
         r
     }
@@ -2039,30 +2053,115 @@ pub(crate) mod modern {
     }
 }
 
-/// A slider whose coloured fill stops exactly at the knob, with its value in
-/// a fixed-width pill on the right (so rows of sliders line up).
-/// egui draws the fill to the knob's centre plus the widget rounding, which
-/// with our pill-shaped controls runs ~30 px past the knob; drawing the rail
-/// with its own (rail-sized) rounding keeps the fill under the knob.
-pub fn slider(ui: &mut Ui, s: egui::Slider<'_>, value: &str) -> Response {
+/// The Cirrus slider: a soft pill rail, a fill in the button colour that ends
+/// exactly at the knob, and a white "cloud" knob with a hairline edge and a
+/// soft shadow that grows a little under the pointer. Small whole-number
+/// ranges get a dot for each stop. The value sits in a fixed-width pill on the
+/// right, so rows of sliders line up. Drag or click anywhere on the rail;
+/// with the pointer over it, the arrow keys nudge it one step.
+/// `step` 0 means smooth. Width comes from `ui.spacing().slider_width`.
+pub fn slider_f64(ui: &mut Ui, v: &mut f64, range: std::ops::RangeInclusive<f64>, step: f64, value: &str) -> Response {
     ui.horizontal(|ui| {
-        let resp = ui
-            .scope(|ui| {
-                let r = egui::Rounding::same(ui.spacing().slider_rail_height / 2.0);
-                ui.visuals_mut().widgets.inactive.rounding = r;
-                ui.add(s.show_value(false).trailing_fill(true))
-            })
-            .inner;
+        let (lo, hi) = (*range.start(), *range.end());
+        let span = (hi - lo).max(f64::EPSILON);
+        let w = ui.spacing().slider_width.max(60.0);
+        let (rect, mut resp) = ui.allocate_exact_size(egui::vec2(w, CONTROL_H), Sense::click_and_drag());
+        const R: f32 = 10.0;
+        let rail = Rect::from_center_size(rect.center(), egui::vec2(rect.width() - 2.0 * (R + 2.0), 8.0));
+        let snap = |x: f64| {
+            let x = if step > 0.0 { lo + ((x - lo) / step).round() * step } else { x };
+            x.clamp(lo, hi)
+        };
+        let before = *v;
+        if let Some(pos) = resp.interact_pointer_pos() {
+            if resp.dragged() || resp.clicked() || resp.is_pointer_button_down_on() {
+                let t = ((pos.x - rail.min.x) / rail.width()).clamp(0.0, 1.0) as f64;
+                *v = snap(lo + t * span);
+            }
+        }
+        if resp.hovered() {
+            let nudge = if step > 0.0 { step } else { span / 100.0 };
+            let (l, r) = ui.input(|i| (i.key_pressed(egui::Key::ArrowLeft) || i.key_pressed(egui::Key::ArrowDown), i.key_pressed(egui::Key::ArrowRight) || i.key_pressed(egui::Key::ArrowUp)));
+            if l {
+                *v = snap(*v - nudge);
+            }
+            if r {
+                *v = snap(*v + nudge);
+            }
+        }
+        if *v != before {
+            resp.mark_changed();
+        }
+        let active = resp.dragged() || resp.is_pointer_button_down_on();
+        let hover = anim(ui.ctx(), resp.id.with("hover"), resp.hovered() || active, QUICK);
+        let press = anim(ui.ctx(), resp.id.with("press"), active, QUICK);
+        let t = (((*v).clamp(lo, hi) - lo) / span) as f32;
+        let kx = rail.min.x + rail.width() * t;
+        let p = ui.painter();
+        // rail
+        let track = theme::blend(LINE(), TEXT(), if theme::pal().light { 0.04 } else { 0.10 });
+        p.rect_filled(rail, 4.0, track);
+        // fill, in the button colour (or gradient), ending under the knob
+        if kx > rail.min.x + 0.5 {
+            let fill = Rect::from_min_max(rail.min, egui::pos2(kx, rail.max.y));
+            let shape = if fill.width() >= rail.height() {
+                primary_shape(fill, false)
+            } else {
+                egui::Shape::rect_filled(fill, 4.0, primary())
+            };
+            p.add(shape);
+        }
+        // a dot for each stop on small whole-number ranges
+        if step > 0.0 {
+            let stops = (span / step).round() as i32;
+            if (2..=12).contains(&stops) {
+                for k in 1..stops {
+                    let x = rail.min.x + rail.width() * (k as f32 / stops as f32);
+                    let c = if x < kx { theme::blend(primary(), on_primary(), 0.55) } else { theme::blend(track, TEXT(), 0.35) };
+                    p.circle_filled(egui::pos2(x, rail.center().y), 1.6, c);
+                }
+            }
+        }
+        // knob: a white cloud with a hairline edge and a soft shadow
+        let kr = R + 1.5 * hover + 0.5 * press;
+        let kc = egui::pos2(kx, rail.center().y);
+        let shadow = shadow_tier(2);
+        let kbox = Rect::from_center_size(kc, egui::Vec2::splat(kr * 2.0));
+        p.add(shadow.as_shape(kbox.translate(egui::vec2(0.0, 1.0)), kr));
+        p.circle_filled(kc, kr, Color32::WHITE);
+        p.circle_stroke(kc, kr, Stroke::new(1.0f32, Color32::from_black_alpha(if theme::pal().light { 28 } else { 60 })));
+        // under the pointer, a dot in the button colour shows it's grabbed
+        if hover > 0.01 {
+            p.circle_filled(kc, 3.5 * hover + 1.0 * press, theme::blend(Color32::WHITE, primary(), hover));
+        }
+        let resp = resp.on_hover_cursor(if active { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab });
         if !value.is_empty() {
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(SLIDER_VALUE_W, CONTROL_H), Sense::hover());
+            let (vr, _) = ui.allocate_exact_size(egui::vec2(SLIDER_VALUE_W, CONTROL_H), Sense::hover());
             let p = ui.painter();
-            p.rect_filled(rect, CONTROL_H / 2.0, ui.visuals().extreme_bg_color);
-            p.rect_stroke(rect, CONTROL_H / 2.0, ui.visuals().widgets.inactive.bg_stroke);
-            p.text(rect.center(), egui::Align2::CENTER_CENTER, value, egui::FontId::proportional(13.0), ui.visuals().text_color());
+            p.rect_filled(vr, CONTROL_H / 2.0, ui.visuals().extreme_bg_color);
+            let edge = theme::blend(ui.visuals().widgets.inactive.bg_stroke.color, primary(), press);
+            p.rect_stroke(vr, CONTROL_H / 2.0, Stroke::new(1.0 + press, edge));
+            p.text(vr.center(), egui::Align2::CENTER_CENTER, value, egui::FontId::proportional(13.0), ui.visuals().text_color());
         }
         resp
     })
     .inner
+}
+
+/// `slider_f64` for whole numbers.
+pub fn slider_u32(ui: &mut Ui, v: &mut u32, range: std::ops::RangeInclusive<u32>, value: &str) -> Response {
+    let mut f = *v as f64;
+    let r = slider_f64(ui, &mut f, *range.start() as f64..=*range.end() as f64, 1.0, value);
+    *v = f.round() as u32;
+    r
+}
+
+/// `slider_f64` for a smooth 0..1-style value.
+pub fn slider_f32(ui: &mut Ui, v: &mut f32, range: std::ops::RangeInclusive<f32>, value: &str) -> Response {
+    let mut f = *v as f64;
+    let r = slider_f64(ui, &mut f, *range.start() as f64..=*range.end() as f64, 0.01, value);
+    *v = f as f32;
+    r
 }
 
 /// Width of a slider's value pill.

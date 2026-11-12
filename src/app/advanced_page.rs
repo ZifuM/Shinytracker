@@ -58,6 +58,11 @@ impl App {
                 })
                 .response
                 .rect;
+            // the glow hugs the card frames, not the space after the last one
+            let r = match kit::last_card_rect(ui) {
+                Some(c) if r.contains(c.center()) => Rect::from_min_max(r.min, egui::pos2(r.max.x, c.max.y)),
+                _ => r,
+            };
             if jump == Some(which) {
                 jump_to = Some(r);
             }
@@ -104,7 +109,7 @@ impl App {
                     // then a gentle fade
                     let k = (1.0 - (age - 0.5).max(0.0) / 1.1).clamp(0.0, 1.0);
                     let k = k * k * (3.0 - 2.0 * k);
-                    ui.painter().rect_stroke(r.expand(3.0), 26.0, Stroke::new(2.5f32, ch::faint(kit::primary(), k)));
+                    ui.painter().rect_stroke(r.expand(2.0), 16.0, Stroke::new(2.5f32, ch::faint(kit::primary(), k)));
                     ui.ctx().request_repaint();
                 }
                 _ => ui.ctx().data_mut(|d| d.remove::<(AdvTab, f64)>(glow_id)),
@@ -385,10 +390,12 @@ impl App {
                             if i == 0 {
                                 ui.label(RichText::new("newest").size(11.0).color(MUTED()));
                             }
-                            ui.add_space((ui.available_width() - 70.0).max(4.0));
-                            if ui.add(egui::Button::new(RichText::new("Restore").size(12.0)).fill(kit::btn_fill())).on_hover_text(path.display().to_string()).clicked() {
-                                restore = Some(path.clone());
-                            }
+                            // pinned to the right edge, so every row's button lines up
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.add(egui::Button::new(RichText::new("Restore").size(12.0)).fill(kit::btn_fill())).on_hover_text(path.display().to_string()).clicked() {
+                                    restore = Some(path.clone());
+                                }
+                            });
                         });
                     }
                     if let Some(p) = restore {
@@ -816,7 +823,7 @@ fn slider_row(ui: &mut egui::Ui, label: &str, help: &str, v: &mut u32, range: st
     let mut changed = false;
     setting_row(ui, label, help, |ui| {
         let text = format!("{v}{suffix}");
-        changed = kit::slider(ui, egui::Slider::new(v, range), &text).changed();
+        changed = kit::slider_u32(ui, v, range, &text).changed();
     });
     if *v != usual {
         ui.label(RichText::new(format!("Usually {usual}{suffix}")).size(11.0).color(MUTED()));

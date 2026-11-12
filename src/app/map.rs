@@ -2478,8 +2478,9 @@ impl App {
                     icon(ui.painter(), r.center());
                     ui.add_space(4.0);
                     ui.label(RichText::new(label).size(13.0).color(TEXT())).on_hover_text(tip);
-                    ui.add_space((ui.available_width() - 44.0).max(4.0));
-                    kit::toggle(ui, on).on_hover_text(tip);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        kit::toggle(ui, on).on_hover_text(tip);
+                    });
                 });
             };
             let reset = format!(

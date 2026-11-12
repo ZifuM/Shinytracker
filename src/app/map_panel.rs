@@ -110,13 +110,14 @@ impl App {
             let rare_label = format!("Rare grass · {}", spots.len());
             kit::segmented(ui, &mut tab, &[(MapTab::Area, "Area"), (MapTab::Rare, rare_label.as_str())]);
             self.mapui.panel_tab = tab;
-            ui.add_space((ui.available_width() - 32.0).max(4.0));
-            if round_button(ui, 32.0, "Hide the panel (more room for the map)", |p, r, ink| {
-                chevron(p, r.center() - vec2(3.0, 0.0), vec2(1.0, 0.0), 6.0, Stroke::new(1.8f32, ink));
-                chevron(p, r.center() + vec2(3.0, 0.0), vec2(1.0, 0.0), 6.0, Stroke::new(1.8f32, ink));
-            }) {
-                acts.collapse = true;
-            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if round_button(ui, 32.0, "Hide the panel (more room for the map)", |p, r, ink| {
+                    chevron(p, r.center() - vec2(3.0, 0.0), vec2(1.0, 0.0), 6.0, Stroke::new(1.8f32, ink));
+                    chevron(p, r.center() + vec2(3.0, 0.0), vec2(1.0, 0.0), 6.0, Stroke::new(1.8f32, ink));
+                }) {
+                    acts.collapse = true;
+                }
+            });
         });
         ui.add_space(8.0);
         let body_h = (height - 60.0).max(120.0);

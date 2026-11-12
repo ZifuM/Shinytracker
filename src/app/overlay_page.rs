@@ -392,7 +392,7 @@ impl App {
             ui.spacing_mut().slider_width = ui.available_width() - kit::SLIDER_VALUE_W - 16.0;
             let lowest = if legacy { 0.4 } else { 0.1 };
             let text = format!("{:.0}%", self.cfg.opacity * 100.0);
-            self.dirty |= kit::slider(ui, egui::Slider::new(&mut self.cfg.opacity, lowest..=1.0), &text).changed();
+            self.dirty |= kit::slider_f32(ui, &mut self.cfg.opacity, lowest..=1.0, &text).changed();
         });
     }
 
