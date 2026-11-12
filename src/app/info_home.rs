@@ -93,6 +93,10 @@ pub(super) enum Page {
     Moves,
     /// One move, by key.
     Move(String),
+    /// Every item.
+    Items,
+    /// One item, by id.
+    Item(String),
 }
 
 #[derive(Default)]
@@ -104,6 +108,8 @@ pub(super) struct InfoState {
     pub reader: super::info_guides::ReaderState,
     /// The moves list and move pages.
     pub moves: super::info_moves::MovesState,
+    /// The items lists and item pages.
+    pub items: super::info_items::ItemsState,
     pub query: String,
     /// Only this kind in the results; with no query, list all of it.
     pub kind: Option<Kind>,
@@ -355,6 +361,8 @@ impl App {
             Page::Guide(id) => return self.page_guide(ui, &w, &id),
             Page::Moves => return self.page_moves(ui, &w),
             Page::Move(k) => return self.page_move(ui, &w, &k),
+            Page::Items => return self.page_items(ui, &w),
+            Page::Item(id) => return self.page_item(ui, &w, &id),
             Page::Home => {}
         }
         kit::page_header(
@@ -424,6 +432,7 @@ impl App {
                             Kind::Pokemon => "Open the Pokédex".to_string(),
                             Kind::Guide => "Open How to Play".to_string(),
                             Kind::Move => "Open Moves".to_string(),
+                            Kind::Item => "Open Items".to_string(),
                             _ => format!("List every {}", k.one()),
                         };
                         if resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
@@ -463,6 +472,8 @@ impl App {
                 self.info_push(Page::Guides);
             } else if k == Kind::Move && self.setup.info.query.trim().is_empty() {
                 self.info_push(Page::Moves);
+            } else if k == Kind::Item && self.setup.info.query.trim().is_empty() {
+                self.info_push(Page::Items);
             } else {
                 let s = &mut self.setup.info;
                 if s.kind == Some(k) && s.query.trim().is_empty() {
@@ -528,6 +539,9 @@ impl App {
             } else if h.kind == Kind::Move {
                 let k = h.key.clone();
                 self.info_push(Page::Move(k));
+            } else if h.kind == Kind::Item {
+                let k = h.key.clone();
+                self.info_push(Page::Item(k));
             } else if h.kind == Kind::Guide {
                 let id = h.key.clone();
                 self.info_read(&id, None, None);
@@ -598,7 +612,8 @@ impl App {
         self.setup.scroll_top = true;
     }
 
-    /// Show one thing in the search panel (from a guide's link).
+    /// Show one thing in the search panel.
+    #[allow(dead_code)]
     pub(super) fn info_show(&mut self, kind: Kind, key: String) {
         self.info_push(Page::Home);
         let s = &mut self.setup.info;
@@ -831,6 +846,7 @@ impl App {
         let mut dex: Option<String> = None;
         let mut read: Option<(String, Option<usize>)> = None;
         let mut open_move: Option<String> = None;
+        let mut open_item: Option<String> = None;
         kit::card(ui, |ui| match cur.0 {
             Kind::Pokemon => {
                 if let Some(m) = w.mon(&cur.1).cloned() {
@@ -844,7 +860,13 @@ impl App {
                     open_move = Some(cur.1.clone());
                 }
             }
-            Kind::Item => look_item(ui, w, &cur.1, &mut go),
+            Kind::Item => {
+                look_item(ui, w, &cur.1, &mut go);
+                ui.add_space(12.0);
+                if ui.add(egui::Button::new(RichText::new("Open the item's page  ›").size(13.0)).fill(kit::btn_fill())).on_hover_text("Every way to get it, prices, and what it's for").clicked() {
+                    open_item = Some(cur.1.clone());
+                }
+            }
             Kind::Place => self.look_place(ui, w, &cur.1, &mut go),
             Kind::Guide => {
                 if let Some(doc) = self.guide_doc(w, &cur.1) {
@@ -857,6 +879,9 @@ impl App {
         }
         if let Some(k) = open_move {
             self.info_push(Page::Move(k));
+        }
+        if let Some(k) = open_item {
+            self.info_push(Page::Item(k));
         }
         if let Some(p) = go {
             // jump to it: make sure it's in the list
@@ -1292,6 +1317,7 @@ impl App {
                     Kind::Pokemon => "Pokédex",
                     Kind::Guide => "How to Play",
                     Kind::Move => "Moves",
+                    Kind::Item => "Items",
                     _ => "List",
                 };
                 let g = p.layout_no_wrap(hint.to_string(), crate::fonts::sans_font(11.5), MUTED());
@@ -1308,6 +1334,7 @@ impl App {
             Some(Kind::Pokemon) => self.info_open_dex(None),
             Some(Kind::Guide) => self.info_push(Page::Guides),
             Some(Kind::Move) => self.info_push(Page::Moves),
+            Some(Kind::Item) => self.info_push(Page::Items),
             Some(k) => {
                 let s = &mut self.setup.info;
                 s.query.clear();

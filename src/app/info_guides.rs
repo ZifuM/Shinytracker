@@ -3,7 +3,7 @@
 //! and the guide reader (contents that follow you down the page, keys and
 //! tables set properly, links that open in the app, read ticks).
 
-use super::info_home::{Kind, Page};
+use super::info_home::Page;
 use super::info_md::{self as md, Block, Doc};
 use super::profile_page::card_head;
 use super::ui_kit::{self as kit, CARD, CARD_HOVER, LINE, MUTED, TEXT};
@@ -217,10 +217,7 @@ impl App {
                 self.info_open_dex(Some(id));
             }
         } else if let Some(slug) = url.strip_prefix("#/item/") {
-            if let Some(it) = w.data.items.iter().find(|i| wiki::slug(&i.name) == slug) {
-                let id = it.id.clone();
-                self.info_show(Kind::Item, id);
-            }
+            self.info_open_item_slug(w, slug);
         } else if url.starts_with("http") {
             ctx.open_url(egui::OpenUrl::new_tab(url));
         } else if let Some(rest) = url.strip_prefix("#/") {
@@ -1100,6 +1097,7 @@ impl App {
         let mut home = false;
         let mut lib = false;
         let mut moves = false;
+        let mut items = false;
         ui.horizontal(|ui| {
             let label = format!("‹  {}", back_to.clone().unwrap_or_else(|| "Game Info".into()));
             back = ui.add(egui::Button::new(RichText::new(label).size(13.0)).fill(kit::btn_fill())).clicked();
@@ -1114,6 +1112,10 @@ impl App {
                 moves = ui.link(RichText::new("Moves").size(12.5)).clicked();
                 ui.label(small("›"));
             }
+            if matches!(self.setup.info.page, Page::Item(_)) {
+                items = ui.link(RichText::new("Items").size(12.5)).clicked();
+                ui.label(small("›"));
+            }
             ui.label(RichText::new(here).size(12.5).color(TEXT()));
         });
         ui.add_space(16.0);
@@ -1125,6 +1127,8 @@ impl App {
             self.info_push(Page::Guides);
         } else if moves {
             self.info_push(Page::Moves);
+        } else if items {
+            self.info_push(Page::Items);
         }
     }
 
@@ -1133,6 +1137,8 @@ impl App {
             Page::Home => "Game Info".into(),
             Page::Guides => "How to Play".into(),
             Page::Moves => "Moves".into(),
+            Page::Items => "Items".into(),
+            Page::Item(id) => self.wiki.as_ref().and_then(|w| w.data.items.iter().find(|i| &i.id == id).map(|i| i.name.clone())).unwrap_or_else(|| "Item".into()),
             Page::Move(k) => self.wiki.as_ref().and_then(|w| w.move_info(k).map(|m| m.n.clone())).unwrap_or_else(|| "Move".into()),
             Page::Guide(id) => self
                 .wiki

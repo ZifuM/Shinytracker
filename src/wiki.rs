@@ -127,6 +127,9 @@ pub struct ItemSpot {
     pub place: String,
     #[serde(deserialize_with = "lenient")]
     pub detail: String,
+    /// Held items: the wild Pokémon that holds it (id).
+    #[serde(deserialize_with = "lenient")]
+    pub species: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

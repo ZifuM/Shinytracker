@@ -21,6 +21,7 @@ mod info_home;
 mod info_guides;
 mod info_md;
 mod info_moves;
+mod info_items;
 mod hunt_pages;
 mod notices;
 mod onboarding;

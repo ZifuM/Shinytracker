@@ -1090,7 +1090,7 @@ impl App {
             }
         });
         if let Some(id) = show_item {
-            self.info_show(super::info_home::Kind::Item, id);
+            self.info_push(Page::Item(id));
         }
     }
 
