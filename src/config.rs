@@ -83,7 +83,7 @@ impl HuntMethod {
                 "Gen 4 chain curve, never worse than the base rate: about 1 in 200 at chain 40. Not confirmed for this mod."
             }
             HuntMethod::Masuda => {
-                "Gen 4 gives eggs 5 chances at the base rate: about 1 in 820. Not confirmed for this mod."
+                "Eggs get 6 tries at the base rate with a Pokémon traded from another player: about 1 in 683, or 1 in 512 with the Shiny Charm (8 tries, from the game's notes)."
             }
             HuntMethod::FromGameLog => {
                 "Uses the exact odds the game writes for each wild encounter (includes any bonuses). Updates after your first battle."
@@ -1004,7 +1004,11 @@ impl Config {
         let base = match self.hunt_method {
             HuntMethod::FullOdds | HuntMethod::SoftReset | HuntMethod::SweetScent => BASE_ONE_IN,
             HuntMethod::RareGrassSweetScent => BASE_ONE_IN / 2.0,
-            HuntMethod::Masuda => rolls(BASE_ONE_IN, 5.0),
+            // Eggs: 6 tries with Masuda, 8 with the Shiny Charm too (the
+            // game's notes). More than one Charm isn't known to add more.
+            HuntMethod::Masuda => {
+                return Some(crate::breed::shiny_one_in(crate::breed::shiny_rolls(self.shiny_charms > 0, true)));
+            }
             // Gen 4 radar: chance per patch = (65535 / (8200 - chain*200)) / 65536,
             // chain capped at 40; never worse than the base rate.
             HuntMethod::PokeRadar => {
@@ -1365,5 +1369,25 @@ mod scale_tests {
         assert_eq!(c.overlay.scale, OverlayScale::Small);
         let c: Config = serde_json::from_str(r#"{"overlay":{"scale":"Large"}}"#).unwrap();
         assert_eq!(c.overlay.scale.factor(), 1.5);
+    }
+}
+
+#[cfg(test)]
+mod masuda_tests {
+    use super::*;
+
+    #[test]
+    fn masuda_uses_the_games_egg_rolls() {
+        let mut c = Config::default();
+        c.hunt_method = HuntMethod::Masuda;
+        assert_eq!(c.odds_one_in().unwrap().round(), 683.0);
+        c.shiny_charms = 1;
+        assert_eq!(c.odds_one_in().unwrap().round(), 512.0);
+        c.shiny_charms = 3;
+        assert_eq!(c.odds_one_in().unwrap().round(), 512.0);
+        // Wild odds are unchanged.
+        c.hunt_method = HuntMethod::FullOdds;
+        c.shiny_charms = 0;
+        assert_eq!(c.odds_one_in().unwrap(), 4096.0);
     }
 }

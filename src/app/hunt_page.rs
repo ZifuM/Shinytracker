@@ -423,7 +423,12 @@ impl App {
                 ui.add_space(10.0);
             }
             if self.cfg.hunt_method.uses_charms() {
-                setting_row(ui, "Shiny Charms in your Bag", "Each Shiny Charm gives wild Pokémon one more chance to be shiny.", |ui| {
+                let charm_help = if self.cfg.hunt_method == HuntMethod::Masuda {
+                    "For Eggs the Shiny Charm gives 2 more tries (8 with the Masuda Method). More than one isn't known to add more."
+                } else {
+                    "Each Shiny Charm gives wild Pokémon one more chance to be shiny."
+                };
+                setting_row(ui, "Shiny Charms in your Bag", charm_help, |ui| {
                     self.dirty |= kit::stepper(ui, &mut self.cfg.shiny_charms, 0, 20);
                 });
                 ui.add_space(12.0);

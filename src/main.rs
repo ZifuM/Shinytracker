@@ -3,6 +3,7 @@
 
 mod app;
 mod battle;
+mod breed;
 mod calc;
 mod canvas;
 mod capture;
