@@ -86,7 +86,10 @@ impl App {
         if let Some(r) = jump_to {
             ui.scroll_to_rect(r, Some(egui::Align::Min));
             // a short glow so the eye finds it
-            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("adv-glow"), (r, ui.input(|i| i.time))));
+            // read the time first: asking for it inside data_mut would wait on
+            // the lock data_mut already holds, and the app would freeze
+            let now = ui.input(|i| i.time);
+            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("adv-glow"), (r, now)));
         }
         if let Some((r, t)) = ui.ctx().data(|d| d.get_temp::<(Rect, f64)>(egui::Id::new("adv-glow"))) {
             let age = (ui.input(|i| i.time) - t) as f32;
