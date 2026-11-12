@@ -25,6 +25,8 @@ mod info_items;
 mod info_places;
 mod info_story;
 mod sim_catch;
+mod sim_battle;
+mod battlebacks;
 mod sim_foes;
 mod sim_home;
 mod team_analysis;

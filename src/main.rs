@@ -10,6 +10,7 @@ mod card;
 mod config;
 mod detect;
 mod dexextra;
+mod engine;
 mod fonts;
 mod gamemap;
 mod gamelog;

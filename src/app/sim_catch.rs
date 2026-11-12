@@ -377,7 +377,7 @@ fn short_ball(b: Ball) -> &'static str {
 }
 
 /// A Poké Ball, turned by `tilt` radians, in the ball's colours.
-fn draw_ball(p: &egui::Painter, c: egui::Pos2, r: f32, tilt: f32, b: Ball) {
+pub(super) fn draw_ball(p: &egui::Painter, c: egui::Pos2, r: f32, tilt: f32, b: Ball) {
     let top = match b {
         Ball::Great => Color32::from_rgb(60, 110, 220),
         Ball::Ultra => Color32::from_rgb(40, 40, 46),
@@ -402,6 +402,18 @@ fn draw_ball(p: &egui::Painter, c: egui::Pos2, r: f32, tilt: f32, b: Ball) {
     p.line_segment([c + rot(egui::vec2(-r, 0.0)), c + rot(egui::vec2(r, 0.0))], Stroke::new(2.0f32, Color32::from_rgb(30, 30, 34)));
     p.circle_filled(c, r * 0.32, Color32::from_rgb(30, 30, 34));
     p.circle_filled(c, r * 0.2, Color32::WHITE);
+}
+
+/// A ball in one colour (a trainer's party: red for able, grey for fainted).
+pub(super) fn draw_ball_color(p: &egui::Painter, c: egui::Pos2, r: f32, top: Color32, dim: bool) {
+    let n = 20;
+    let half = |from: f32| -> Vec<egui::Pos2> { (0..=n).map(|i| from + std::f32::consts::PI * i as f32 / n as f32).map(|a| c + egui::vec2(a.cos(), a.sin()) * r).collect() };
+    let ink = if dim { MUTED() } else { Color32::from_rgb(30, 30, 34) };
+    p.add(egui::Shape::convex_polygon(half(std::f32::consts::PI), top, Stroke::NONE));
+    p.add(egui::Shape::convex_polygon(half(0.0), if dim { kit::sunken() } else { Color32::from_rgb(245, 245, 245) }, Stroke::NONE));
+    p.circle_stroke(c, r, Stroke::new(1.5f32, ink));
+    p.line_segment([c - egui::vec2(r, 0.0), c + egui::vec2(r, 0.0)], Stroke::new(1.5f32, ink));
+    p.circle_filled(c, r * 0.3, ink);
 }
 
 /// HP, status and the battle around the throw.

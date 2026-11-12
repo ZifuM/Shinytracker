@@ -32,6 +32,11 @@ pub(super) struct SimState {
     pub scroll_lab: bool,
     /// Picking and building the opponent.
     pub foe: super::sim_foes::FoeView,
+    /// The battle on screen, if one's going.
+    pub battle: Option<Box<super::sim_battle::BattleView>>,
+    pub speed: super::sim_battle::Speed,
+    /// No damage odds on the move buttons.
+    pub hide_odds: bool,
 }
 
 impl SimState {
@@ -92,6 +97,9 @@ impl App {
 
     pub(super) fn page_sim(&mut self, ui: &mut egui::Ui) {
         self.setup.sim.file();
+        if self.setup.sim.battle.is_some() {
+            return self.page_battle(ui);
+        }
         kit::page_header(ui, "BATTLE SIM", "Put your teams up against wild Pokémon and trainers, in singles or doubles, and test your catch odds.");
         if let Some(e) = self.setup.sim.load_error.clone() {
             let mut close = false;
@@ -513,7 +521,10 @@ impl App {
         s.world = s.team.and_then(|id| self.setup.team.teams().teams.iter().find(|t| t.id == id).map(|t| t.world)).unwrap_or_default();
         self.setup.sim.file().remember(s);
         self.setup.sim.touch();
-        self.setup.sim.note = Some("Saved to Recent. The battle screen comes in a coming update.".into());
+        self.setup.sim.note = None;
+        if let Err(e) = self.sim_begin() {
+            self.setup.sim.note = Some(e);
+        }
     }
 
     fn sim_theirs(&mut self, ui: &mut egui::Ui) {
