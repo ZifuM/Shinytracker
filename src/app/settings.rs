@@ -50,6 +50,7 @@ pub(super) enum AdvTab {
     #[default]
     Updates,
     Data,
+    Game,
     Counter,
     Reading,
 }
@@ -68,6 +69,19 @@ pub(super) enum OverlayTab {
 /// (they still work for anyone who already picked one).
 fn method_offered(m: HuntMethod) -> bool {
     !matches!(m, HuntMethod::FromGameLog | HuntMethod::Custom)
+}
+
+/// Two paths are the same folder (Windows paths ignore case).
+fn same_folder(a: &std::path::Path, b: &std::path::Path) -> bool {
+    let norm = |p: &std::path::Path| {
+        std::fs::canonicalize(p)
+            .unwrap_or_else(|_| p.to_path_buf())
+            .to_string_lossy()
+            .to_lowercase()
+            .trim_end_matches(['\\', '/'])
+            .to_string()
+    };
+    norm(a) == norm(b)
 }
 
 /// Egg hunting isn't well tested yet.
@@ -1393,73 +1407,152 @@ impl App {
         }
     }
 
-    /// Counting: which folder the game log is read from, with a way to
-    /// pick it by hand if it isn't found.
-    fn log_folder_card(&mut self, ui: &mut egui::Ui) {
+    /// Open Advanced settings at the game folder (from the Map and Counting).
+    pub(super) fn open_game_folder_settings(&mut self) {
+        self.setup.tab = Tab::Advanced;
+        self.setup.adv_tab = AdvTab::Game;
+    }
+
+    /// The game folder in use (chosen in Advanced settings, else the usual place).
+    pub(super) fn game_folder(&self) -> std::path::PathBuf {
+        crate::gamemap::game_dir(self.cfg.game_dir_setting().as_deref())
+    }
+
+    /// Compare where the game is running from with the folder in use. With
+    /// no folder chosen, follow the game; otherwise offer to switch.
+    pub(super) fn check_game_location(&mut self) {
+        use super::notices::{Notice, NoticeAction};
+        let Some(dir) = crate::topmost::game_exe().and_then(|e| e.parent().map(|d| d.to_path_buf())) else { return };
+        let using = self.game_folder();
+        if same_folder(&dir, &using) {
+            return;
+        }
+        let dir_s = dir.to_string_lossy().to_string();
+        if self.cfg.game_dir.is_none() {
+            self.cfg.game_dir_found = Some(dir_s);
+            self.game_folder_changed();
+            self.notify(Notice {
+                id: "game-folder",
+                icon: "📁",
+                title: "Found the game".into(),
+                body: format!("It's running from {}. Counting and the Map read from there now.", dir.display()),
+                progress: None,
+                action: None,
+                expires: Some(Instant::now() + Duration::from_secs(12)),
+                accent: theme::GREEN,
+            });
+        } else if self.game_dir_offer.as_deref() != Some(dir_s.as_str()) {
+            self.game_dir_offer = Some(dir_s);
+            self.notify(Notice {
+                id: "game-folder",
+                icon: "📁",
+                title: "The game is in a different folder".into(),
+                body: format!("It's running from {}, but your game folder setting is {}.", dir.display(), using.display()),
+                progress: None,
+                action: Some(("Use that folder", NoticeAction::UseRunningGame)),
+                expires: None,
+                accent: theme::HP_YELLOW,
+            });
+        }
+    }
+
+    /// "Use that folder": switch the game folder setting to where the game runs.
+    pub(super) fn use_running_game_folder(&mut self) {
+        if let Some(d) = self.game_dir_offer.clone() {
+            self.cfg.game_dir = Some(d);
+            self.game_folder_changed();
+        }
+        self.clear_notice("game-folder");
+    }
+
+    /// After the game folder changes: counting and the Map look there now.
+    fn game_folder_changed(&mut self) {
+        self.dirty = true;
+        self.push_settings(true);
+        self.gamemap = None;
+        self.gamemap_rx = crate::gamemap::start(self.cfg.game_dir_setting());
+        self.mapui = Default::default();
+    }
+
+    /// Advanced settings: where the game is. Counting from the game log and
+    /// the Map both read from it.
+    fn game_folder_card(&mut self, ui: &mut egui::Ui) {
         // Folder box answered?
         if let Some(rx) = &self.setup.log_picker {
             if let Ok(res) = rx.try_recv() {
                 self.setup.log_picker = None;
                 if let Some(dir) = res {
-                    self.cfg.log_dir = Some(dir.to_string_lossy().to_string());
-                    self.dirty = true;
-                    self.push_settings(true);
+                    self.cfg.game_dir = Some(dir.to_string_lossy().to_string());
+                    self.game_folder_changed();
                 }
             }
         }
-        let custom = self.cfg.log_dir.clone();
-        let using = crate::gamelog::log_dir(custom.as_deref().map(std::path::Path::new));
-        let found = using.is_some();
-        // Open by default only when there's a problem to fix.
-        egui::CollapsingHeader::new(RichText::new("Game log folder").size(kit::fs(13.0)).color(TEXT()))
-            .id_salt("log-folder")
-            .default_open(!found)
-            .show(ui, |ui| {
-                kit::card(ui, |ui| {
-                    let line = match (&using, &custom) {
-                        (Some(d), Some(_)) => format!("Chosen by you: {}", d.display()),
-                        (Some(d), None) => format!("Found automatically: {}", d.display()),
-                        (None, _) => "Not found. Choose the folder that holds the game's session-….log files.".to_string(),
-                    };
-                    ui.label(RichText::new(line).size(kit::fs(12.5)).color(if found { TEXT() } else { theme::HP_YELLOW }));
-                    ui.label(
-                        RichText::new(
-                            "Normally AppData\\Local\\PlatinumTogether\\Game\\logs. If your game is installed somewhere else, pick its logs folder (or the game's own folder) here.",
-                        )
-                        .size(kit::fs(11.5))
-                        .color(MUTED()),
-                    );
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        let busy = self.setup.log_picker.is_some();
-                        if ui
-                            .add_enabled(!busy, egui::Button::new(RichText::new("Choose folder…").size(kit::fs(12.5))).fill(kit::btn_fill()))
-                            .clicked()
-                        {
-                            let start = using
-                                .clone()
-                                .or_else(dirs::data_local_dir)
-                                .unwrap_or_default();
-                            self.setup.log_picker = Some(crate::share::pick_folder(start, ui.ctx().clone()));
-                        }
-                        if custom.is_some()
-                            && ui
-                                .add_enabled(!busy, egui::Button::new(RichText::new("Find automatically").size(kit::fs(12.5))).fill(kit::btn_fill()))
-                                .on_hover_text("Forget the chosen folder and look in the usual place")
-                                .clicked()
-                        {
-                            self.cfg.log_dir = None;
-                            self.dirty = true;
-                            self.push_settings(true);
-                        }
-                        if let Some(d) = &using {
-                            if ui.add(egui::Button::new(RichText::new("Open folder").size(kit::fs(12.5))).fill(kit::btn_fill())).clicked() {
-                                crate::share::open_dir(d);
-                            }
-                        }
-                    });
-                });
+        let chosen = self.cfg.game_dir.is_some();
+        let dir = self.game_folder();
+        let map_ok = crate::gamemap::has_map_files(&dir);
+        let logs_ok = dir.join("logs").is_dir();
+        kit::section(ui, "Game folder");
+        kit::card(ui, |ui| {
+            ui.label(
+                RichText::new(format!(
+                    "{}: {}",
+                    if chosen {
+                        "Chosen by you"
+                    } else if self.cfg.game_dir_found.is_some() {
+                        "Found where the game runs"
+                    } else {
+                        "The usual place"
+                    },
+                    dir.display()
+                ))
+                    .size(kit::fs(12.5))
+                    .color(if map_ok || logs_ok { TEXT() } else { theme::HP_YELLOW }),
+            );
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if map_ok {
+                    kit::pill(ui, "✔ Map files found", PillKind::Ok);
+                } else {
+                    kit::pill(ui, "Map files not found", PillKind::Warn);
+                }
+                if logs_ok {
+                    kit::pill(ui, "✔ Game logs found", PillKind::Ok);
+                } else {
+                    kit::pill(ui, "Game logs not found", PillKind::Warn);
+                }
             });
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(
+                    "Normally AppData\\Local\\PlatinumTogether\\Game. If you moved the game, it's found by itself while it runs, or choose its folder here (the one with Platinum.exe). Counting from the game log and the Map both use it.",
+                )
+                .size(kit::fs(11.5))
+                .color(MUTED()),
+            );
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let busy = self.setup.log_picker.is_some();
+                if ui
+                    .add_enabled(!busy, egui::Button::new(RichText::new("Choose folder…").size(kit::fs(12.5))).fill(kit::btn_fill()))
+                    .clicked()
+                {
+                    let start = if dir.is_dir() { dir.clone() } else { dirs::data_local_dir().unwrap_or_default() };
+                    self.setup.log_picker = Some(crate::share::pick_folder(start, ui.ctx().clone()));
+                }
+                if chosen
+                    && ui
+                        .add_enabled(!busy, egui::Button::new(RichText::new("Find automatically").size(kit::fs(12.5))).fill(kit::btn_fill()))
+                        .on_hover_text("Forget the chosen folder and look in the usual place")
+                        .clicked()
+                {
+                    self.cfg.game_dir = None;
+                    self.game_folder_changed();
+                }
+                if dir.is_dir() && ui.add(egui::Button::new(RichText::new("Open folder").size(kit::fs(12.5))).fill(kit::btn_fill())).clicked() {
+                    crate::share::open_dir(&dir);
+                }
+            });
+        });
     }
 
     fn page_counting(&mut self, ui: &mut egui::Ui) {
@@ -1494,7 +1587,33 @@ impl App {
         };
         kit::pill(ui, &text, kind);
         ui.add_space(10.0);
-        self.log_folder_card(ui);
+        if self.cfg.count_source == CountSource::GameLog {
+            let dir = self.game_folder();
+            let logs_ok = dir.join("logs").is_dir();
+            let mut go = false;
+            kit::card(ui, |ui| {
+                ui.label(
+                    RichText::new(if logs_ok {
+                        format!("Reading the game log from {}", dir.join("logs").display())
+                    } else {
+                        format!("No game logs in {}. If you moved the game, choose its folder.", dir.display())
+                    })
+                    .size(kit::fs(12.5))
+                    .color(if logs_ok { MUTED() } else { theme::HP_YELLOW }),
+                );
+                ui.add_space(6.0);
+                if ui
+                    .add(egui::Button::new(RichText::new("Game folder settings  ›").size(kit::fs(12.5))).fill(kit::btn_fill()))
+                    .on_hover_text("Choose where the game is installed (Advanced settings)")
+                    .clicked()
+                {
+                    go = true;
+                }
+            });
+            if go {
+                self.open_game_folder_settings();
+            }
+        }
         ui.add_space(14.0);
 
         kit::card(ui, |ui| {
@@ -2389,6 +2508,7 @@ impl App {
             &[
                 (AdvTab::Updates, "Updates"),
                 (AdvTab::Data, "Backup & data"),
+                (AdvTab::Game, "Game folder"),
                 (AdvTab::Counter, "Counter"),
                 (AdvTab::Reading, "Screen reading"),
             ],
@@ -2402,6 +2522,7 @@ impl App {
                 self.backup_card(ui);
                 self.data_folder_card(ui);
             }
+            AdvTab::Game => self.game_folder_card(ui),
             AdvTab::Counter => {
                 kit::section(ui, "Edit the counter");
                 kit::card(ui, |ui| {

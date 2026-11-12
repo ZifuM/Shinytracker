@@ -347,6 +347,7 @@ impl App {
                     self.setup.tab = Tab::Counting;
                     self.clear_notice(id);
                 }
+                NoticeAction::UseRunningGame => self.use_running_game_folder(),
             }
         }
     }

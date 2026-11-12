@@ -334,6 +334,54 @@ mod imp {
         find_game().is_some()
     }
 
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut c_void;
+        fn QueryFullProcessImageNameW(process: *mut c_void, flags: u32, name: *mut u16, size: *mut u32) -> i32;
+        fn CloseHandle(h: *mut c_void) -> i32;
+    }
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+
+    /// Full path of the program that owns a window.
+    fn exe_of(h: Hwnd) -> Option<std::path::PathBuf> {
+        unsafe {
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(h, &mut pid);
+            if pid == 0 {
+                return None;
+            }
+            let proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if proc.is_null() {
+                return None;
+            }
+            let mut buf = [0u16; 1024];
+            let mut len = buf.len() as u32;
+            let ok = QueryFullProcessImageNameW(proc, 0, buf.as_mut_ptr(), &mut len);
+            CloseHandle(proc);
+            (ok != 0).then(|| std::path::PathBuf::from(String::from_utf16_lossy(&buf[..len as usize])))
+        }
+    }
+
+    /// Where the running game's Platinum.exe is (its windows are checked,
+    /// so the launcher, which also says "Platinum Together", is skipped).
+    pub fn game_exe() -> Option<std::path::PathBuf> {
+        extern "system" fn cb(h: Hwnd, out: isize) -> i32 {
+            unsafe {
+                if IsWindowVisible(h) != 0 && text(h, false).contains("Platinum Together") {
+                    (*(out as *mut Vec<isize>)).push(h as isize);
+                }
+            }
+            1
+        }
+        let mut found: Vec<isize> = Vec::new();
+        unsafe {
+            EnumWindows(cb, &mut found as *mut Vec<isize> as isize);
+        }
+        found.into_iter().filter_map(|h| exe_of(h as Hwnd)).find(|p| {
+            p.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case("Platinum.exe"))
+        })
+    }
+
     /// The Platinum Together game window (SDL window titled "Platinum Together").
     fn find_game() -> Option<Hwnd> {
         extern "system" fn cb(h: Hwnd, out: isize) -> i32 {
@@ -622,6 +670,9 @@ mod imp {
     pub fn game_running() -> bool {
         true
     }
+    pub fn game_exe() -> Option<std::path::PathBuf> {
+        None
+    }
     pub fn hwnd_of(_frame: &eframe::Frame) -> Option<isize> {
         None
     }
@@ -703,6 +754,11 @@ pub fn point_on_screen(pos: [f32; 2], ppp: f32) -> bool {
 /// Whether the Platinum Together game window is open.
 pub fn game_running() -> bool {
     imp::game_running()
+}
+
+/// Where the running game's Platinum.exe is, if the game is open.
+pub fn game_exe() -> Option<std::path::PathBuf> {
+    imp::game_exe()
 }
 
 /// Cut a window to a set of rounded boxes ([x, y, w, h, radius], pixels).

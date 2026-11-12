@@ -285,8 +285,30 @@ impl Matrix {
 }
 
 /// Where the game is installed.
-pub fn game_dir() -> PathBuf {
+pub fn default_game_dir() -> PathBuf {
     dirs::data_local_dir().unwrap_or_default().join("PlatinumTogether").join("Game")
+}
+
+/// Does this look like the game's own folder?
+pub fn is_game_dir(d: &Path) -> bool {
+    d.join("fielddata").is_dir() || d.join("patch-built").is_dir() || d.join("logs").is_dir() || d.join("Platinum.exe").is_file()
+}
+
+/// The game's folder: the one chosen in Advanced settings, else the usual
+/// place. The chosen folder can be the game's own folder, its logs folder,
+/// or the PlatinumTogether folder above it.
+pub fn game_dir(custom: Option<&Path>) -> PathBuf {
+    let Some(c) = custom else { return default_game_dir() };
+    let mut tries = vec![c.to_path_buf(), c.join("Game"), c.join("PlatinumTogether").join("Game")];
+    if let Some(p) = c.parent() {
+        tries.push(p.to_path_buf());
+    }
+    tries.into_iter().find(|d| is_game_dir(d)).unwrap_or_else(|| c.to_path_buf())
+}
+
+/// Whether the Map's files (the map layout and tile info) are in a game folder.
+pub fn has_map_files(dir: &Path) -> bool {
+    game_file(dir, "fielddata/mapmatrix/map_matrix.narc").exists() && game_file(dir, "fielddata/land_data/land_data.narc").exists()
 }
 
 /// The patched copy of a game file if there is one, otherwise the original.
@@ -680,7 +702,7 @@ pub enum LoadError {
 impl std::fmt::Display for LoadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LoadError::NotInstalled(p) => write!(f, "Platinum Together isn't installed where expected ({})", p.display()),
+            LoadError::NotInstalled(p) => write!(f, "Platinum Together's map files aren't in {}", p.display()),
             LoadError::Broken(e) => write!(f, "{e}"),
         }
     }
@@ -950,10 +972,10 @@ fn fill_sea_and_land(m: &Matrix, mapped: &dyn Fn(usize, usize) -> bool, px: &mut
 }
 
 /// Read the map in the background.
-pub fn start() -> Receiver<Result<Arc<GameMap>, LoadError>> {
+pub fn start(custom: Option<PathBuf>) -> Receiver<Result<Arc<GameMap>, LoadError>> {
     let (tx, rx) = std::sync::mpsc::channel();
     let _ = std::thread::Builder::new().name("gamemap".into()).spawn(move || {
-        let _ = tx.send(load(&game_dir(), true).map(Arc::new));
+        let _ = tx.send(load(&game_dir(custom.as_deref()), true).map(Arc::new));
     });
     rx
 }

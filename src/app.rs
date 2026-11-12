@@ -281,6 +281,10 @@ pub struct App {
     last_enc_at: Option<Instant>,
     /// Slow-changing numbers for the modular overlay, refreshed every second.
     ov_cache: Option<(Instant, overlay_mod::OvStats)>,
+    /// When the running game's folder was last checked (None: not since it opened).
+    game_loc_checked: Option<Instant>,
+    /// A folder the game was found running from that differs from the chosen one.
+    game_dir_offer: Option<String>,
 }
 
 fn per_battle_for(b: BattleType) -> PerBattle {
@@ -311,13 +315,14 @@ fn worker_settings(cfg: &Config, generation: u64, game_closed: bool) -> WorkerSe
         shiny_star_alert: cfg.shiny_star_alert,
         star_threshold: cfg.star_threshold.max(1),
         source: cfg.count_source,
-        log_dir: cfg.log_dir.as_ref().map(std::path::PathBuf::from),
+        log_dir: cfg.game_dir_setting().map(|d| crate::gamemap::game_dir(Some(d.as_path()))),
         generation,
     }
 }
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, cfg: Config) -> Self {
+        let game_dir_choice = cfg.game_dir_setting();
         let ctx = &cc.egui_ctx;
         theme::apply(ctx);
         let fonts = FontLoader::start(ctx);
@@ -384,7 +389,7 @@ impl App {
             wiki_rx: crate::wiki::start(),
             dexdb: Default::default(),
             gamemap: None,
-            gamemap_rx: crate::gamemap::start(),
+            gamemap_rx: crate::gamemap::start(game_dir_choice),
             mapui: Default::default(),
             ov_geom: None,
             ov_layout: None,
@@ -396,6 +401,8 @@ impl App {
             recent_enc: std::collections::VecDeque::new(),
             last_enc_at: None,
             ov_cache: None,
+            game_loc_checked: None,
+            game_dir_offer: None,
             battle_target_hits: 0,
             battle_species: Vec::new(),
             target_flash: None,
@@ -592,6 +599,12 @@ impl App {
         }
         self.game_check = Instant::now();
         let open = crate::topmost::game_running();
+        if !open {
+            self.game_loc_checked = None;
+        } else if self.game_loc_checked.map_or(true, |t| t.elapsed() > Duration::from_secs(30)) {
+            self.game_loc_checked = Some(Instant::now());
+            self.check_game_location();
+        }
         if self.game_open != Some(open) {
             let was_closed = self.game_closed();
             self.game_open = Some(open);

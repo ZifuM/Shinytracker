@@ -1157,6 +1157,7 @@ impl App {
             }
             Some(Err(e)) => {
                 let e = e.clone();
+                let mut go = false;
                 padded.show(ui, |ui| {
                     kit::page_header(ui, "MAP", "Sinnoh, drawn from your game's own map files.");
                     kit::card(ui, |ui| {
@@ -1164,12 +1165,23 @@ impl App {
                         ui.label(RichText::new("Couldn't read the map").size(kit::fs(13.5)).strong().color(TEXT()));
                         ui.label(RichText::new(e).size(kit::fs(12.0)).color(MUTED()));
                         ui.label(
-                            RichText::new("The Map uses the map files of your Platinum Together install, so the game needs to be installed on this PC.")
+                            RichText::new("The Map uses the map files of your Platinum Together install. If you moved the game somewhere else, choose its folder in the game folder settings.")
                                 .size(kit::fs(12.0))
                                 .color(MUTED()),
                         );
+                        ui.add_space(8.0);
+                        if ui
+                            .add(egui::Button::new(RichText::new("Game folder settings  ›").size(kit::fs(12.5))).fill(kit::btn_fill()))
+                            .on_hover_text("Choose where the game is installed (Advanced settings)")
+                            .clicked()
+                        {
+                            go = true;
+                        }
                     });
                 });
+                if go {
+                    self.open_game_folder_settings();
+                }
                 return;
             }
             Some(Ok(_)) => match self.map_data() {

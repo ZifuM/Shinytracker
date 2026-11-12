@@ -168,7 +168,7 @@ fn run(
         if logtail.is_none() && last_log_try.map_or(true, |t| t.elapsed() > Duration::from_secs(5))
         {
             last_log_try = Some(Instant::now());
-            logtail = crate::gamelog::log_dir(s.log_dir.as_deref()).map(LogTail::new);
+            logtail = crate::gamelog::log_dir(s.log_dir.as_deref()).map(|d| LogTail::new(d, s.log_dir.clone()));
         }
         let mut log_error = None;
         match logtail.as_mut() {
@@ -219,7 +219,7 @@ fn run(
             },
             None => {
                 log_error = Some(
-"Can't find Platinum Together's log folder. Pick it yourself under Counting.".into(),
+"Can't find Platinum Together's logs. Choose the game folder in Settings > Advanced > Game folder.".into(),
                 )
             }
         }

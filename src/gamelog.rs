@@ -178,6 +178,9 @@ fn newest_log(dir: &Path) -> Option<(PathBuf, SystemTime)> {
 /// Follows the newest session log, like `tail -f`.
 pub struct LogTail {
     dir: PathBuf,
+    /// The game folder setting it came from, to look again when the folder
+    /// has no logs (yet).
+    root: Option<PathBuf>,
     file: Option<PathBuf>,
     pos: u64,
     partial: String,
@@ -190,9 +193,10 @@ pub struct LogTail {
 }
 
 impl LogTail {
-    pub fn new(dir: PathBuf) -> Self {
+    pub fn new(dir: PathBuf, root: Option<PathBuf>) -> Self {
         Self {
             dir,
+            root,
             file: None,
             pos: 0,
             partial: String::new(),
@@ -218,7 +222,19 @@ impl LogTail {
     }
 
     fn rescan(&mut self) -> Result<(), String> {
-        let (newest, _) = newest_log(&self.dir).ok_or("No game log found yet. Start the game.")?;
+        if newest_log(&self.dir).is_none() {
+            // Nothing here (yet): the logs folder may only now exist, so
+            // work the folder out again.
+            if let Some(d) = log_dir(self.root.as_deref()) {
+                self.dir = d;
+            }
+        }
+        let Some((newest, _)) = newest_log(&self.dir) else {
+            // No logs when we started looking: the first one to appear is a
+            // new game session, read from the top.
+            self.first_pick = false;
+            return Err("No game log found yet. Start the game.".into());
+        };
         if self.file.as_ref() != Some(&newest) {
             // At startup skip what's already in the log (old battles); a log
             // that appears later is a new game session, so read it from the top.

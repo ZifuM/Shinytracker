@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 pub(super) enum NoticeAction {
     RestartToUpdate,
     OpenCounting,
+    /// The game runs from another folder: use that one.
+    UseRunningGame,
 }
 
 pub(super) struct Notice {
@@ -283,6 +285,7 @@ impl App {
                         self.setup.tab = Tab::Counting;
                         self.clear_notice(id);
                     }
+                    NoticeAction::UseRunningGame => self.use_running_game_folder(),
                 }
             }
         }

@@ -501,8 +501,14 @@ pub struct Config {
     /// Liquid layout: the overlay's width can be dragged, and its sections stretch.
     pub liquid: bool,
     pub liquid_width: f32,
-    /// The game's log folder, when picked by hand (None = found automatically).
-    pub log_dir: Option<String>,
+    /// The game's folder, when chosen by hand in Advanced settings (None =
+    /// the usual place). Counting from the game log and the Map both use it.
+    /// (Older versions saved a log folder here as `log_dir`; that still
+    /// works, the game's folder is found from it.)
+    #[serde(alias = "log_dir")]
+    pub game_dir: Option<String>,
+    /// Where the running game was last found (used when no folder is chosen).
+    pub game_dir_found: Option<String>,
 
     pub history: Vec<HuntRecord>,
     pub keybinds: KeyBinds,
@@ -591,7 +597,8 @@ impl Default for Config {
             spot_flash: true,
             liquid: false,
             liquid_width: 280.0,
-            log_dir: None,
+            game_dir: None,
+            game_dir_found: None,
             history: Vec::new(),
             keybinds: KeyBinds::default(),
             welcome_done: false,
@@ -817,6 +824,14 @@ impl Config {
         } else {
             crate::stats::SESSION_GAP
         }
+    }
+
+    /// The game folder to look in: the one chosen in Advanced settings, else
+    /// where the running game was last found (None = the usual place).
+    pub fn game_dir_setting(&self) -> Option<PathBuf> {
+        // (A found folder that's gone again is skipped until the game is seen.)
+        let found = self.game_dir_found.as_ref().filter(|d| Path::new(d.as_str()).is_dir());
+        self.game_dir.as_ref().or(found).map(PathBuf::from)
     }
 
     /// Shiny odds per Pokémon as "1 in N" (N can be fractional), if known.
