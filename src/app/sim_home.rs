@@ -2,15 +2,12 @@
 //! trainer or a catch test. This is its start screen: who's on your side,
 //! what kind of battle, who's on theirs, and the catch odds.
 
-use super::pokedex::type_color;
-use super::team_build::pickable;
-use super::team_calc::search_pick;
-use super::team_home::{caps, chip, now_secs, small, type_tag, world_badge, x_button};
+use super::team_home::{caps, chip, now_secs, small, world_badge, x_button};
 use super::ui_kit::{self as kit, CARD, CARD_HOVER, LINE, MUTED, TEXT};
 use super::{App, Tab};
 use crate::battle::{self, World};
 use crate::calc::Status;
-use crate::sim::{self, Ball, CatchSituation, Format, Mode, SavedFoe, Setup, SimFile, Trainer, BALLS};
+use crate::sim::{self, Ball, CatchSituation, Format, Mode, Setup, SimFile, BALLS};
 use crate::teams::Member;
 use crate::theme;
 use eframe::egui::{self, Align2, Color32, Rect, RichText, Sense, Stroke};
@@ -46,6 +43,8 @@ pub(super) struct SimState {
     pub catch: CatchView,
     /// A note under the Start button.
     pub note: Option<String>,
+    /// Picking and building the opponent.
+    pub foe: super::sim_foes::FoeView,
 }
 
 impl SimState {
@@ -81,7 +80,7 @@ impl SimState {
         }
     }
 
-    fn new_id(&mut self) -> u64 {
+    pub fn new_id(&mut self) -> u64 {
         let mut id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(1);
         let f = self.file();
         while f.trainers.iter().any(|t| t.id == id) || f.foes.iter().any(|t| t.id == id) {
@@ -128,7 +127,11 @@ impl App {
                     let s = &mut self.setup.sim.setup;
                     s.team = teams.first().map(|t| t.0);
                     s.picks = (0..teams.first().map(|t| t.2).unwrap_or(0).min(6)).collect();
-                    s.foes = vec![Member { level: 20, ..Member::new("Gible", World::Platinum) }];
+                    let mut g = Member { level: 20, ..Member::new("Gible", World::Platinum) };
+                    if let Some(w) = self.wiki.clone() {
+                        g.moves = super::sim_foes::wild_set(&w, "Gible", 20, World::Platinum);
+                    }
+                    self.setup.sim.setup.foes = vec![g];
                 }
             }
         }
@@ -193,6 +196,7 @@ impl App {
                 ui.allocate_ui_with_layout(egui::vec2(side, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
                     ui.set_width(side);
                     self.sim_ours(ui);
+                    self.sim_preview(ui);
                 });
                 ui.allocate_ui_with_layout(egui::vec2(mid, 0.0), egui::Layout::top_down(egui::Align::Center), |ui| {
                     ui.set_width(mid);
@@ -208,6 +212,7 @@ impl App {
             self.sim_vs(ui, true);
             ui.add_space(14.0);
             self.sim_theirs(ui);
+            self.sim_preview(ui);
         }
     }
 
@@ -403,6 +408,75 @@ impl App {
         }
     }
 
+    /// The first turn at a glance: your leads against theirs, both ways.
+    fn sim_preview(&mut self, ui: &mut egui::Ui) {
+        use super::team_calc::{calc_mon, calc_move, Poke};
+        let s = self.setup.sim.setup.clone();
+        let Some(team) = s.team.and_then(|id| self.setup.team.teams().teams.iter().find(|t| t.id == id).cloned()) else { return };
+        let world = team.world;
+        let leads_n = if s.format == Format::Doubles && s.mode != Mode::Catch { 2 } else { 1 };
+        let ours: Vec<Member> = s.picks.iter().filter_map(|i| team.members.get(*i).cloned()).take(leads_n).collect();
+        let theirs: Vec<Member> = match s.mode {
+            Mode::Trainer => s.trainer.and_then(|id| self.setup.sim.file().trainers.iter().find(|t| t.id == id).map(|t| t.members.iter().take(leads_n).cloned().collect())).unwrap_or_default(),
+            _ => s.foes.iter().take(leads_n).cloned().collect(),
+        };
+        if ours.is_empty() || theirs.is_empty() {
+            return;
+        }
+        let wiki = self.wiki.clone();
+        let field = crate::calc::Field { doubles: leads_n == 2, ..Default::default() };
+        // best hit from a on d: (move, lo %, hi %, ko)
+        let best = |a: &Poke, d: &Poke| -> Option<(String, f32, f32, String)> {
+            let am = calc_mon(a, world)?;
+            let dm = calc_mon(d, world)?;
+            let mut out: Option<(String, f32, f32, String)> = None;
+            for n in &a.set.moves {
+                let Some(mv) = calc_move(wiki.as_deref(), n, &a.set, false) else { continue };
+                let h = crate::calc::damage(&am, &dm, &mv, &field, world);
+                if h.none.is_some() {
+                    continue;
+                }
+                let max = dm.stats[0].max(1) as f32;
+                let (lo, hi) = (h.min() as f32 * 100.0 / max, h.max() as f32 * 100.0 / max);
+                if out.as_ref().is_none_or(|o| hi > o.2) {
+                    out = Some((n.clone(), lo, hi, crate::calc::ko_desc(&h, &dm, &field, world)));
+                }
+            }
+            out
+        };
+        kit::card(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("First turn").font(crate::fonts::sans_bold_font(15.0)).color(TEXT()));
+                ui.label(small("your leads against theirs: best hit and who moves first"));
+            });
+            ui.add_space(6.0);
+            let full = ui.available_width();
+            for a in &ours {
+                for d in &theirs {
+                    let pa = Poke::new(a.clone(), None);
+                    let pd = Poke::new(d.clone(), None);
+                    let (Some(am), Some(dm)) = (calc_mon(&pa, world), calc_mon(&pd, world)) else { continue };
+                    let (sa, sd) = (crate::calc::final_speed(&am, &field), crate::calc::final_speed(&dm, &field));
+                    let (spd, sc) = if sa > sd { ("you move first", kit::C_GREEN) } else if sa < sd { ("they move first", kit::C_ORANGE) } else { ("speed tie", kit::C_GOLD) };
+                    let (r, _) = ui.allocate_exact_size(egui::vec2(full, 58.0), Sense::hover());
+                    let p = ui.painter().clone();
+                    p.rect_filled(r, 10.0, kit::sunken());
+                    p.text(egui::pos2(r.min.x + 12.0, r.min.y + 14.0), Align2::LEFT_CENTER, format!("{} vs {}", a.display_name(), d.display_name()), crate::fonts::sans_bold_font(12.5), TEXT());
+                    p.text(egui::pos2(r.max.x - 12.0, r.min.y + 14.0), Align2::RIGHT_CENTER, spd, crate::fonts::sans_bold_font(11.0), super::charts::ink(sc));
+                    let f = crate::fonts::sans_font(11.5);
+                    for (k, (b, arrow, col)) in [(best(&pa, &pd), "→", OURS), (best(&pd, &pa), "←", RED)].into_iter().enumerate() {
+                        let txt = match b {
+                            Some((n, lo, hi, ko)) => format!("{arrow} {n}: {lo:.0}–{hi:.0}%{}", if ko.is_empty() { String::new() } else { format!(" · {ko}") }),
+                            None => format!("{arrow} nothing that hurts"),
+                        };
+                        p.text(egui::pos2(r.min.x + 12.0, r.min.y + 32.0 + 15.0 * k as f32), Align2::LEFT_CENTER, super::charts::clip(ui, &txt, &f, full - 24.0), f.clone(), super::charts::ink(col));
+                    }
+                    ui.add_space(4.0);
+                }
+            }
+        });
+    }
+
     /// Whether the setup can start, and why not.
     fn sim_ready(&mut self) -> Result<(), String> {
         let s = self.setup.sim.setup.clone();
@@ -448,238 +522,11 @@ impl App {
         }
     }
 
-    /// The wild Pokémon (or the one to catch): which, what level, saved ones.
-    fn sim_wild(&mut self, ui: &mut egui::Ui) {
-        let s = self.setup.sim.setup.clone();
-        let world = s.team.and_then(|id| self.setup.team.teams().teams.iter().find(|t| t.id == id).map(|t| t.world)).unwrap_or_default();
-        let doubles = s.format == Format::Doubles && s.mode == Mode::Wild;
-        let want = if doubles { 2 } else { 1 };
-        let mut foes = s.foes.clone();
-        let lv0 = foes.first().map(|f| f.level).unwrap_or(20);
-        foes.resize_with(want, || Member { level: lv0, ..Member::new("Bidoof", world) });
-        let saved: Vec<SavedFoe> = self.setup.sim.file().foes.clone();
-        let mut save_one: Option<Member> = None;
-        let mut load: Option<Member> = None;
-        let mut forget: Option<u64> = None;
-        let names: Vec<String> = pickable(world).iter().map(|s| s.name.clone()).collect();
-        // your Shiny Hunter target, one click away
-        let hunt: Option<String> = self.cfg.target.clone().and_then(|slug| self.species.iter().find(|s| s.slug == slug).map(|s| s.name.to_string())).filter(|n| battle::data().species(n).is_some());
-        let mut use_hunt = false;
-        side_card(ui, RED, if doubles { "THEIR SIDE · TWO WILD POKÉMON" } else { "THEIR SIDE" }, |ui| {
-            for (k, f) in foes.iter_mut().enumerate() {
-                if k > 0 {
-                    ui.add_space(10.0);
-                }
-                let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 96.0), Sense::hover());
-                let p = ui.painter().clone();
-                let sp = battle::data().species(&f.species);
-                let ty: Vec<String> = sp.map(|s| s.types_in(world).to_vec()).unwrap_or_default();
-                let col = ty.first().map(|t| type_color(t)).unwrap_or(kit::C_SLATE);
-                p.rect_filled(r, 12.0, theme::blend(kit::sunken(), col, 0.12));
-                let c = egui::pos2(r.min.x + 52.0, r.center().y);
-                if !self.team_sprite(&p, &f.species, f.shiny, c, egui::vec2(88.0, 88.0)) {
-                    p.text(c, Align2::CENTER_CENTER, f.species.chars().take(2).collect::<String>(), crate::fonts::sans_bold_font(16.0), MUTED());
-                }
-                let x = r.min.x + 110.0;
-                p.text(egui::pos2(x, r.min.y + 24.0), Align2::LEFT_CENTER, format!("{}{}", f.species, if f.shiny { "  ✨" } else { "" }), crate::fonts::sans_bold_font(17.0), TEXT());
-                let mut tx = x;
-                for t in &ty {
-                    tx += type_tag(&p, egui::pos2(tx, r.min.y + 48.0), t, 9.0) + 4.0;
-                }
-                let rate = sp.and_then(|s| sim::data().catch_rate(s.num));
-                let sub = format!("Lv {}  ·  BST {}{}", f.level, sp.map(|s| s.bst(world)).unwrap_or(0), rate.map(|r| format!("  ·  catch rate {r}")).unwrap_or_default());
-                p.text(egui::pos2(x, r.min.y + 72.0), Align2::LEFT_CENTER, sub, crate::fonts::sans_font(11.5), MUTED());
-                ui.add_space(8.0);
-                egui::Grid::new(("sim-foe", k)).num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
-                    ui.label(caps("POKÉMON"));
-                    if let Some(n) = search_pick(ui, egui::Id::new(("sim-foe-sp", k)), &f.species, &names, 200.0) {
-                        let lv = f.level;
-                        *f = Member { level: lv, ..Member::new(&n, world) };
-                    }
-                    ui.end_row();
-                    ui.label(caps("LEVEL"));
-                    ui.horizontal(|ui| {
-                        ui.add(egui::DragValue::new(&mut f.level).range(1..=100).speed(0.2));
-                        for l in [5u8, 20, 40, 60] {
-                            if chip(ui, &l.to_string(), f.level == l, RED).clicked() {
-                                f.level = l;
-                            }
-                        }
-                    });
-                    ui.end_row();
-                    ui.label(caps("SHINY"));
-                    kit::toggle(ui, &mut f.shiny);
-                    ui.end_row();
-                });
-                ui.horizontal(|ui| {
-                    if ui.link(RichText::new("Save this Pokémon").size(12.0)).on_hover_text("Keep it under Saved to use again").clicked() {
-                        save_one = Some(f.clone());
-                    }
-                    if let Some(h) = hunt.as_ref().filter(|h| **h != f.species && k == 0) {
-                        ui.add_space(10.0);
-                        if ui.link(RichText::new(format!("🎯 Your hunt: {h}")).size(12.0)).on_hover_text("Use your Shiny Hunter target").clicked() {
-                            use_hunt = true;
-                        }
-                    }
-                });
-            }
-            if !saved.is_empty() {
-                ui.add_space(10.0);
-                ui.label(caps("SAVED"));
-                ui.add_space(4.0);
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-                    for sf in saved.iter().take(12) {
-                        let r = chip(ui, &format!("{} Lv {}", sf.member.display_name(), sf.member.level), false, RED);
-                        if r.clicked() {
-                            load = Some(sf.member.clone());
-                        }
-                        r.context_menu(|ui| {
-                            if ui.button("Forget it").clicked() {
-                                forget = Some(sf.id);
-                                ui.close_menu();
-                            }
-                        });
-                    }
-                });
-                ui.label(small("Right-click a saved one to forget it."));
-            }
-            ui.add_space(6.0);
-            ui.label(small("Rolling a real encounter from a route's wild Pokémon is coming next."));
-        });
-        if let Some(m) = load {
-            foes[0] = m;
-        }
-        if let (true, Some(h)) = (use_hunt, hunt) {
-            let lv = foes[0].level;
-            foes[0] = Member { level: lv, ..Member::new(&h, world) };
-        }
-        if foes != s.foes {
-            self.setup.sim.setup.foes = foes;
-        }
-        if let Some(m) = save_one {
-            let id = self.setup.sim.new_id();
-            let f = self.setup.sim.file();
-            if !f.foes.iter().any(|x| x.member == m) {
-                f.foes.insert(0, SavedFoe { id, member: m, world, updated: now_secs() });
-                self.setup.sim.touch();
-            }
-        }
-        if let Some(id) = forget {
-            self.setup.sim.file().foes.retain(|x| x.id != id);
-            self.setup.sim.touch();
-        }
-    }
-
-    /// Trainers: yours to pick, or one made from a Team Planner team.
-    fn sim_trainers(&mut self, ui: &mut egui::Ui) {
-        let s = self.setup.sim.setup.clone();
-        let trainers: Vec<Trainer> = self.setup.sim.file().trainers.clone();
-        let teams: Vec<crate::teams::Team> = self.setup.team.teams().teams.clone();
-        let mut pick: Option<u64> = None;
-        let mut from_team: Option<u64> = None;
-        let mut delete: Option<u64> = None;
-        let mut rename: Option<(u64, String)> = None;
-        side_card(ui, RED, "THEIR SIDE · A TRAINER", |ui| {
-            if trainers.is_empty() {
-                ui.label(RichText::new("No trainers yet").font(crate::fonts::sans_bold_font(16.0)).color(TEXT()));
-                ui.label(small("Turn one of your Team Planner teams into a trainer to battle it, like a mirror match or a friend's team you pasted in."));
-                ui.add_space(8.0);
-            }
-            for t in &trainers {
-                let on = s.trainer == Some(t.id);
-                let (r, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 64.0), Sense::click());
-                let ht = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered(), kit::QUICK);
-                let p = ui.painter().clone();
-                p.rect_filled(r, 12.0, if on { theme::blend(CARD(), RED, 0.14) } else { theme::blend(kit::sunken(), CARD_HOVER(), ht) });
-                if on {
-                    p.rect_stroke(r, 12.0, Stroke::new(1.5f32, RED));
-                }
-                p.text(egui::pos2(r.min.x + 14.0, r.min.y + 20.0), Align2::LEFT_CENTER, &t.name, crate::fonts::sans_bold_font(14.0), TEXT());
-                p.text(egui::pos2(r.min.x + 14.0, r.min.y + 42.0), Align2::LEFT_CENTER, format!("{}  ·  {} Pokémon", if t.class.is_empty() { "Trainer" } else { t.class.as_str() }, t.members.len()), crate::fonts::sans_font(11.5), MUTED());
-                let slot = 40.0;
-                for (i, m) in t.members.iter().take(6).enumerate() {
-                    let c = egui::pos2(r.max.x - 14.0 - slot * (t.members.len().min(6) - i) as f32 + slot / 2.0, r.center().y);
-                    if !self.team_sprite(&p, &m.species, m.shiny, c, egui::vec2(slot, slot)) {
-                        p.circle_filled(c, 15.0, theme::blend(CARD(), RED, 0.12));
-                        p.text(c, Align2::CENTER_CENTER, m.species.chars().take(2).collect::<String>(), crate::fonts::sans_bold_font(10.5), MUTED());
-                    }
-                }
-                if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                    pick = Some(t.id);
-                }
-                ui.add_space(6.0);
-            }
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.menu_button(RichText::new("+  Trainer from a team").size(13.0), |ui| {
-                    ui.set_min_width(220.0);
-                    if teams.is_empty() {
-                        ui.label("Make a team in the Team Planner first");
-                    }
-                    for t in teams.iter().filter(|t| !t.members.is_empty()).take(15) {
-                        if ui.button(format!("{}  ({})", t.name, t.members.len())).clicked() {
-                            from_team = Some(t.id);
-                            ui.close_menu();
-                        }
-                    }
-                });
-            });
-            // the chosen trainer: name and remove
-            if let Some(t) = s.trainer.and_then(|id| trainers.iter().find(|t| t.id == id)) {
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    ui.label(caps("NAME"));
-                    let mut name = t.name.clone();
-                    if ui.add(egui::TextEdit::singleline(&mut name).desired_width(180.0)).changed() {
-                        rename = Some((t.id, name));
-                    }
-                    if x_button(ui).on_hover_text("Delete this trainer").clicked() {
-                        delete = Some(t.id);
-                    }
-                });
-            }
-        });
-        if let Some(id) = pick {
-            self.setup.sim.setup.trainer = Some(id);
-        }
-        if let Some(tid) = from_team {
-            if let Some(t) = teams.iter().find(|t| t.id == tid) {
-                let id = self.setup.sim.new_id();
-                let tr = Trainer {
-                    id,
-                    name: if t.name.trim().is_empty() { "Trainer".into() } else { t.name.clone() },
-                    class: "Trainer".into(),
-                    world: t.world,
-                    members: t.members.clone(),
-                    updated: now_secs(),
-                    ..Default::default()
-                };
-                self.setup.sim.file().trainers.insert(0, tr);
-                self.setup.sim.setup.trainer = Some(id);
-                self.setup.sim.touch();
-            }
-        }
-        if let Some((id, name)) = rename {
-            if let Some(t) = self.setup.sim.file().trainers.iter_mut().find(|t| t.id == id) {
-                t.name = name;
-                t.updated = now_secs();
-            }
-            self.setup.sim.touch();
-        }
-        if let Some(id) = delete {
-            self.setup.sim.file().trainers.retain(|t| t.id != id);
-            if self.setup.sim.setup.trainer == Some(id) {
-                self.setup.sim.setup.trainer = None;
-            }
-            self.setup.sim.touch();
-        }
-    }
-
     /// Every ball's chance against the wild Pokémon, in this situation.
     fn sim_catch(&mut self, ui: &mut egui::Ui) {
         let s = self.setup.sim.setup.clone();
-        let Some(f) = s.foes.first().cloned() else { return };
+        let sel = if s.format == Format::Doubles && s.mode == Mode::Wild { self.setup.sim.foe.sel } else { 0 };
+        let Some(f) = s.foes.get(sel).or(s.foes.first()).cloned() else { return };
         let world = s.team.and_then(|id| self.setup.team.teams().teams.iter().find(|t| t.id == id).map(|t| t.world)).unwrap_or_default();
         let Some(sp) = battle::data().species(&f.species) else { return };
         let Some(rate) = sim::data().catch_rate(sp.num) else { return };
@@ -835,7 +682,14 @@ impl App {
                     let team = r.team.and_then(|id| teams.iter().find(|t| t.id == id)).map(|t| t.name.clone()).unwrap_or_else(|| "a deleted team".into());
                     let them = match r.mode {
                         Mode::Trainer => r.trainer.and_then(|id| trainers.iter().find(|t| t.id == id)).map(|t| t.name.clone()).unwrap_or_else(|| "a trainer".into()),
-                        _ => r.foes.iter().map(|f| format!("{} Lv {}", f.species, f.level)).collect::<Vec<_>>().join(" & "),
+                        _ => {
+                            let who = r.foes.iter().map(|f| format!("{} Lv {}", f.species, f.level)).collect::<Vec<_>>().join(" & ");
+                            if r.place.is_empty() {
+                                who
+                            } else {
+                                format!("{who} on {}", r.place)
+                            }
+                        }
                     };
                     let (icon, _, _, col) = mode_meta(r.mode);
                     let fmt = if r.format == Format::Doubles { " · doubles" } else { "" };
@@ -857,7 +711,7 @@ impl App {
 }
 
 /// One side of the board: a coloured edge and a heading.
-fn side_card(ui: &mut egui::Ui, col: Color32, title: &str, add: impl FnOnce(&mut egui::Ui)) {
+pub(super) fn side_card(ui: &mut egui::Ui, col: Color32, title: &str, add: impl FnOnce(&mut egui::Ui)) {
     let r = kit::card(ui, |ui| {
         ui.label(RichText::new(title).font(crate::fonts::sans_bold_font(11.0)).color(super::charts::ink(col)));
         ui.add_space(8.0);

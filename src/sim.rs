@@ -359,6 +359,92 @@ pub fn balls_for(p: f64, want: f64) -> Option<u32> {
     Some(((1.0 - want).ln() / (1.0 - p).ln()).ceil().max(1.0) as u32)
 }
 
+// ───────────────────────────── wild Pokémon ─────────────────────────────
+
+/// A small random number generator (xorshift64*), seeded so a roll can be
+/// repeated.
+#[derive(Clone, Copy, Debug)]
+pub struct Rng(u64);
+
+impl Rng {
+    pub fn new(seed: u64) -> Self {
+        Rng(seed.max(1) ^ 0x9E37_79B9_7F4A_7C15)
+    }
+
+    pub fn from_time() -> Self {
+        let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(7);
+        Rng::new(t)
+    }
+
+    pub fn next(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        self.0 = x;
+        x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+
+    /// 0..n
+    pub fn below(&mut self, n: u32) -> u32 {
+        if n == 0 {
+            0
+        } else {
+            (self.next() % n as u64) as u32
+        }
+    }
+
+    /// true with chance p (0–1).
+    pub fn chance(&mut self, p: f64) -> bool {
+        (self.next() >> 11) as f64 / (1u64 << 53) as f64 * 1.0 < p
+    }
+}
+
+/// "17–20" or "35" → (17, 20).
+pub fn parse_levels(s: &str) -> (u8, u8) {
+    let nums: Vec<u8> = s.split(|c: char| !c.is_ascii_digit()).filter_map(|x| x.parse().ok()).collect();
+    match nums.as_slice() {
+        [a, b, ..] => ((*a).min(*b).max(1), (*a).max(*b).min(100)),
+        [a] => ((*a).max(1), (*a).max(1)),
+        _ => (5, 5),
+    }
+}
+
+/// The moves a wild Pokémon knows: the last four it learned by levelling
+/// up at or below its level (oldest first, no repeats).
+pub fn wild_moves(learnset: &[(String, String)], level: u8) -> Vec<String> {
+    let mut known: Vec<String> = Vec::new();
+    for (lv, key) in learnset {
+        let Ok(l) = lv.trim().parse::<u8>() else { continue };
+        if l > level || key.is_empty() {
+            continue;
+        }
+        known.retain(|k| k != key);
+        known.push(key.clone());
+    }
+    let n = known.len();
+    known.split_off(n.saturating_sub(4))
+}
+
+/// Random IVs (0–31 each).
+pub fn random_ivs(rng: &mut Rng) -> [u16; 6] {
+    let mut v = [0u16; 6];
+    for x in &mut v {
+        *x = rng.below(32) as u16;
+    }
+    v
+}
+
+/// A gender for a wild one.
+pub fn random_gender(g: Gender, rng: &mut Rng) -> Option<char> {
+    match g {
+        Gender::Male => Some('M'),
+        Gender::Female => Some('F'),
+        Gender::None => None,
+        Gender::Ratio(m) => Some(if rng.chance(m as f64) { 'M' } else { 'F' }),
+    }
+}
+
 // ───────────────────────────── saved setups ─────────────────────────────
 
 /// What kind of battle.
@@ -430,6 +516,7 @@ pub struct Setup {
     pub foes: Vec<Member>,
     /// Where it was rolled from, when it came from a route.
     pub place: String,
+    pub method: String,
     pub trainer: Option<u64>,
     pub world: World,
     pub when: u64,
@@ -519,6 +606,28 @@ mod tests {
         assert_eq!(ball_mult(Ball::Nest, &s), 3.0);
         assert_eq!(ball_mult(Ball::Timer, &CatchSituation { turn: 40, ..s }), 4.0);
         assert_eq!(balls_for(0.5, 0.9), Some(4));
+    }
+
+    #[test]
+    fn wild() {
+        assert_eq!(parse_levels("32–35"), (32, 35));
+        assert_eq!(parse_levels("7"), (7, 7));
+        let ls: Vec<(String, String)> = [("1", "tackle"), ("3", "growl"), ("7", "leech_seed"), ("9", "vine_whip"), ("13", "poison_powder"), ("13", "sleep_powder"), ("15", "take_down")]
+            .iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect();
+        assert_eq!(wild_moves(&ls, 2), vec!["tackle"]);
+        assert_eq!(wild_moves(&ls, 13), vec!["leech_seed", "vine_whip", "poison_powder", "sleep_powder"]);
+        let mut r = Rng::new(42);
+        let ivs = random_ivs(&mut r);
+        assert!(ivs.iter().all(|v| *v <= 31));
+        let mut males = 0;
+        for _ in 0..1000 {
+            if random_gender(Gender::Ratio(0.875), &mut r) == Some('M') {
+                males += 1;
+            }
+        }
+        assert!((800..950).contains(&males), "{males}");
     }
 
     #[test]

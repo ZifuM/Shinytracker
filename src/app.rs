@@ -24,6 +24,7 @@ mod info_moves;
 mod info_items;
 mod info_places;
 mod info_story;
+mod sim_foes;
 mod sim_home;
 mod team_analysis;
 mod team_build;

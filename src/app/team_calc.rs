@@ -28,7 +28,7 @@ pub(super) struct Poke {
 }
 
 impl Poke {
-    fn new(set: Member, from: Option<usize>) -> Self {
+    pub(super) fn new(set: Member, from: Option<usize>) -> Self {
         Poke { set, boosts: [0; 6], hp: 1.0, status: Status::None, ability_on: false, from, crit: false }
     }
 }
@@ -65,7 +65,7 @@ fn default_foe(world: World) -> Member {
 }
 
 /// The calculator's view of a move.
-fn calc_move(w: Option<&Wiki>, name: &str, m: &Member, crit: bool) -> Option<calc::Move> {
+pub(super) fn calc_move(w: Option<&Wiki>, name: &str, m: &Member, crit: bool) -> Option<calc::Move> {
     let d = battle::data();
     let fx = d.move_fx(name);
     let info = w.and_then(|w| mkey(w, name).and_then(|k| w.move_info(&k)));
@@ -105,7 +105,7 @@ fn calc_move(w: Option<&Wiki>, name: &str, m: &Member, crit: bool) -> Option<cal
     })
 }
 
-fn calc_mon(p: &Poke, world: World) -> Option<calc::Mon> {
+pub(super) fn calc_mon(p: &Poke, world: World) -> Option<calc::Mon> {
     let d = battle::data();
     let sp = d.species(&p.set.species)?;
     let stats = p.set.final_stats(world)?;
