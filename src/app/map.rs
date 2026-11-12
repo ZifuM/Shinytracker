@@ -246,6 +246,54 @@ fn float_frame() -> egui::Frame {
         })
 }
 
+/// The Map's "Experimental" tag: a box exactly as tall as the search box
+/// and the layer tabs beside it, so the three line up.
+fn map_tag(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    let font = egui::FontId::proportional(kit::fs(12.0));
+    let ink = Color32::from_rgb(250, 214, 110);
+    let galley = ui.painter().layout_no_wrap(text.to_string(), font, ink);
+    let (r, resp) = ui.allocate_exact_size(Vec2::new(galley.size().x + 22.0, kit::CONTROL_H), Sense::hover());
+    ui.painter().rect_filled(r, 6.0, Color32::from_rgb(72, 56, 14));
+    ui.painter().galley(r.center() - galley.size() / 2.0, galley, ink);
+    resp
+}
+
+/// The Map's layer tabs: one grey box (the search box's grey and outline,
+/// the same height) with the tabs inside; the one showing is highlighted.
+fn map_tabs<T: PartialEq + Copy>(ui: &mut egui::Ui, value: &mut T, options: &[(T, &str)]) -> bool {
+    const INSET: f32 = 3.0;
+    const PAD: f32 = 12.0;
+    let font = egui::FontId::proportional(kit::fs(13.0));
+    let widths: Vec<f32> = options.iter().map(|(_, l)| ui.painter().layout_no_wrap(l.to_string(), font.clone(), TEXT()).size().x + 2.0 * PAD).collect();
+    let total = widths.iter().sum::<f32>() + 2.0 * INSET + 2.0 * (options.len().saturating_sub(1)) as f32;
+    let (track, _) = ui.allocate_exact_size(Vec2::new(total, kit::CONTROL_H), Sense::hover());
+    ui.painter().rect(track, 6.0, ui.visuals().extreme_bg_color, Stroke::new(1.0f32, kit::CONTROL()));
+    let mut changed = false;
+    let mut x = track.left() + INSET;
+    for ((v, label), w) in options.iter().zip(widths) {
+        let r = Rect::from_min_size(Pos2::new(x, track.top() + INSET), Vec2::new(w, kit::CONTROL_H - 2.0 * INSET));
+        x += w + 2.0;
+        let resp = ui.interact(r, ui.id().with(("map-layer-tab", *label)), Sense::click());
+        let selected = *value == *v;
+        let fill = if selected {
+            kit::SELECTED_BG()
+        } else if resp.hovered() {
+            kit::CARD_HOVER()
+        } else {
+            Color32::TRANSPARENT
+        };
+        ui.painter().rect_filled(r, 4.0, fill);
+        let col = if selected { TEXT() } else { MUTED() };
+        let galley = ui.painter().layout_no_wrap(label.to_string(), font.clone(), col);
+        ui.painter().galley(r.center() - galley.size() / 2.0, galley, col);
+        if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() && !selected {
+            *value = *v;
+            changed = true;
+        }
+    }
+    changed
+}
+
 /// Outline pieces between map squares that belong to different areas.
 fn world_edges(map: &GameMap) -> HashMap<u16, Vec<(Pos2, Pos2)>> {
     let m = map.world();
@@ -1218,7 +1266,6 @@ impl App {
                 // Each control sits straight on the map with just its own
                 // background (no panel around them); top aligned so search
                 // results can drop down.
-                const ROW_H: f32 = kit::CONTROL_H;
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
                     if let Area::Inside(z) = area {
@@ -1289,17 +1336,14 @@ impl App {
                             }
                     });
                     // the "Experimental" tag, floating on its own
-                    ui.allocate_ui_with_layout(Vec2::new(0.0, ROW_H), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        kit::pill(ui, "Experimental", PillKind::Warn)
-                            .on_hover_text("The Map is still being built: some things may be missing or wrong. Tell the dev if you spot something.");
-                    });
+                    map_tag(ui, "Experimental")
+                        .on_hover_text("The Map is still being built: some things may be missing or wrong. Tell the dev if you spot something.");
                     // layers (outdoors only)
                     if area == Area::World {
-                        // the same grey as the search box, under all the tabs
-                        egui::Frame::none().fill(ui.visuals().extreme_bg_color).rounding(8.0).show(ui, |ui| {
+                        {
                             {
                                 let mut layer = self.mapui.layer;
-                                if kit::segmented(
+                                if map_tabs(
                                     ui,
                                     &mut layer,
                                     &[
@@ -1314,7 +1358,7 @@ impl App {
                                     self.mapui.selected = None;
                                 }
                             }
-                        });
+                        }
                     }
                 });
                 if let Some(title) = &showing {
