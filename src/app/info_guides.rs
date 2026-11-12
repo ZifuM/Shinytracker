@@ -1099,6 +1099,7 @@ impl App {
         let mut back = false;
         let mut home = false;
         let mut lib = false;
+        let mut moves = false;
         ui.horizontal(|ui| {
             let label = format!("‹  {}", back_to.clone().unwrap_or_else(|| "Game Info".into()));
             back = ui.add(egui::Button::new(RichText::new(label).size(13.0)).fill(kit::btn_fill())).clicked();
@@ -1107,6 +1108,10 @@ impl App {
             ui.label(small("›"));
             if matches!(self.setup.info.page, Page::Guide(_)) {
                 lib = ui.link(RichText::new("How to Play").size(12.5)).clicked();
+                ui.label(small("›"));
+            }
+            if matches!(self.setup.info.page, Page::Move(_)) {
+                moves = ui.link(RichText::new("Moves").size(12.5)).clicked();
                 ui.label(small("›"));
             }
             ui.label(RichText::new(here).size(12.5).color(TEXT()));
@@ -1118,6 +1123,8 @@ impl App {
             self.info_push(Page::Home);
         } else if lib {
             self.info_push(Page::Guides);
+        } else if moves {
+            self.info_push(Page::Moves);
         }
     }
 
@@ -1125,6 +1132,8 @@ impl App {
         match p {
             Page::Home => "Game Info".into(),
             Page::Guides => "How to Play".into(),
+            Page::Moves => "Moves".into(),
+            Page::Move(k) => self.wiki.as_ref().and_then(|w| w.move_info(k).map(|m| m.n.clone())).unwrap_or_else(|| "Move".into()),
             Page::Guide(id) => self
                 .wiki
                 .as_ref()

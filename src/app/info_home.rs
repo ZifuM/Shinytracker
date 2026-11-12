@@ -89,6 +89,10 @@ pub(super) enum Page {
     Guides,
     /// One guide, by id.
     Guide(String),
+    /// Every move.
+    Moves,
+    /// One move, by key.
+    Move(String),
 }
 
 #[derive(Default)]
@@ -98,6 +102,8 @@ pub(super) struct InfoState {
     pub history: Vec<Page>,
     /// The guides library and reader.
     pub reader: super::info_guides::ReaderState,
+    /// The moves list and move pages.
+    pub moves: super::info_moves::MovesState,
     pub query: String,
     /// Only this kind in the results; with no query, list all of it.
     pub kind: Option<Kind>,
@@ -347,6 +353,8 @@ impl App {
         match self.setup.info.page.clone() {
             Page::Guides => return self.page_guides(ui, &w),
             Page::Guide(id) => return self.page_guide(ui, &w, &id),
+            Page::Moves => return self.page_moves(ui, &w),
+            Page::Move(k) => return self.page_move(ui, &w, &k),
             Page::Home => {}
         }
         kit::page_header(
@@ -415,6 +423,7 @@ impl App {
                         let tip = match k {
                             Kind::Pokemon => "Open the Pokédex".to_string(),
                             Kind::Guide => "Open How to Play".to_string(),
+                            Kind::Move => "Open Moves".to_string(),
                             _ => format!("List every {}", k.one()),
                         };
                         if resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
@@ -452,6 +461,8 @@ impl App {
                 self.info_open_dex(None);
             } else if k == Kind::Guide && self.setup.info.query.trim().is_empty() {
                 self.info_push(Page::Guides);
+            } else if k == Kind::Move && self.setup.info.query.trim().is_empty() {
+                self.info_push(Page::Moves);
             } else {
                 let s = &mut self.setup.info;
                 if s.kind == Some(k) && s.query.trim().is_empty() {
@@ -514,6 +525,12 @@ impl App {
             if h.kind == Kind::Pokemon {
                 let id = h.key.clone();
                 self.info_open_dex(Some(id));
+            } else if h.kind == Kind::Move {
+                let k = h.key.clone();
+                self.info_push(Page::Move(k));
+            } else if h.kind == Kind::Guide {
+                let id = h.key.clone();
+                self.info_read(&id, None, None);
             } else {
                 self.setup.info.pick = Some((h.kind, h.key.clone()));
             }
@@ -802,7 +819,7 @@ impl App {
     }
 
     /// The app's species for a wiki name (for sprites).
-    fn info_species(&self, name: &str) -> Option<crate::species::Species> {
+    pub(super) fn info_species(&self, name: &str) -> Option<crate::species::Species> {
         let want = wiki::slug(name);
         self.species.iter().find(|s| wiki::slug(s.name) == want).cloned()
     }
@@ -813,13 +830,20 @@ impl App {
         let mut go: Option<(Kind, String)> = None;
         let mut dex: Option<String> = None;
         let mut read: Option<(String, Option<usize>)> = None;
+        let mut open_move: Option<String> = None;
         kit::card(ui, |ui| match cur.0 {
             Kind::Pokemon => {
                 if let Some(m) = w.mon(&cur.1).cloned() {
                     self.look_mon(ui, w, &m, &mut go, &mut dex);
                 }
             }
-            Kind::Move => look_move(ui, w, &cur.1, &mut go),
+            Kind::Move => {
+                look_move(ui, w, &cur.1, &mut go);
+                ui.add_space(12.0);
+                if ui.add(egui::Button::new(RichText::new("Open the move's page  ›").size(13.0)).fill(kit::btn_fill())).on_hover_text("Who learns it and how, what it hits, and moves like it").clicked() {
+                    open_move = Some(cur.1.clone());
+                }
+            }
             Kind::Item => look_item(ui, w, &cur.1, &mut go),
             Kind::Place => self.look_place(ui, w, &cur.1, &mut go),
             Kind::Guide => {
@@ -830,6 +854,9 @@ impl App {
         });
         if let Some((id, sec)) = read {
             self.info_read(&id, sec, None);
+        }
+        if let Some(k) = open_move {
+            self.info_push(Page::Move(k));
         }
         if let Some(p) = go {
             // jump to it: make sure it's in the list
@@ -1264,6 +1291,7 @@ impl App {
                 let hint = match k {
                     Kind::Pokemon => "Pokédex",
                     Kind::Guide => "How to Play",
+                    Kind::Move => "Moves",
                     _ => "List",
                 };
                 let g = p.layout_no_wrap(hint.to_string(), crate::fonts::sans_font(11.5), MUTED());
@@ -1279,6 +1307,7 @@ impl App {
         match go {
             Some(Kind::Pokemon) => self.info_open_dex(None),
             Some(Kind::Guide) => self.info_push(Page::Guides),
+            Some(Kind::Move) => self.info_push(Page::Moves),
             Some(k) => {
                 let s = &mut self.setup.info;
                 s.query.clear();
@@ -1651,11 +1680,12 @@ fn look_item(ui: &mut egui::Ui, w: &Wiki, id: &str, go: &mut Option<(Kind, Strin
     ui.add(egui::Label::new(RichText::new(&it.description).size(13.0).color(TEXT())).wrap());
     ui.add_space(10.0);
     if !it.teaches.is_empty() {
-        if let Some(m) = w.move_info(&it.teaches) {
+        let key = w.move_key(&it.teaches);
+        if let Some((k, m)) = key.as_ref().and_then(|k| w.move_info(k).map(|m| (k.clone(), m))) {
             ui.horizontal(|ui| {
                 ui.label(small("Teaches"));
                 if link_chip(ui, &m.n, Kind::Move.color()).clicked() {
-                    *go = Some((Kind::Move, it.teaches.clone()));
+                    *go = Some((Kind::Move, k.clone()));
                 }
             });
             ui.add_space(10.0);

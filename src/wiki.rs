@@ -449,6 +449,15 @@ impl Wiki {
         self.data.moves.get(key)
     }
 
+    /// A move's key from its key or its name ("Focus Punch" → "focus_punch").
+    pub fn move_key(&self, name_or_key: &str) -> Option<String> {
+        if self.data.moves.contains_key(name_or_key) {
+            return Some(name_or_key.to_string());
+        }
+        let want = slug(name_or_key);
+        self.data.moves.iter().find(|(_, m)| slug(&m.n) == want).map(|(k, _)| k.clone())
+    }
+
     /// The wiki page for a Pokémon.
     /// The guides in the wiki's order.
     pub fn guides_sorted(&self) -> Vec<&Guide> {
