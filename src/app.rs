@@ -17,6 +17,7 @@ mod catch_spots;
 mod dex_tabs;
 mod extras;
 mod home;
+mod info_home;
 mod hunt_pages;
 mod notices;
 mod onboarding;
@@ -78,6 +79,7 @@ enum Tab {
     Shiny,
     Pokedex,
     Map,
+    Info,
     Profile,
     Stats,
     Dex,
@@ -160,6 +162,8 @@ struct Setup {
     /// the Pokédex (e.g. from Stats).
     trophy_back: Option<Tab>,
     pokedex: pokedex::DexState,
+    /// Game Info: search, filters and the open result.
+    info: info_home::InfoState,
     /// "Hunt it on rare grass?" after picking a target that's there today.
     rare_offer: Option<rare::RareOffer>,
     /// Apps in the sidebar whose pages are folded away.
@@ -512,6 +516,7 @@ impl App {
                 shelf_all: false,
                 trophy_back: None,
                 pokedex: Default::default(),
+                info: Default::default(),
                 rare_offer: None,
                 // Apps start folded; clicking one opens its pages.
                 nav_collapsed: vec![Tab::Shiny],

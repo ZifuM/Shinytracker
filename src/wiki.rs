@@ -13,6 +13,8 @@ use std::time::{Duration, SystemTime};
 pub const URL: &str = "https://platinumtogether.online/wiki/data/wiki.json";
 /// A Pokémon's page on the wiki: `#/pokemon/<slug of its name>`.
 pub const PAGE_BASE: &str = "https://platinumtogether.online/wiki/#/pokemon/";
+/// A how-to-play guide on the wiki: `#/guide/<id>`.
+pub const GUIDE_BASE: &str = "https://platinumtogether.online/wiki/#/guide/";
 const REFRESH_AFTER: Duration = Duration::from_secs(24 * 3600);
 
 /// The copy built into the exe (`{}` if the build couldn't fetch one).
@@ -54,6 +56,100 @@ pub struct WikiFile {
     pub tutors: HashMap<String, Tutor>,
     /// Short explanations the wiki shows (keys like "chances", "radar").
     pub text: HashMap<String, String>,
+    /// The front page's news (gifts, the latest version).
+    pub home: Home,
+    pub items: Vec<Item>,
+    /// How-to-play guides (markdown bodies).
+    pub guides: Vec<Guide>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Home {
+    #[serde(deserialize_with = "lenient")]
+    pub title: String,
+    #[serde(deserialize_with = "lenient")]
+    pub intro: String,
+    pub notices: Vec<Notice>,
+}
+
+/// A news line: bold `title`, `text`, and a link (`#/guide/<id>`) called `label`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Notice {
+    #[serde(deserialize_with = "lenient")]
+    pub title: String,
+    #[serde(deserialize_with = "lenient")]
+    pub text: String,
+    #[serde(deserialize_with = "lenient")]
+    pub url: String,
+    #[serde(deserialize_with = "lenient")]
+    pub label: String,
+}
+
+impl Notice {
+    /// The guide it links to (`#/guide/claim-gifts` → "claim-gifts").
+    pub fn guide(&self) -> Option<&str> {
+        self.url.strip_prefix("#/guide/").filter(|g| !g.is_empty())
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Item {
+    /// e.g. "ITEM_MASTER_BALL".
+    #[serde(deserialize_with = "lenient")]
+    pub id: String,
+    #[serde(deserialize_with = "lenient")]
+    pub name: String,
+    /// Bag pocket: "Items", "Medicine", "Poké Balls", "TMs & HMs", "Berries", ...
+    #[serde(deserialize_with = "lenient")]
+    pub pocket: String,
+    #[serde(deserialize_with = "lenient")]
+    pub description: String,
+    /// Shop price (0 = can't be bought).
+    #[serde(deserialize_with = "lenient")]
+    pub price: String,
+    /// A TM/HM's move key.
+    #[serde(rename = "move", deserialize_with = "lenient")]
+    pub teaches: String,
+    #[serde(rename = "where")]
+    pub found: Vec<ItemSpot>,
+}
+
+/// One place an item turns up: how (Ground, Hidden, Gift, Shop, Held, ...), where, details.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ItemSpot {
+    #[serde(deserialize_with = "lenient")]
+    pub how: String,
+    #[serde(deserialize_with = "lenient")]
+    pub place: String,
+    #[serde(deserialize_with = "lenient")]
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Guide {
+    #[serde(deserialize_with = "lenient")]
+    pub id: String,
+    #[serde(deserialize_with = "lenient")]
+    pub title: String,
+    #[serde(deserialize_with = "lenient")]
+    pub summary: String,
+    /// Topic: "Getting started", "Playing together", "Online", ...
+    #[serde(deserialize_with = "lenient")]
+    pub group: String,
+    pub order: i64,
+    #[serde(deserialize_with = "lenient")]
+    pub body: String,
+    /// Short title for lists.
+    #[serde(deserialize_with = "lenient")]
+    pub short: String,
+    /// Icon name: bag, spark, download, map, flag, pad, people, globe, ...
+    #[serde(deserialize_with = "lenient")]
+    pub icon: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -354,6 +450,17 @@ impl Wiki {
     }
 
     /// The wiki page for a Pokémon.
+    /// The guides in the wiki's order.
+    pub fn guides_sorted(&self) -> Vec<&Guide> {
+        let mut g: Vec<&Guide> = self.data.guides.iter().collect();
+        g.sort_by_key(|g| g.order);
+        g
+    }
+
+    pub fn guide(&self, id: &str) -> Option<&Guide> {
+        self.data.guides.iter().find(|g| g.id == id)
+    }
+
     pub fn page_url(&self, m: &Mon) -> String {
         format!("{PAGE_BASE}{}", slug(&m.name))
     }
@@ -424,31 +531,83 @@ fn download() -> Result<Vec<u8>, String> {
 /// sent down the channel as it's ready.
 pub fn start() -> Receiver<Arc<Wiki>> {
     let (tx, rx) = std::sync::mpsc::channel();
-    let _ = std::thread::Builder::new().name("wiki".into()).spawn(move || run(tx));
+    let _ = std::thread::Builder::new().name("wiki".into()).spawn(move || run(tx, false));
     rx
 }
 
-fn run(tx: Sender<Arc<Wiki>>) {
+/// Like `start`, but always asks the wiki for a fresh copy ("Check now").
+/// Sends the copy it ends up with, new or not, so the caller knows it's done.
+pub fn start_refresh() -> Receiver<Arc<Wiki>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let _ = std::thread::Builder::new().name("wiki".into()).spawn(move || run(tx, true));
+    rx
+}
+
+/// How long ago the downloaded copy was last fetched (None: never).
+pub fn cache_age() -> Option<Duration> {
+    std::fs::metadata(cache_file())
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| SystemTime::now().duration_since(t).ok())
+}
+
+/// The last check with the wiki: when, and whether it brought a newer copy
+/// (Err: why it couldn't). `running` while a check is under way.
+#[derive(Clone, Default)]
+pub struct CheckState {
+    pub running: bool,
+    pub last: Option<(SystemTime, Result<bool, String>)>,
+}
+
+fn check_cell() -> &'static std::sync::Mutex<CheckState> {
+    static CELL: std::sync::OnceLock<std::sync::Mutex<CheckState>> = std::sync::OnceLock::new();
+    CELL.get_or_init(Default::default)
+}
+
+pub fn check_state() -> CheckState {
+    check_cell().lock().map(|g| g.clone()).unwrap_or_default()
+}
+
+fn set_check(running: bool, result: Option<Result<bool, String>>) {
+    if let Ok(mut g) = check_cell().lock() {
+        g.running = running;
+        if let Some(r) = result {
+            g.last = Some((SystemTime::now(), r));
+        }
+    }
+}
+
+fn run(tx: Sender<Arc<Wiki>>, force: bool) {
     let local = best_local();
     let have = local.version_key();
     let had_any = !local.is_empty();
     if had_any && tx.send(Arc::new(local)).is_err() {
         return;
     }
-    if cache_is_fresh() {
+    if cache_is_fresh() && !force {
         return;
     }
-    let Ok(bytes) = download() else { return };
-    let Ok(fresh) = Wiki::parse(&bytes) else { return };
-    if fresh.is_empty() {
-        return;
-    }
+    set_check(true, None);
+    let bytes = match download() {
+        Ok(b) => b,
+        Err(e) => return set_check(false, Some(Err(format!("Couldn't reach the wiki ({e})")))),
+    };
+    let fresh = match Wiki::parse(&bytes) {
+        Ok(f) if !f.is_empty() => f,
+        _ => return set_check(false, Some(Err("The wiki sent something unreadable".into()))),
+    };
     let path = cache_file();
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let _ = std::fs::write(&path, &bytes);
-    if !had_any || fresh.version_key() != have {
+    // write beside it, then swap, so a crash never leaves half a file
+    let tmp = path.with_extension("json.part");
+    if std::fs::write(&tmp, &bytes).is_ok() && std::fs::rename(&tmp, &path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    let newer = fresh.version_key() != have;
+    set_check(false, Some(Ok(newer)));
+    if !had_any || force || newer {
         let _ = tx.send(Arc::new(fresh));
     }
 }

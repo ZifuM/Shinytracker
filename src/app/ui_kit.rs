@@ -567,30 +567,44 @@ pub fn settings_style(ui: &mut Ui) {
 /// Search box. In the clean look it gets a magnifier icon and the standard
 /// 30px control height; `width` = f32::INFINITY fills the row.
 pub fn search_box(ui: &mut Ui, text: &mut String, hint: &str, width: f32) -> Response {
+    search_box_keyed(ui, None, text, hint, width)
+}
+
+fn keyed(key: Option<egui::Id>, te: egui::TextEdit<'_>) -> egui::TextEdit<'_> {
+    match key {
+        Some(id) => te.id(id),
+        None => te,
+    }
+}
+
+/// `search_box` with a fixed id, so it keeps focus when things around it change.
+pub fn search_box_keyed(ui: &mut Ui, key: Option<egui::Id>, text: &mut String, hint: &str, width: f32) -> Response {
     if !clean() {
-        return ui.add(
+        return ui.add(keyed(
+            key,
             egui::TextEdit::singleline(text)
                 .hint_text(hint)
                 .desired_width(width)
                 .min_size(egui::vec2(0.0, CONTROL_H))
                 .vertical_align(egui::Align::Center)
                 .margin(egui::Margin::symmetric(8.0, 5.0)),
-        );
+        ));
     }
     if modern() {
-        return modern::search_box(ui, text, hint, width);
+        return modern::search_box(ui, key, text, hint, width);
     }
     // Where the box's left edge will be. (The response rect is the text area
     // inside the margin, so the icon is placed from here instead.)
     let left = ui.cursor().min.x;
-    let resp = ui.add(
+    let resp = ui.add(keyed(
+        key,
         egui::TextEdit::singleline(text)
             .hint_text(RichText::new(hint).color(MUTED()))
             .desired_width(width)
             .min_size(egui::vec2(0.0, CONTROL_H))
             .vertical_align(egui::Align::Center)
             .margin(egui::Margin { left: 32.0, right: 8.0, top: 5.0, bottom: 5.0 }),
-    );
+    ));
     // magnifier: a ring and a short handle
     let c = egui::pos2(left + 14.0, resp.rect.center().y - 1.0);
     let col = if resp.has_focus() { TEXT() } else { MUTED() };
@@ -1779,7 +1793,7 @@ pub(crate) mod modern {
 
     /// Cirrus search: a Cloud pill with a hairline, a Mist magnifier, and
     /// the Signal ring while typing.
-    pub fn search_box(ui: &mut Ui, text: &mut String, hint: &str, width: f32) -> Response {
+    pub fn search_box(ui: &mut Ui, key: Option<egui::Id>, text: &mut String, hint: &str, width: f32) -> Response {
         let h = CONTROL_H + 4.0;
         let left = ui.cursor().min.x;
         let resp = ui
@@ -1789,14 +1803,16 @@ pub(crate) mod modern {
                     x.rounding = egui::Rounding::same(h / 2.0);
                 }
                 ui.visuals_mut().selection.stroke = Stroke::NONE;
-                ui.add(
-                    egui::TextEdit::singleline(text)
-                        .hint_text(RichText::new(hint).color(theme::blend(MUTED(), CARD(), 0.25)))
-                        .desired_width(width)
-                        .min_size(egui::vec2(0.0, h))
-                        .vertical_align(egui::Align::Center)
-                        .margin(egui::Margin { left: 38.0, right: 14.0, top: 6.0, bottom: 6.0 }),
-                )
+                let te = egui::TextEdit::singleline(text)
+                    .hint_text(RichText::new(hint).color(theme::blend(MUTED(), CARD(), 0.25)))
+                    .desired_width(width)
+                    .min_size(egui::vec2(0.0, h))
+                    .vertical_align(egui::Align::Center)
+                    .margin(egui::Margin { left: 38.0, right: 14.0, top: 6.0, bottom: 6.0 });
+                ui.add(match key {
+                    Some(id) => te.id(id),
+                    None => te,
+                })
             })
             .inner;
         let frame = Rect::from_min_max(egui::pos2(left, resp.rect.min.y), egui::pos2(resp.rect.max.x + 14.0, resp.rect.max.y));

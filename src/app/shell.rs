@@ -31,6 +31,7 @@ pub(super) fn tab_meta(t: Tab) -> (&'static str, &'static str, Color32) {
         Tab::Overlay => ("🖵", "Overlay", kit::C_INDIGO),
         Tab::Pokedex => ("📖", "Pokédex", kit::C_RED),
         Tab::Map => ("🗺", "Map", kit::C_GREEN),
+        Tab::Info => ("📚", "Game Info", kit::C_ORANGE),
         Tab::Appearance => ("🎨", "Appearance", kit::C_PINK),
         Tab::Hotkeys => ("⌨", "Hotkeys", kit::C_SLATE),
         Tab::Advanced => ("⚙", "Advanced", kit::C_SLATE),
@@ -38,7 +39,7 @@ pub(super) fn tab_meta(t: Tab) -> (&'static str, &'static str, Color32) {
 }
 
 /// Sidebar entries: (group heading, page, parent app).
-const NAV: [(Option<&str>, Tab, Option<Tab>); 13] = [
+const NAV: [(Option<&str>, Tab, Option<Tab>); 14] = [
     (None, Tab::Home, None),
     (None, Tab::Profile, None),
     (None, Tab::Stats, None),
@@ -49,6 +50,7 @@ const NAV: [(Option<&str>, Tab, Option<Tab>); 13] = [
     (None, Tab::Overlay, Some(Tab::Shiny)),
     (None, Tab::Pokedex, None),
     (None, Tab::Map, None),
+    (None, Tab::Info, None),
     (Some("SETTINGS"), Tab::Appearance, None),
     (None, Tab::Hotkeys, None),
     (None, Tab::Advanced, None),
