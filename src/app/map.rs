@@ -221,6 +221,8 @@ pub(super) struct MapState {
     pub rare: Vec<Rare>,
     /// Result of saving the shared rare grass file.
     export_msg: Option<String>,
+    /// The rare grass infographic window, while it's open.
+    pub poster: Option<super::rare_poster::PosterView>,
     rare_asked: Option<Instant>,
     /// Outline pieces of each outdoor area (tile coordinates).
     edges: HashMap<u16, Vec<(Pos2, Pos2)>>,
@@ -1213,86 +1215,103 @@ impl App {
             .fixed_pos(rect.min + Vec2::splat(pad))
             .show(&ctx, |ui| {
                 kit::settings_style(ui);
-                float_frame().show(ui, |ui| {
-                    // One fixed-height row with everything centred in it
-                    // (a plain row lines items up against the first one's
-                    // height, so the taller layer switch sat lower).
-                    ui.horizontal(|ui| {
-                        ui.set_min_height(38.0);
-                        ui.spacing_mut().item_spacing.x = 10.0;
-                        if let Area::Inside(z) = area {
-                            if ui.button("‹  Outdoors").on_hover_text("Back to the Sinnoh map").clicked() {
-                                leave_inside = true;
-                            }
-                            // Other floors / rooms of the same place.
-                            if floors.len() > 1 {
-                                egui::ComboBox::from_id_salt("map-floor").selected_text(floor_now.as_str()).width(200.0).show_ui(ui, |ui| {
-                                    for (f, label) in &floors {
-                                        if ui.selectable_label(*f == z, label.as_str()).clicked() {
-                                            go_zone = Some(*f);
+                // Each control sits straight on the map with just its own
+                // background (no panel around them); top aligned so search
+                // results can drop down.
+                const ROW_H: f32 = kit::CONTROL_H;
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    if let Area::Inside(z) = area {
+                        egui::Frame::none().show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.set_min_height(kit::CONTROL_H);
+                                if ui.button("‹  Outdoors").on_hover_text("Back to the Sinnoh map").clicked() {
+                                    leave_inside = true;
+                                }
+                                // Other floors / rooms of the same place.
+                                if floors.len() > 1 {
+                                    egui::ComboBox::from_id_salt("map-floor").selected_text(floor_now.as_str()).width(200.0).show_ui(ui, |ui| {
+                                        for (f, label) in &floors {
+                                            if ui.selectable_label(*f == z, label.as_str()).clicked() {
+                                                go_zone = Some(*f);
+                                            }
                                         }
+                                    });
+                                }
+                            });
+                        });
+                    }
+                    // the search box on its own; results drop down in a card under it
+                    ui.vertical(|ui| {
+                        ui.set_max_width(260.0);
+                        kit::search_box(ui, &mut self.mapui.search, "Find a place or Pokémon…", 210.0);
+                            if !q.is_empty() {
+                                ui.add_space(4.0);
+                                float_frame().show(ui, |ui| {
+                                ui.set_width(236.0);
+                                if hits.is_empty() && mon_hits.is_empty() {
+                                    ui.label(RichText::new("No place or Pokémon by that name.").size(kit::fs(12.0)).color(MUTED()));
+                                }
+                                let head = |ui: &mut egui::Ui, t: &str| {
+                                    ui.label(RichText::new(t).size(kit::fs(10.5)).strong().color(MUTED()));
+                                };
+                                if !hits.is_empty() {
+                                    head(ui, "PLACES");
+                                }
+                                for (label, id) in hits.iter().take(if mon_hits.is_empty() { 10 } else { 6 }) {
+                                    if ui
+                                        .add(egui::Button::new(RichText::new(label).size(kit::fs(12.5))).frame(false))
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .clicked()
+                                    {
+                                        go_hit = Some(*id);
                                     }
+                                }
+                                if !mon_hits.is_empty() {
+                                    if !hits.is_empty() {
+                                        ui.add_space(4.0);
+                                    }
+                                    head(ui, "POKÉMON");
+                                }
+                                for (label, name, places) in mon_hits.iter().take(if hits.is_empty() { 10 } else { 6 }) {
+                                    let wild = !places.is_empty();
+                                    let b = egui::Button::new(RichText::new(label).size(kit::fs(12.5)).color(if wild { TEXT() } else { MUTED() })).frame(false);
+                                    let r = ui
+                                        .add_enabled(wild, b)
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .on_hover_text("Show everywhere it lives in the wild")
+                                        .on_disabled_hover_text("Not found in the wild");
+                                    if r.clicked() {
+                                        go_mon = Some((name.clone(), places.clone()));
+                                    }
+                                }
                                 });
                             }
-                        }
-                        kit::search_box(ui, &mut self.mapui.search, "Find a place or Pokémon…", 210.0);
+                    });
+                    // the "Experimental" tag, floating on its own
+                    ui.allocate_ui_with_layout(Vec2::new(0.0, ROW_H), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         kit::pill(ui, "Experimental", PillKind::Warn)
                             .on_hover_text("The Map is still being built: some things may be missing or wrong. Tell the dev if you spot something.");
-                        // Layers, at the right end of the bar (outdoors only).
-                        if area == Area::World {
-                            let mut layer = self.mapui.layer;
-                            if kit::segmented(
-                                ui,
-                                &mut layer,
-                                &[
-                                    (Layer::Overworld, "Overworld"),
-                                    (Layer::Caves, "Caves"),
-                                    (Layer::Ruins, "Ruins"),
-                                    (Layer::Side, "Side areas"),
-                                ],
-                            ) {
-                                self.mapui.layer = layer;
-                                self.mapui.layer_fit = true;
-                                self.mapui.selected = None;
-                            }
-                        }
                     });
-                    if !q.is_empty() {
-                        ui.add_space(6.0);
-                        if hits.is_empty() && mon_hits.is_empty() {
-                            ui.label(RichText::new("No place or Pokémon by that name.").size(kit::fs(12.0)).color(MUTED()));
-                        }
-                        let head = |ui: &mut egui::Ui, t: &str| {
-                            ui.label(RichText::new(t).size(kit::fs(10.5)).strong().color(MUTED()));
-                        };
-                        if !hits.is_empty() {
-                            head(ui, "PLACES");
-                        }
-                        for (label, id) in hits.iter().take(if mon_hits.is_empty() { 10 } else { 6 }) {
-                            if ui
-                                .add(egui::Button::new(RichText::new(label).size(kit::fs(12.5))).frame(false))
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .clicked()
+                    // layers (outdoors only)
+                    if area == Area::World {
+                        {
                             {
-                                go_hit = Some(*id);
-                            }
-                        }
-                        if !mon_hits.is_empty() {
-                            if !hits.is_empty() {
-                                ui.add_space(4.0);
-                            }
-                            head(ui, "POKÉMON");
-                        }
-                        for (label, name, places) in mon_hits.iter().take(if hits.is_empty() { 10 } else { 6 }) {
-                            let wild = !places.is_empty();
-                            let b = egui::Button::new(RichText::new(label).size(kit::fs(12.5)).color(if wild { TEXT() } else { MUTED() })).frame(false);
-                            let r = ui
-                                .add_enabled(wild, b)
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .on_hover_text("Show everywhere it lives in the wild")
-                                .on_disabled_hover_text("Not found in the wild");
-                            if r.clicked() {
-                                go_mon = Some((name.clone(), places.clone()));
+                                let mut layer = self.mapui.layer;
+                                if kit::segmented(
+                                    ui,
+                                    &mut layer,
+                                    &[
+                                        (Layer::Overworld, "Overworld"),
+                                        (Layer::Caves, "Caves"),
+                                        (Layer::Ruins, "Ruins"),
+                                        (Layer::Side, "Side areas"),
+                                    ],
+                                ) {
+                                    self.mapui.layer = layer;
+                                    self.mapui.layer_fit = true;
+                                    self.mapui.selected = None;
+                                }
                             }
                         }
                     }
@@ -1359,6 +1378,7 @@ impl App {
             });
 
         // ── floating: today's rare grass (right), folds away to a tab
+        let mut open_poster = false;
         if !spots.is_empty() {
             let mut toggle = false;
             let at = rect.right_top() + Vec2::new(-pad, pad);
@@ -1370,9 +1390,18 @@ impl App {
                     .show(&ctx, |ui| {
                         kit::settings_style(ui);
                         float_frame().inner_margin(egui::Margin::same(4.0)).show(ui, |ui| {
-                            if fold_tab(ui, &format!("✨ Rare grass today ({})", spots.len()), false, "Show today's rare grass list") {
-                                toggle = true;
-                            }
+                            ui.horizontal(|ui| {
+                                if fold_tab(ui, &format!("✨ Rare grass today ({})", spots.len()), false, "Show today's rare grass list") {
+                                    toggle = true;
+                                }
+                                if ui
+                                    .add(egui::Button::new(RichText::new("📷").size(kit::fs(13.0))).fill(kit::btn_fill()).min_size(Vec2::new(28.0, 26.0)))
+                                    .on_hover_text("Share today's rare grass as an image (the infographic)")
+                                    .clicked()
+                                {
+                                    open_poster = true;
+                                }
+                            });
                         });
                     });
             } else {
@@ -1396,6 +1425,17 @@ impl App {
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     // Save today's list as the shared file (for the dev to
                                     // put on GitHub so everyone gets it).
+                                    if ui
+                                        .add(
+                                            egui::Button::new(RichText::new("📷  Infographic").size(kit::fs(12.0)))
+                                                .fill(kit::btn_fill())
+                                                .min_size(Vec2::new(28.0, 26.0)),
+                                        )
+                                        .on_hover_text("Share today's rare grass as an image: the map with every spot, the reset time around the world, the top 3 and where to find them")
+                                        .clicked()
+                                    {
+                                        open_poster = true;
+                                    }
                                     if ui
                                         .add(
                                             egui::Button::new(RichText::new("⬇").size(kit::fs(13.0)))
@@ -1425,6 +1465,9 @@ impl App {
             if toggle {
                 self.mapui.rare_collapsed = !self.mapui.rare_collapsed;
             }
+        }
+        if open_poster {
+            self.open_rare_poster(&ctx);
         }
 
         if clear_hl {
@@ -1965,7 +2008,9 @@ impl App {
             // (map, tiles, species)
             let mut groups: Vec<(u16, Vec<Pos2>, Vec<u32>)> = Vec::new();
             for r in &rare {
-                let Some(sp) = r.species else { continue };
+                // Only tiles where a Pokémon we know was met: no pings for
+                // "rare grass around here" scans or unknown species.
+                let Some(sp) = r.species.filter(|&sp| self.rare_species(&map, sp).is_some()) else { continue };
                 let t = Pos2::new(r.x as f32 + 0.5, r.y as f32 + 0.5);
                 match groups
                     .iter_mut()

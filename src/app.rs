@@ -24,6 +24,7 @@ mod map;
 mod overlay_mod;
 mod pokedex;
 mod rare;
+mod rare_poster;
 mod settings;
 mod trainer;
 mod ui_kit;
@@ -2556,6 +2557,7 @@ impl eframe::App for App {
         // The launcher is the main window.
         self.launcher_ui(ctx);
         self.rare_offer_window(ctx);
+        self.rare_poster_window(ctx);
         // The overlay is its own always-on-top window while it's started.
         if self.overlay_on && !self.ov_hidden {
             self.overlay_viewport(ctx);

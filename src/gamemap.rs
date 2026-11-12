@@ -987,46 +987,23 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     era * 146097 + doe - 719468
 }
 
-fn civil_from_days(z: i64) -> (i64, i64, i64) {
-    let z = z + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    (if m <= 2 { y + 1 } else { y }, m, d)
-}
-
-/// Last Sunday of a month (day number since 1970).
-fn last_sunday(y: i64, m: i64) -> i64 {
-    let first_next = if m == 12 { days_from_civil(y + 1, 1, 1) } else { days_from_civil(y, m + 1, 1) };
-    let last = first_next - 1;
-    // 1970-01-01 was a Thursday (weekday 4, Sunday = 0)
-    let wd = (last + 4).rem_euclid(7);
-    last - wd
+/// Unix time of midnight, Central European time, at the start of a day
+/// (days since 1970 on the server's calendar). Summer time never changes
+/// near midnight, so the offset an hour before is the one at midnight.
+fn server_midnight(day: i64) -> i64 {
+    day * 86400 - crate::worldclock::SERVER.offset_at(day * 86400 - 3600)
 }
 
 /// Unix time of the last daily reset: midnight, Central European time.
 pub fn last_reset(now_unix: i64) -> i64 {
-    let (y, _, _) = civil_from_days(now_unix.div_euclid(86400));
-    let dst_on = last_sunday(y, 3) * 86400 + 3600;
-    let dst_off = last_sunday(y, 10) * 86400 + 3600;
-    let offset = if now_unix >= dst_on && now_unix < dst_off { 7200 } else { 3600 };
-    let local = now_unix + offset;
-    local.div_euclid(86400) * 86400 - offset
+    let off = crate::worldclock::SERVER.offset_at(now_unix);
+    server_midnight((now_unix + off).div_euclid(86400))
 }
 
 /// Unix time of the next daily reset.
 pub fn next_reset(now_unix: i64) -> i64 {
-    // a day after the last one, give or take a DST change
-    let mut t = last_reset(now_unix) + 86400;
-    if last_reset(t + 7200) != t {
-        t = last_reset(t + 7200);
-    }
-    t
+    let off = crate::worldclock::SERVER.offset_at(now_unix);
+    server_midnight((now_unix + off).div_euclid(86400) + 1)
 }
 
 /// "session-20261111-110446.log" → unix time as if that local time were UTC.
@@ -1284,8 +1261,14 @@ mod tests {
         // summer: 2026-07-01 12:00 UTC → 2026-06-30 22:00 UTC (CEST, +2)
         let t = days_from_civil(2026, 7, 1) * 86400 + 12 * 3600;
         assert_eq!(last_reset(t), days_from_civil(2026, 6, 30) * 86400 + 22 * 3600);
-        assert_eq!(civil_from_days(days_from_civil(2026, 3, 29)), (2026, 3, 29));
-        assert_eq!(last_sunday(2026, 3), days_from_civil(2026, 3, 29));
+        // the day summer time starts: 2026-03-29 12:00 UTC → midnight was
+        // still CET (2026-03-28 23:00 UTC), and the next one is CEST
+        let t = days_from_civil(2026, 3, 29) * 86400 + 12 * 3600;
+        assert_eq!(last_reset(t), days_from_civil(2026, 3, 28) * 86400 + 23 * 3600);
+        assert_eq!(next_reset(t), days_from_civil(2026, 3, 29) * 86400 + 22 * 3600);
+        // the day before it ends: next midnight is still CEST
+        let t = days_from_civil(2026, 10, 24) * 86400 + 12 * 3600;
+        assert_eq!(next_reset(t), days_from_civil(2026, 10, 24) * 86400 + 22 * 3600);
     }
 
     #[test]

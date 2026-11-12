@@ -16,6 +16,8 @@ mod hotkeys;
 mod icon;
 mod imageproc;
 mod moddex;
+mod poster;
+mod poster_text;
 mod ocr;
 mod progress;
 mod share;
@@ -28,6 +30,7 @@ mod topmost;
 mod update;
 mod wiki;
 mod worker;
+mod worldclock;
 
 use eframe::egui;
 use std::sync::Arc;
