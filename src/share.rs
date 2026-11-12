@@ -15,6 +15,10 @@ use std::path::PathBuf;
 pub struct AbText {
     pixel: Option<FontArc>,
     body: Option<FontArc>,
+    /// Segoe UI Bold, for the anime style's labels.
+    bold: Option<FontArc>,
+    /// Segoe UI Black Italic, for the anime style's titles and numbers.
+    display: Option<FontArc>,
 }
 
 impl AbText {
@@ -27,7 +31,17 @@ impl AbText {
         let pixel = std::fs::read(cache_dir().join("PressStart2P-Regular.ttf"))
             .ok()
             .and_then(|b| FontArc::try_from_vec(b).ok());
-        Self { pixel, body }
+        let dir = std::env::var_os("WINDIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("C:\\Windows"))
+            .join("Fonts");
+        let read = |name: &str| -> Option<FontArc> {
+            let bytes = std::fs::read(dir.join(name)).ok().filter(|b| b.len() > 1000)?;
+            FontArc::try_from_vec(bytes).ok()
+        };
+        let bold = read("segoeuib.ttf").or_else(|| read("seguisb.ttf"));
+        let display = read("seguibli.ttf").or_else(|| read("seguibl.ttf")).or_else(|| bold.clone());
+        Self { pixel, body, bold, display }
     }
 
     pub fn has_pixel(&self) -> bool {
@@ -38,6 +52,8 @@ impl AbText {
         match face {
             Face::Pixel => self.pixel.as_ref().or(self.body.as_ref()),
             Face::Body => self.body.as_ref().or(self.pixel.as_ref()),
+            Face::Bold => self.bold.as_ref().or(self.body.as_ref()).or(self.pixel.as_ref()),
+            Face::Display => self.display.as_ref().or(self.bold.as_ref()).or(self.body.as_ref()),
         }
     }
 }

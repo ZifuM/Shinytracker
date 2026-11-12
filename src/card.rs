@@ -3,6 +3,9 @@
 //! the app, a stand-in when previewing offline).
 
 use crate::canvas::{crop, Canvas, Col, Img, Rng};
+
+#[path = "card/anime.rs"]
+mod anime;
 use crate::stats::{fmt_duration, thousands};
 
 #[cfg(not(offline_test))]
@@ -306,6 +309,18 @@ pub struct Palette {
     pub light: bool,
 }
 
+/// The look of the share images.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(not(offline_test), derive(Serialize, Deserialize))]
+pub enum CardStyle {
+    /// Flat anime-style infographic: bold flat colours, ink outlines, speed
+    /// lines, halftone dots and sticker-style stats (the default since 0.5).
+    #[default]
+    Anime,
+    /// The original look: dark gradient panels and the pixel font.
+    Classic,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(not(offline_test), derive(Serialize, Deserialize))]
 pub enum CardLayout {
@@ -342,6 +357,7 @@ impl CardOptions {
 #[cfg_attr(not(offline_test), derive(Serialize, Deserialize))]
 #[cfg_attr(not(offline_test), serde(default))]
 pub struct CardOptions {
+    pub style: CardStyle,
     pub theme: CardTheme,
     pub layout: CardLayout,
     /// Empty = automatic ("SHINY PORYGON!" / "PORYGON").
@@ -371,6 +387,7 @@ pub struct CardOptions {
 impl Default for CardOptions {
     fn default() -> Self {
         Self {
+            style: CardStyle::Anime,
             theme: CardTheme::Dragon,
             layout: CardLayout::Wide,
             title: String::new(),
@@ -443,6 +460,10 @@ pub enum Face {
     /// Press Start 2P (falls back to the body font).
     Pixel,
     Body,
+    /// Heavy sans for labels (anime style).
+    Bold,
+    /// Black italic display face for big titles and numbers (anime style).
+    Display,
 }
 
 pub trait TextDraw {
@@ -689,6 +710,9 @@ pub fn render_frame(d: &CardData, o: &CardOptions, t: &dyn TextDraw, phase: Opti
 /// The parts that never move (gradient and corner glows). Animations make
 /// this once and reuse it for every frame.
 pub fn render_base(o: &CardOptions) -> Canvas {
+    if o.style == CardStyle::Anime {
+        return anime::base(o);
+    }
     let (w, h, s) = o.output_size();
     let (dw, dh) = o.layout.size();
     let p = o.theme.palette();
@@ -706,6 +730,10 @@ pub fn render_on(base: Canvas, d: &CardData, o: &CardOptions, t: &dyn TextDraw, 
     let (dw, dh) = o.layout.size();
     let p = o.theme.palette();
     let mut pen = Pen { c: base, t, p, phase, s, w: dw as f32, h: dh as f32 };
+    if o.style == CardStyle::Anime {
+        anime::hunt(&mut pen, d, o);
+        return pen.c;
+    }
     background_decor(&mut pen, o);
     match o.layout {
         CardLayout::Wide => wide(&mut pen, d, o),
@@ -1248,6 +1276,10 @@ pub fn render_profile(d: &ProfileData, o: &CardOptions, t: &dyn TextDraw) -> Can
     let (dw, dh) = o.layout.size();
     let p = o.theme.palette();
     let mut pen = Pen { c: render_base(o), t, p, phase: None, s, w: dw as f32, h: dh as f32 };
+    if o.style == CardStyle::Anime {
+        anime::profile(&mut pen, d, o);
+        return pen.c;
+    }
     background_decor(&mut pen, o);
     match o.layout {
         CardLayout::Wide => profile_wide(&mut pen, d),

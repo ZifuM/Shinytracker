@@ -1059,6 +1059,8 @@ impl App {
 
         // Options
         let before = self.cfg.card.clone();
+        kit::section(ui, "Style");
+        card_style_picker(ui, &mut self.cfg.card.style);
         kit::section(ui, "Format");
         kit::card(ui, |ui| {
             ui.horizontal(|ui| {
@@ -1246,23 +1248,30 @@ impl App {
         match self.setup.appear_tab {
             AppearTab::Theme => {
                 kit::section(ui, "Style");
-                kit::card(ui, |ui| {
+                {
+                    let a = &mut self.cfg.appearance;
+                    let style: u8 = if a.modern_ui { 0 } else if a.clean_settings { 1 } else { 2 };
+                    let w3 = ((ui.available_width() - 24.0) / 3.0).floor();
+                    let mut pick: Option<u8> = None;
                     ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(RichText::new("Settings window style").size(kit::fs(13.0)).color(TEXT()));
-                    ui.label(
-                        RichText::new("Clean is flat and simple; Classic is the original Pokémon-style look. The overlay is the same either way.")
-                            .size(kit::fs(11.5))
-                            .color(MUTED()),
-                    );
-                });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let mut clean = self.cfg.appearance.clean_settings;
-                    kit::segmented(ui, &mut clean, &[(true, "  Clean  "), (false, "  Classic  ")]);
-                    self.cfg.appearance.clean_settings = clean;
-                });
-            });
-                });
+                        ui.spacing_mut().item_spacing.x = 12.0;
+                        for (v, icon, title, sub) in [
+                            (0u8, "✨", "Modern", "The new look: dashboard Home, colour-coded pages, Start / Stop always in the top bar."),
+                            (1, "▭", "Clean", "The previous look: flat and simple, grey with your colour on buttons."),
+                            (2, "🎮", "Classic", "The original Pokémon-style look with the coloured header bar."),
+                        ] {
+                            if kit::choice_tile(ui, egui::vec2(w3, 124.0), style == v, icon, title, sub, "").clicked() {
+                                pick = Some(v);
+                            }
+                        }
+                    });
+                    if let Some(v) = pick {
+                        a.modern_ui = v == 0;
+                        a.clean_settings = v != 2;
+                    }
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("Only changes this window. The overlay looks the same in every style.").size(kit::fs(11.5)).color(MUTED()));
+                }
 
                 kit::section(ui, "Mode");
                 let w3 = ((ui.available_width() - 16.0) / 3.0).floor();
@@ -1419,6 +1428,23 @@ impl App {
 }
 
 /// A clickable swatch showing a share-image theme.
+/// Anime infographic or the classic card, as two tiles.
+pub(super) fn card_style_picker(ui: &mut egui::Ui, style: &mut crate::card::CardStyle) {
+    use crate::card::CardStyle;
+    let w2 = ((ui.available_width() - 12.0) / 2.0).floor().min(360.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 12.0;
+        for (v, icon, title, sub, badge) in [
+            (CardStyle::Anime, "🎨", "Anime infographic", "Bold flat colours, stickers and big lettering.", "NEW"),
+            (CardStyle::Classic, "🖼", "Classic", "The original card: soft gradient and glows.", ""),
+        ] {
+            if kit::choice_tile(ui, egui::vec2(w2, 84.0), *style == v, icon, title, sub, badge).clicked() {
+                *style = v;
+            }
+        }
+    });
+}
+
 pub(super) fn theme_swatch(ui: &mut egui::Ui, t: CardTheme, selected: bool) -> egui::Response {
     let (r, resp) = ui.allocate_exact_size(egui::vec2(98.0, 66.0), Sense::click());
     let p = ui.painter_at(r.expand(2.0));

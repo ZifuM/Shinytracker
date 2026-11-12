@@ -6,7 +6,7 @@ use super::ui_kit::{self as kit, PillKind, MUTED, TEXT};
 use super::App;
 use crate::canvas::{Canvas, Img};
 use crate::gamemap::{self, GameMap, CHUNK};
-use crate::poster::{self, PosterArea, PosterData, PosterLabel, PosterMap, PosterMode, PosterMon};
+use crate::poster::{self, PosterArea, PosterData, PosterLabel, PosterMap, PosterMode, PosterMon, PosterStyle};
 use crate::theme;
 use eframe::egui::{self, RichText, TextureHandle, TextureOptions, Vec2};
 use std::path::PathBuf;
@@ -165,6 +165,7 @@ impl App {
             }
         }
         let labels = place_labels();
+        let style = if self.cfg.poster_classic { PosterStyle::Classic } else { PosterStyle::Anime };
         let now = crate::stats::now_unix() as i64;
         let (reset, next) = (gamemap::last_reset(now), gamemap::next_reset(now));
         let (tx, rx) = channel();
@@ -190,7 +191,7 @@ impl App {
                     .collect();
                 let data = PosterData { areas, labels, map: sinnoh_art(), reset, next };
                 let fonts = crate::poster_text::PosterFonts::load();
-                let img = poster::render(&data, mode, &fonts);
+                let img = poster::render(&data, mode, style, &fonts);
                 let _ = tx.send(img);
                 ctx2.request_repaint();
             })
@@ -231,6 +232,7 @@ impl App {
 
         let mut open = true;
         let mut redo: Option<PosterMode> = None;
+        let mut classic = self.cfg.poster_classic;
         let mut copy = false;
         let mut save = false;
         let mut reveal: Option<PathBuf> = None;
@@ -252,6 +254,13 @@ impl App {
                     for m in [PosterMode::Full, PosterMode::MapOnly, PosterMode::Lists] {
                         if ui.selectable_label(v.mode == m, RichText::new(m.label()).size(kit::fs(12.5))).on_hover_text(m.tip()).clicked() && v.mode != m {
                             redo = Some(m);
+                        }
+                    }
+                    ui.separator();
+                    for (c, label, tip) in [(false, "🎨 Anime", "Flat bold colours, stickers and big lettering"), (true, "Classic", "The original sea-blue infographic")] {
+                        if ui.selectable_label(classic == c, RichText::new(label).size(kit::fs(12.5))).on_hover_text(tip).clicked() && classic != c {
+                            classic = c;
+                            redo = Some(v.mode);
                         }
                     }
                 });
@@ -338,6 +347,10 @@ impl App {
                     }
                 }
             }
+        }
+        if classic != self.cfg.poster_classic {
+            self.cfg.poster_classic = classic;
+            self.dirty = true;
         }
         if let Some(m) = redo {
             self.start_rare_poster(m, ctx);

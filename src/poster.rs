@@ -9,6 +9,9 @@
 use crate::canvas::{crop, Canvas, Col, Img};
 use crate::worldclock;
 
+#[path = "poster/anime.rs"]
+mod anime;
+
 /// Text styles: condensed display weights (titles, numbers) and text weights.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PFace {
@@ -17,6 +20,18 @@ pub enum PFace {
     D600,
     T600,
     T500,
+    /// Heavy italic for the anime style's lettering (Segoe UI Black Italic).
+    Black,
+    /// Bold text for the anime style (Segoe UI Bold).
+    Bold,
+}
+
+/// The look: flat anime infographic (new) or the original sea-blue one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum PosterStyle {
+    #[default]
+    Anime,
+    Classic,
 }
 
 /// Measures and draws text in pixels, at a baseline.
@@ -487,13 +502,10 @@ struct Entry<'d> {
     y: f32,
 }
 
-/// Draw the infographic.
-pub fn render(data: &PosterData, mode: PosterMode, t: &dyn PosterText) -> Canvas {
-    let map_only = mode == PosterMode::MapOnly;
-    let lists_only = mode == PosterMode::Lists;
-    const W: f32 = 1920.0;
-    const M: f32 = 64.0;
-
+/// Areas in route order (Pokémon by name), how many areas each Pokémon is
+/// in, and the top 3 by that (ties share a place).
+#[allow(clippy::type_complexity)]
+fn prepare(data: &PosterData) -> (Vec<PosterArea>, Vec<(String, usize)>, Vec<(usize, Vec<String>)>) {
     // areas in route order, Pokémon by name
     let mut areas: Vec<PosterArea> = data.areas.iter().filter(|a| !a.mons.is_empty()).cloned().collect();
     for a in &mut areas {
@@ -535,6 +547,23 @@ pub fn render(data: &PosterData, mode: PosterMode, t: &dyn PosterText) -> Canvas
             top3.push((*n, vec![k.clone()]));
         }
     }
+    (areas, tally, top3)
+}
+
+/// Draw the infographic.
+pub fn render(data: &PosterData, mode: PosterMode, style: PosterStyle, t: &dyn PosterText) -> Canvas {
+    if style == PosterStyle::Anime {
+        return anime::render(data, mode, t);
+    }
+    let map_only = mode == PosterMode::MapOnly;
+    let lists_only = mode == PosterMode::Lists;
+    const W: f32 = 1920.0;
+    const M: f32 = 64.0;
+
+    let (areas, tally, top3) = prepare(data);
+    let name_of = |key: &str| -> String {
+        areas.iter().flat_map(|a| a.mons.iter()).find(|m| m.key == key).map(|m| m.name.clone()).unwrap_or_default()
+    };
     let sprite_of = |key: &str| -> Option<&Img> {
         areas.iter().flat_map(|a| a.mons.iter()).find(|m| m.key == key).and_then(|m| m.sprite.as_ref())
     };
@@ -761,6 +790,106 @@ fn lists_header(p: &mut Pen, data: &PosterData, zone: &str, w: f32, m: f32, head
     p.text(&span, w - m, 174.0, 19.0, PFace::T500, PALE, Al::R);
 }
 
+/// A pin on the map: one rare grass patch (an area's tiles that lie close
+/// together). (ox, oy) is where the patch really is, (x, y) where the pin
+/// went after being nudged clear of the others; `r` its room.
+struct Pin {
+    mons: Vec<usize>,
+    area: usize,
+    ox: f32,
+    oy: f32,
+    x: f32,
+    y: f32,
+    r: f32,
+}
+
+/// Pins for every patch, nudged apart and off the place names (`taken`),
+/// kept inside left..right, top..bottom. Also returns the sprite size.
+#[allow(clippy::too_many_arguments)]
+fn place_pins(
+    areas: &[PosterArea],
+    to_px: &dyn Fn(f32, f32) -> (f32, f32),
+    taken: &[(f32, f32, f32, f32)],
+    left: f32,
+    right: f32,
+    top: f32,
+    bottom: f32,
+) -> (Vec<Pin>, f32) {
+    // pins: one per rare grass patch (an area's tiles that lie close
+    // together), at the middle of its exact tiles; then nudged apart
+    // so none overlap, with a line back to where the patch really is
+    const NEAR: f32 = 40.0; // tiles: closer than this is the same patch
+    let mut patches: Vec<(usize, Vec<(f32, f32)>, Vec<usize>)> = Vec::new();
+    for (ai, a) in areas.iter().enumerate() {
+        let first = patches.len();
+        for &(tx, ty, mi) in &a.tiles {
+            let hit = patches[first..].iter_mut().find(|(_, pts, _)| {
+                let (cx, cy) = (pts.iter().map(|p| p.0).sum::<f32>() / pts.len() as f32, pts.iter().map(|p| p.1).sum::<f32>() / pts.len() as f32);
+                ((cx - tx).powi(2) + (cy - ty).powi(2)).sqrt() < NEAR
+            });
+            match hit {
+                Some((_, pts, ms)) => {
+                    pts.push((tx, ty));
+                    if !ms.contains(&mi) {
+                        ms.push(mi);
+                    }
+                }
+                None => patches.push((ai, vec![(tx, ty)], vec![mi])),
+            }
+        }
+    }
+    let busy = patches.len() > 16;
+    let sb = if busy { 50.0 } else { 62.0 };
+    let mut pins: Vec<Pin> = patches
+        .into_iter()
+        .map(|(area, pts, mut mons)| {
+            mons.sort();
+            let n = pts.len() as f32;
+            let (ox, oy) = to_px(pts.iter().map(|p| p.0).sum::<f32>() / n, pts.iter().map(|p| p.1).sum::<f32>() / n);
+            let k = mons.len().clamp(1, 4) as f32;
+            Pin { mons, area, ox, oy, x: ox, y: oy, r: if busy { 23.0 } else { 28.0 } + (k - 1.0) * sb * 0.3 }
+        })
+        .collect();
+    for _ in 0..120 {
+        for i in 0..pins.len() {
+            for j in i + 1..pins.len() {
+                let (dx, dy) = (pins[j].x - pins[i].x, pins[j].y - pins[i].y);
+                let d = (dx * dx + dy * dy).sqrt().max(0.01);
+                let min = pins[i].r + pins[j].r;
+                if d < min {
+                    let push = (min - d) / 2.0;
+                    let (ux, uy) = if d <= 0.01 { (1.0, 0.0) } else { (dx / d, dy / d) };
+                    pins[i].x -= ux * push;
+                    pins[i].y -= uy * push;
+                    pins[j].x += ux * push;
+                    pins[j].y += uy * push;
+                }
+            }
+        }
+    }
+    // ...and off the place names
+    for _ in 0..40 {
+        for pin in &mut pins {
+            for &(lx, ly, lw, lh) in taken {
+                let (nx, ny) = (pin.x.clamp(lx, lx + lw), pin.y.clamp(ly, ly + lh));
+                let (dx, dy) = (pin.x - nx, pin.y - ny);
+                let d = (dx * dx + dy * dy).sqrt();
+                let room = pin.r * 0.8;
+                if d < room {
+                    let (ux, uy) = if d < 0.01 { (0.0, if pin.y < ly + lh / 2.0 { -1.0 } else { 1.0 }) } else { (dx / d, dy / d) };
+                    pin.x += ux * (room - d + 0.5);
+                    pin.y += uy * (room - d + 0.5);
+                }
+            }
+        }
+    }
+    for pin in &mut pins {
+        pin.x = pin.x.clamp(left + pin.r, right - pin.r);
+        pin.y = pin.y.clamp(top + pin.r, bottom - pin.r);
+    }
+    (pins, sb)
+}
+
 /// The top: the map full-bleed on the right, the title and reset times on the sea.
 fn hero(p: &mut Pen, data: &PosterData, areas: &[PosterArea], zone: &str, w: f32, m: f32, hero_h: f32) {
     let r = p.r;
@@ -823,87 +952,7 @@ fn hero(p: &mut Pen, data: &PosterData, areas: &[PosterArea], zone: &str, w: f32
             let tw = p.tw(name, fs, face);
             taken.push((cx - tw / 2.0 - 3.0, cy - 6.0 - fs, tw + 6.0, fs + 6.0));
         }
-        // pins: one per rare grass patch (an area's tiles that lie close
-        // together), at the middle of its exact tiles; then nudged apart
-        // so none overlap, with a line back to where the patch really is
-        struct Pin {
-            mons: Vec<usize>,
-            area: usize,
-            ox: f32,
-            oy: f32,
-            x: f32,
-            y: f32,
-            r: f32,
-        }
-        const NEAR: f32 = 40.0; // tiles: closer than this is the same patch
-        let mut patches: Vec<(usize, Vec<(f32, f32)>, Vec<usize>)> = Vec::new();
-        for (ai, a) in areas.iter().enumerate() {
-            let first = patches.len();
-            for &(tx, ty, mi) in &a.tiles {
-                let hit = patches[first..].iter_mut().find(|(_, pts, _)| {
-                    let (cx, cy) = (pts.iter().map(|p| p.0).sum::<f32>() / pts.len() as f32, pts.iter().map(|p| p.1).sum::<f32>() / pts.len() as f32);
-                    ((cx - tx).powi(2) + (cy - ty).powi(2)).sqrt() < NEAR
-                });
-                match hit {
-                    Some((_, pts, ms)) => {
-                        pts.push((tx, ty));
-                        if !ms.contains(&mi) {
-                            ms.push(mi);
-                        }
-                    }
-                    None => patches.push((ai, vec![(tx, ty)], vec![mi])),
-                }
-            }
-        }
-        let busy = patches.len() > 16;
-        let sb = if busy { 50.0 } else { 62.0 };
-        let mut pins: Vec<Pin> = patches
-            .into_iter()
-            .map(|(area, pts, mut mons)| {
-                mons.sort();
-                let n = pts.len() as f32;
-                let (ox, oy) = to_px(pts.iter().map(|p| p.0).sum::<f32>() / n, pts.iter().map(|p| p.1).sum::<f32>() / n);
-                let k = mons.len().clamp(1, 4) as f32;
-                Pin { mons, area, ox, oy, x: ox, y: oy, r: if busy { 23.0 } else { 28.0 } + (k - 1.0) * sb * 0.3 }
-            })
-            .collect();
-        for _ in 0..120 {
-            for i in 0..pins.len() {
-                for j in i + 1..pins.len() {
-                    let (dx, dy) = (pins[j].x - pins[i].x, pins[j].y - pins[i].y);
-                    let d = (dx * dx + dy * dy).sqrt().max(0.01);
-                    let min = pins[i].r + pins[j].r;
-                    if d < min {
-                        let push = (min - d) / 2.0;
-                        let (ux, uy) = if d <= 0.01 { (1.0, 0.0) } else { (dx / d, dy / d) };
-                        pins[i].x -= ux * push;
-                        pins[i].y -= uy * push;
-                        pins[j].x += ux * push;
-                        pins[j].y += uy * push;
-                    }
-                }
-            }
-        }
-        // ...and off the place names
-        for _ in 0..40 {
-            for pin in &mut pins {
-                for &(lx, ly, lw, lh) in &taken {
-                    let (nx, ny) = (pin.x.clamp(lx, lx + lw), pin.y.clamp(ly, ly + lh));
-                    let (dx, dy) = (pin.x - nx, pin.y - ny);
-                    let d = (dx * dx + dy * dy).sqrt();
-                    let room = pin.r * 0.8;
-                    if d < room {
-                        let (ux, uy) = if d < 0.01 { (0.0, if pin.y < ly + lh / 2.0 { -1.0 } else { 1.0 }) } else { (dx / d, dy / d) };
-                        pin.x += ux * (room - d + 0.5);
-                        pin.y += uy * (room - d + 0.5);
-                    }
-                }
-            }
-        }
-        for pin in &mut pins {
-            pin.x = pin.x.clamp(mx + pin.r, w - pin.r - 4.0);
-            pin.y = pin.y.clamp(pin.r + 4.0, hero_h - pin.r - 4.0);
-        }
+        let (pins, sb) = place_pins(areas, &to_px, &taken, mx, w - 4.0, 4.0, hero_h - 4.0);
         for pin in &pins {
             if ((pin.x - pin.ox).powi(2) + (pin.y - pin.oy).powi(2)).sqrt() > 6.0 {
                 p.line(pin.ox, pin.oy, pin.x, pin.y, 1.6, INK.alpha(0.55));

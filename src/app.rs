@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 mod catch_spots;
 mod dex_tabs;
 mod extras;
+mod home;
 mod hunt_pages;
 mod insights;
 mod notices;
@@ -26,6 +27,7 @@ mod pokedex;
 mod rare;
 mod rare_poster;
 mod settings;
+mod shell;
 mod trainer;
 mod ui_kit;
 

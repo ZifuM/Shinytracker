@@ -171,12 +171,21 @@ impl App {
             let r = if maxed { 0.0 } else { 8.0 };
             crate::topmost::round_settings_corners(&mut self.settings_rounded);
             // Header bar like the overlay's: drag to move, minimise, close.
+            // (Modern: a top bar with the overlay's controls.)
+            let modern = kit::modern();
+            let top_h = if modern { super::shell::TOP_H } else { 38.0 };
             egui::TopBottomPanel::top("settings-header")
-                .exact_height(38.0)
+                .exact_height(top_h)
                 .frame(egui::Frame::none())
                 .show_separator_line(false)
-                .show(ctx, |ui| self.settings_header(ctx, ui));
-            let body_top = screen.min.y + 38.0;
+                .show(ctx, |ui| {
+                    if modern {
+                        self.modern_header(ctx, ui)
+                    } else {
+                        self.settings_header(ctx, ui)
+                    }
+                });
+            let body_top = screen.min.y + top_h;
             let bg = ctx.layer_painter(egui::LayerId::background());
             bg.rect_filled(
                 Rect::from_min_max(egui::pos2(screen.min.x, body_top - 1.0), screen.max),
@@ -189,19 +198,29 @@ impl App {
                 // (Panels draw on the background layer, so the sidebar fills
                 // itself rather than being painted over afterwards.)
                 egui::SidePanel::left("settings-nav")
-                    .exact_width(184.0)
+                    .exact_width(if modern { self.nav_width() } else { 184.0 })
                     .resizable(false)
                     .show_separator_line(false)
                     .frame(
                         egui::Frame::none()
                             .fill(SIDEBAR())
                             .rounding(egui::Rounding { nw: 0.0, ne: 0.0, sw: r, se: 0.0 })
-                            .inner_margin(egui::Margin::symmetric(10.0, 14.0)),
+                            .inner_margin(if modern { egui::Margin { left: 12.0, right: 12.0, top: 4.0, bottom: 12.0 } } else { egui::Margin::symmetric(10.0, 14.0) }),
                     )
                     .show(ctx, |ui| {
                         kit::settings_style(ui);
-                        self.sidebar(ui)
+                        if modern {
+                            self.modern_sidebar(ui)
+                        } else {
+                            self.sidebar(ui)
+                        }
                     });
+                kit::set_page_icon(if modern {
+                    let (icon, _, color) = super::shell::tab_meta(self.setup.tab);
+                    Some((icon, color))
+                } else {
+                    None
+                });
                 // The Map fills the whole pane, edge to edge, with its
                 // controls floating on top.
                 let map_full = self.setup.tab == Tab::Map
@@ -216,7 +235,14 @@ impl App {
                     });
                 } else {
                 egui::CentralPanel::default()
-                    .frame(egui::Frame::none().inner_margin(if kit::clean() {
+                    .frame(egui::Frame::none().inner_margin(if modern {
+                        egui::Margin {
+                            left: 32.0,
+                            right: 8.0,
+                            top: 26.0,
+                            bottom: 12.0,
+                        }
+                    } else if kit::clean() {
                         egui::Margin {
                             left: 32.0,
                             // Small: the scroll bar's own lane (8px bar + 12px gap)
@@ -289,7 +315,8 @@ impl App {
                                     || (self.setup.profile_card.is_none()
                                         && self.setup.share.is_none()
                                         && matches!(self.setup.tab, Tab::Home | Tab::Profile | Tab::Dex | Tab::Trophies | Tab::Runs | Tab::Pokedex | Tab::Map));
-                                let w = if wide { ui.available_width() } else { ui.available_width().min(900.0) };
+                                let cap = if modern { 1060.0 } else { 900.0 };
+                                let w = if wide { ui.available_width() } else { ui.available_width().min(cap) };
                                 ui.set_max_width(w);
                                 if self.setup.caught_pick {
                                     self.page_caught_pick(ui);
@@ -303,7 +330,7 @@ impl App {
                                     self.page_run_stats(ui, run);
                                 } else {
                                     // Shiny Hunter pages carry the Start / Stop strip.
-                                    if super::launcher::is_shiny_tab(self.setup.tab) && self.setup.tab != Tab::Shiny {
+                                    if super::launcher::is_shiny_tab(self.setup.tab) && self.setup.tab != Tab::Shiny && !modern {
                                         self.overlay_strip(ui);
                                     }
                                     match self.setup.tab {
@@ -359,7 +386,8 @@ impl App {
             // (neither when maximized).
             let fg = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("settings-frame")));
             if !maxed {
-                fg.rect_stroke(screen.shrink(0.5), r, egui::Stroke::new(1.5f32, theme::OUTLINE));
+                let edge = if kit::modern() { theme::blend(SIDEBAR(), egui::Color32::BLACK, 0.5) } else { theme::OUTLINE };
+                fg.rect_stroke(screen.shrink(0.5), r, egui::Stroke::new(if kit::modern() { 1.0f32 } else { 1.5f32 }, edge));
             }
             if !maxed {
                 let grip = Rect::from_min_size(screen.max - egui::vec2(16.0, 16.0), egui::vec2(16.0, 16.0));

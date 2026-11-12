@@ -1291,6 +1291,8 @@ impl App {
             kit::checkbox(ui, &mut self.cfg.profile_card_shinies, "Shiny showcase (your latest 6 shinies)");
             kit::checkbox(ui, &mut self.cfg.profile_card_achievements, "Recent achievements (your latest 6)");
         });
+        kit::section(ui, "Style");
+        super::hunt_pages::card_style_picker(ui, &mut self.cfg.card.style);
         kit::section(ui, "Theme (pick a type)");
         kit::card(ui, |ui| {
             ui.horizontal_wrapped(|ui| {

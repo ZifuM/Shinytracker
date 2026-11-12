@@ -54,9 +54,115 @@ pub fn CONTROL() -> Color32 {
 //   · the accent (button colour) only on primary buttons, switches, checked
 //     boxes, selected-tile borders and focus; everything else is grey
 
-/// Is the clean settings style on?
+/// Is the clean settings style on? (Also true in the modern style, which
+/// builds on it.)
 pub fn clean() -> bool {
     theme::clean()
+}
+
+/// Is the modern style on (the default)?
+pub fn modern() -> bool {
+    theme::modern()
+}
+
+// ───────────────────────── modern style palette ─────────────────────────
+// Colour-coded icon chips (sidebar, page headers, stat tiles). Each page
+// keeps its colour everywhere it appears, so it's recognisable at a glance.
+
+pub const C_BLUE: Color32 = Color32::from_rgb(86, 140, 255);
+pub const C_VIOLET: Color32 = Color32::from_rgb(150, 104, 255);
+pub const C_PINK: Color32 = Color32::from_rgb(240, 92, 150);
+pub const C_ORANGE: Color32 = Color32::from_rgb(255, 142, 66);
+pub const C_TEAL: Color32 = Color32::from_rgb(38, 190, 170);
+pub const C_GREEN: Color32 = Color32::from_rgb(70, 200, 120);
+pub const C_GOLD: Color32 = Color32::from_rgb(240, 188, 60);
+pub const C_RED: Color32 = Color32::from_rgb(236, 84, 84);
+pub const C_CYAN: Color32 = Color32::from_rgb(56, 182, 240);
+pub const C_INDIGO: Color32 = Color32::from_rgb(112, 120, 255);
+pub const C_SLATE: Color32 = Color32::from_rgb(132, 146, 176);
+
+/// `c` laid over a card at strength `a` (0..1): soft tinted backgrounds.
+pub fn tint(c: Color32, a: f32) -> Color32 {
+    theme::blend(CARD(), c, a)
+}
+
+/// The page's icon and colour, shown in its header (set by the window
+/// before each page is drawn).
+static PAGE_ICON: std::sync::RwLock<Option<(&'static str, Color32)>> = std::sync::RwLock::new(None);
+
+pub fn set_page_icon(icon: Option<(&'static str, Color32)>) {
+    if let Ok(mut w) = PAGE_ICON.write() {
+        *w = icon;
+    }
+}
+
+fn page_icon() -> Option<(&'static str, Color32)> {
+    PAGE_ICON.read().ok().and_then(|g| *g)
+}
+
+/// A rounded square with an icon: solid in its colour, or a soft tint with
+/// the icon in the colour.
+pub fn icon_chip(p: &egui::Painter, rect: Rect, icon: &str, color: Color32, solid: bool) {
+    let r = (rect.height() * 0.3).round();
+    if solid {
+        p.rect_filled(rect, r, color);
+        p.text(rect.center(), Align2::CENTER_CENTER, icon, egui::FontId::proportional(rect.height() * 0.56), Color32::WHITE);
+    } else {
+        p.rect_filled(rect, r, theme::blend(CARD(), color, if theme::pal().light { 0.14 } else { 0.2 }));
+        p.text(rect.center(), Align2::CENTER_CENTER, icon, egui::FontId::proportional(rect.height() * 0.56), color);
+    }
+}
+
+/// The soft drop shadow under modern cards.
+pub fn card_shadow() -> egui::epaint::Shadow {
+    egui::epaint::Shadow {
+        offset: egui::vec2(0.0, 6.0),
+        blur: 18.0,
+        spread: 0.0,
+        color: Color32::from_black_alpha(if theme::pal().light { 16 } else { 70 }),
+    }
+}
+
+/// Dashboard tile: icon chip, small label, big value and an optional
+/// coloured note under it. Clickable (hover lifts the border).
+pub fn stat_tile(ui: &mut Ui, width: f32, icon: &str, color: Color32, label: &str, value: &str, note: Option<(&str, Color32)>) -> Response {
+    let h = if note.is_some() { 104.0 } else { 88.0 };
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, h), Sense::click());
+    let p = ui.painter_at(rect.expand(12.0));
+    let hovered = resp.hovered();
+    p.add(card_shadow().as_shape(rect, 14.0));
+    p.rect_filled(rect, 14.0, CARD());
+    p.rect_stroke(rect, 14.0, Stroke::new(1.0f32, if hovered { theme::blend(LINE(), color, 0.6) } else { LINE() }));
+    let chip = Rect::from_min_size(rect.min + egui::vec2(14.0, 14.0), egui::vec2(30.0, 30.0));
+    icon_chip(&p, chip, icon, color, false);
+    let tx = chip.max.x + 10.0;
+    let lab = p.layout_no_wrap(label.to_string(), crate::fonts::sans_font(12.5), MUTED());
+    let clip = Rect::from_min_max(egui::pos2(tx, rect.min.y), egui::pos2(rect.max.x - 10.0, rect.max.y));
+    p.with_clip_rect(clip).galley(egui::pos2(tx, chip.center().y - lab.size().y / 2.0), lab, MUTED());
+    let val = p.layout_no_wrap(value.to_string(), crate::fonts::sans_bold_font(22.0), TEXT());
+    p.with_clip_rect(rect.shrink(8.0)).galley(egui::pos2(rect.min.x + 16.0, chip.max.y + 8.0), val, TEXT());
+    if let Some((t, c)) = note {
+        p.text(egui::pos2(rect.min.x + 16.0, rect.max.y - 16.0), Align2::LEFT_CENTER, t, crate::fonts::sans_font(12.0), c);
+    }
+    p.text(rect.right_bottom() + egui::vec2(-14.0, -16.0), Align2::RIGHT_CENTER, "›", egui::FontId::proportional(16.0), if hovered { TEXT() } else { theme::blend(CARD(), MUTED(), 0.5) });
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// A thin progress bar in the accent (gradient if the user has one).
+pub fn bar(ui: &mut Ui, width: f32, height: f32, frac: f32) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), Sense::hover());
+    paint_bar(ui.painter(), rect, frac);
+}
+
+pub fn paint_bar(p: &egui::Painter, rect: Rect, frac: f32) {
+    let r = rect.height() / 2.0;
+    p.rect_filled(rect, r, theme::blend(CARD(), TEXT(), 0.1));
+    let f = frac.clamp(0.0, 1.0);
+    if f > 0.0 {
+        let fill = Rect::from_min_size(rect.min, egui::vec2((rect.width() * f).max(rect.height()), rect.height()));
+        let pl = theme::pal();
+        p.add(theme::gradient_rect(fill, [r; 4], pl.button, pl.button2));
+    }
 }
 
 /// Height of every control (buttons, text boxes, segmented groups).
@@ -91,7 +197,13 @@ pub fn display_font(size: f32) -> egui::FontId {
 
 /// Corner radius for cards and tiles: 8 at most in the clean look.
 pub fn r(radius: f32) -> f32 {
-    if clean() { radius.min(8.0) } else { radius }
+    if modern() {
+        radius.min(14.0)
+    } else if clean() {
+        radius.min(8.0)
+    } else {
+        radius
+    }
 }
 
 /// Colour for "this one is selected" borders: the button colour in the
@@ -104,18 +216,36 @@ pub fn ACCENT() -> Color32 {
 /// Rounding for the solid button-colour buttons in the counting wizard:
 /// pills in the clean look, egui's default otherwise.
 pub fn primary_round() -> f32 {
-    if clean() { CONTROL_H / 2.0 } else { 2.0 }
+    if modern() {
+        10.0
+    } else if clean() {
+        CONTROL_H / 2.0
+    } else {
+        2.0
+    }
 }
 
 /// Fill for ordinary (secondary) buttons: grey in the classic look,
 /// see-through outlined pill in the clean look.
 pub fn btn_fill() -> Color32 {
-    if clean() { Color32::TRANSPARENT } else { CARD_HOVER() }
+    if modern() {
+        theme::surf().selected
+    } else if clean() {
+        Color32::TRANSPARENT
+    } else {
+        CARD_HOVER()
+    }
 }
 
 /// Button corner radius: pills in the clean look.
 pub fn btn_round(r: f32) -> f32 {
-    if clean() { CONTROL_H / 2.0 } else { r }
+    if modern() {
+        10.0
+    } else if clean() {
+        CONTROL_H / 2.0
+    } else {
+        r
+    }
 }
 
 /// Apply the clean style to a settings panel (no-op in the classic look).
@@ -177,6 +307,28 @@ pub fn settings_style(ui: &mut Ui) {
         x.rounding = egui::Rounding::same(6.0);
         x.expansion = 0.0;
     }
+    if modern() {
+        // Filled controls instead of outlines; softer, rounder.
+        w.inactive.weak_bg_fill = sf.selected;
+        w.inactive.bg_fill = sf.selected;
+        w.inactive.bg_stroke = Stroke::new(1.0f32, theme::blend(sf.selected, sf.line, 0.5));
+        w.hovered.weak_bg_fill = theme::blend(sf.selected, sf.text, 0.08);
+        w.hovered.bg_fill = theme::blend(sf.selected, sf.text, 0.08);
+        w.hovered.bg_stroke = Stroke::new(1.0f32, sf.control);
+        w.active.weak_bg_fill = theme::blend(sf.selected, sf.text, 0.14);
+        w.open.weak_bg_fill = sf.selected;
+        for x in [&mut w.inactive, &mut w.hovered, &mut w.active, &mut w.open] {
+            x.rounding = egui::Rounding::same(10.0);
+        }
+        v.window_rounding = egui::Rounding::same(14.0);
+        v.menu_rounding = egui::Rounding::same(10.0);
+        v.window_shadow = card_shadow();
+        v.popup_shadow = card_shadow();
+        v.window_stroke = Stroke::new(1.0f32, sf.line);
+        v.selection.bg_fill = theme::BUTTON().gamma_multiply(0.45);
+        style.spacing.button_padding = egui::vec2(14.0, 6.0);
+        style.spacing.item_spacing = egui::vec2(8.0, 8.0);
+    }
 }
 
 /// Search box. In the clean look it gets a magnifier icon and the standard
@@ -216,6 +368,9 @@ pub fn search_box(ui: &mut Ui, text: &mut String, hint: &str, width: f32) -> Res
 /// outlined bar, grey highlight on the open tab. Classic look: the open tab
 /// filled with the button colour. Returns true when the tab changed.
 pub fn tab_bar<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, tabs: &[(T, &str)]) -> bool {
+    if modern() {
+        return modern::tab_bar(ui, value, tabs);
+    }
     let mut changed = false;
     let c = clean();
     let h = if c { 36.0 } else { 42.0 };
@@ -267,6 +422,15 @@ pub fn tab_bar<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, tabs: &[(T, &str
 /// Small all-caps group label in the sidebar (clean look only).
 pub fn nav_group(ui: &mut Ui, text: &str) {
     if !clean() {
+        return;
+    }
+    if modern() {
+        ui.add_space(14.0);
+        ui.horizontal(|ui| {
+            ui.add_space(12.0);
+            ui.label(RichText::new(text).font(crate::fonts::sans_bold_font(11.0)).color(theme::blend(SIDEBAR(), MUTED(), 0.75)));
+        });
+        ui.add_space(4.0);
         return;
     }
     ui.add_space(10.0);
@@ -331,6 +495,9 @@ pub fn checkbox(ui: &mut Ui, on: &mut bool, text: impl Into<egui::WidgetText>) -
 
 /// Page title (pixel font) with a one-line subtitle.
 pub fn page_header(ui: &mut Ui, title: &str, subtitle: &str) {
+    if modern() {
+        return modern::page_header(ui, title, subtitle);
+    }
     if clean() {
         return clean::page_header(ui, title, subtitle);
     }
@@ -357,6 +524,9 @@ pub fn experimental(ui: &mut Ui, what: &str) {
 
 /// Small grey label above a group of controls.
 pub fn section(ui: &mut Ui, text: &str) {
+    if modern() {
+        return modern::section(ui, text);
+    }
     if clean() {
         return clean::section(ui, text);
     }
@@ -367,6 +537,9 @@ pub fn section(ui: &mut Ui, text: &str) {
 
 /// Rounded card container.
 pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+    if modern() {
+        return modern::card(ui, add);
+    }
     if clean() {
         return clean::card(ui, add);
     }
@@ -443,6 +616,9 @@ pub fn toggle_row(ui: &mut Ui, label: &str, help: &str, on: &mut bool) -> bool {
 
 /// Joined buttons where exactly one option is selected.
 pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T, &str)]) -> bool {
+    if modern() {
+        return modern::segmented(ui, value, options);
+    }
     if clean() {
         return clean::segmented(ui, value, options);
     }
@@ -481,6 +657,9 @@ pub enum PillKind {
 
 /// Rounded status pill, e.g. "✔ Reading game log".
 pub fn pill(ui: &mut Ui, text: &str, kind: PillKind) -> Response {
+    if modern() {
+        return modern::pill(ui, text, kind);
+    }
     let (bg, fg) = match kind {
         PillKind::Ok => (
             Color32::from_rgb(22, 64, 38),
@@ -506,6 +685,15 @@ pub fn pill(ui: &mut Ui, text: &str, kind: PillKind) -> Response {
 
 /// Small odds badge.
 pub fn badge(ui: &mut Ui, text: &str, gold: bool) {
+    if modern() {
+        let c = if gold { C_GOLD } else { MUTED() };
+        egui::Frame::none()
+            .fill(tint(c, 0.16))
+            .rounding(8.0)
+            .inner_margin(egui::Margin::symmetric(8.0, 2.0))
+            .show(ui, |ui| ui.label(RichText::new(text).size(fs(11.5)).color(if gold { C_GOLD } else { MUTED() })));
+        return;
+    }
     let (bg, fg) = if gold {
         (Color32::from_rgb(72, 56, 14), GOLD)
     } else {
@@ -528,6 +716,9 @@ pub fn choice_tile(
     subtitle: &str,
     badge_text: &str,
 ) -> Response {
+    if modern() {
+        return modern::choice_tile(ui, size, selected, icon, title, subtitle, badge_text);
+    }
     if clean() {
         return clean::choice_tile(ui, size, selected, icon, title, subtitle, badge_text);
     }
@@ -632,7 +823,7 @@ pub fn stat_button(ui: &mut Ui, width: f32, label: &str, value: &str, tip: &str)
     let rect = stat_inner(ui, width, label, value).rect;
     let resp = ui.interact(rect, ui.id().with(("stat-button", label)), Sense::click());
     if resp.hovered() {
-        ui.painter().rect_stroke(rect, 8.0, Stroke::new(1.0f32, MUTED()));
+        ui.painter().rect_stroke(rect, r(12.0), Stroke::new(1.0f32, if modern() { CONTROL() } else { MUTED() }));
     }
     // A small arrow says the tile goes somewhere.
     ui.painter().text(
@@ -646,6 +837,9 @@ pub fn stat_button(ui: &mut Ui, width: f32, label: &str, value: &str, tip: &str)
 }
 
 fn stat_inner(ui: &mut Ui, width: f32, label: &str, value: &str) -> Response {
+    if modern() {
+        return modern::stat(ui, width, label, value);
+    }
     if clean() {
         return clean::stat(ui, width, label, value);
     }
@@ -731,6 +925,9 @@ pub fn keycap(ui: &mut Ui, text: &str) {
 
 /// Sidebar navigation item. Returns true when clicked.
 pub fn nav_item(ui: &mut Ui, icon: &str, label: &str, selected: bool) -> bool {
+    if modern() {
+        return modern::nav_item(ui, icon, label, selected, theme::BUTTON(), false).clicked();
+    }
     if clean() {
         return clean::nav_item(ui, icon, label, selected);
     }
@@ -776,6 +973,10 @@ pub fn nav_item(ui: &mut Ui, icon: &str, label: &str, selected: bool) -> bool {
 
 /// Thin progress bar for the welcome steps.
 pub fn progress(ui: &mut Ui, frac: f32) {
+    if modern() {
+        let w = ui.available_width();
+        return bar(ui, w, 6.0, frac);
+    }
     if clean() {
         return clean::progress(ui, frac);
     }
@@ -796,6 +997,9 @@ pub fn progress(ui: &mut Ui, frac: f32) {
 /// A full-width "show more / show fewer" bar with a chevron, so it reads
 /// clearly as something that opens and closes.
 pub fn expander(ui: &mut Ui, label: &str, detail: &str, open: bool) -> Response {
+    if modern() {
+        return modern::expander(ui, label, detail, open);
+    }
     if clean() {
         return clean::expander(ui, label, detail, open);
     }
@@ -842,6 +1046,9 @@ pub fn expander(ui: &mut Ui, label: &str, detail: &str, open: bool) -> Response 
 /// Add a button filled with the button colour (or gradient). Pass the
 /// button's own rounding.
 pub fn accent_button(ui: &mut Ui, btn: egui::Button<'_>, rounding: f32) -> Response {
+    if modern() {
+        return modern::accent_button(ui, btn);
+    }
     if clean() {
         return clean::accent_button(ui, btn);
     }
@@ -1114,6 +1321,295 @@ mod clean {
             base
         };
         ui.painter().set(slot, egui::Shape::rect_filled(resp.rect, resp.rect.height() / 2.0, fill));
+        resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+    }
+}
+
+// ─────────────────── modern-style versions of the widgets above ───────────────────
+
+pub(crate) mod modern {
+    use super::*;
+
+    pub fn page_header(ui: &mut Ui, title: &str, subtitle: &str) {
+        ui.horizontal(|ui| {
+            if let Some((icon, color)) = page_icon() {
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(44.0, 44.0), Sense::hover());
+                icon_chip(ui.painter(), rect, icon, color, true);
+                ui.add_space(6.0);
+            }
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                ui.label(RichText::new(title_case(title)).font(crate::fonts::sans_bold_font(24.0)).color(TEXT()));
+                if !subtitle.is_empty() {
+                    ui.label(RichText::new(subtitle).size(13.5).color(MUTED()));
+                }
+            });
+        });
+        ui.add_space(22.0);
+    }
+
+    pub fn section(ui: &mut Ui, text: &str) {
+        ui.add_space(12.0);
+        ui.label(RichText::new(text).font(crate::fonts::sans_bold_font(16.0)).color(TEXT()));
+        ui.add_space(6.0);
+    }
+
+    pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+        let r = egui::Frame::none()
+            .fill(CARD())
+            .rounding(14.0)
+            .stroke(Stroke::new(1.0f32, LINE()))
+            .shadow(card_shadow())
+            .inner_margin(egui::Margin::same(18.0))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                add(ui)
+            })
+            .inner;
+        ui.add_space(14.0);
+        r
+    }
+
+    /// Tabs in a sunken track; the open one sits raised on a card.
+    pub fn tab_bar<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, tabs: &[(T, &str)]) -> bool {
+        let mut changed = false;
+        let h = 40.0;
+        let (bar, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), h), Sense::hover());
+        ui.painter().rect_filled(bar, 12.0, theme::surf().field);
+        ui.painter().rect_stroke(bar, 12.0, Stroke::new(1.0f32, LINE()));
+        let n = tabs.len().max(1) as f32;
+        let (pad, gap) = (4.0, 4.0);
+        let cw = (bar.width() - 2.0 * pad - gap * (n - 1.0)) / n;
+        for (i, (v, label)) in tabs.iter().enumerate() {
+            let r = Rect::from_min_size(egui::pos2(bar.min.x + pad + (cw + gap) * i as f32, bar.min.y + pad), egui::vec2(cw, h - 2.0 * pad));
+            let resp = ui.interact(r, ui.id().with(("tab-bar", i, *label)), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+            let sel = *value == *v;
+            let hovered = resp.hovered();
+            let p = ui.painter();
+            if sel {
+                p.add(card_shadow().as_shape(r, 9.0));
+                p.rect_filled(r, 9.0, CARD_HOVER());
+                p.rect_stroke(r, 9.0, Stroke::new(1.0f32, LINE()));
+            } else if hovered {
+                p.rect_filled(r, 9.0, theme::blend(theme::surf().field, CARD_HOVER(), 0.6));
+            }
+            let ink = if sel || hovered { TEXT() } else { MUTED() };
+            let font = if sel { crate::fonts::sans_bold_font(13.5) } else { crate::fonts::sans_font(13.5) };
+            p.text(r.center(), Align2::CENTER_CENTER, *label, font, ink);
+            if resp.clicked() && !sel {
+                *value = *v;
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T, &str)]) -> bool {
+        let mut changed = false;
+        egui::Frame::none()
+            .fill(theme::surf().field)
+            .stroke(Stroke::new(1.0f32, LINE()))
+            .rounding(10.0)
+            .inner_margin(egui::Margin::same(3.0))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 3.0;
+                    ui.spacing_mut().button_padding = egui::vec2(12.0, 2.0);
+                    for (v, label) in options {
+                        let selected = *value == *v;
+                        let slot = ui.painter().add(egui::Shape::Noop);
+                        let text = RichText::new(label.trim())
+                            .font(if selected { crate::fonts::sans_bold_font(13.0) } else { crate::fonts::sans_font(13.0) })
+                            .color(if selected { TEXT() } else { MUTED() });
+                        let resp = ui.add(egui::Button::new(text).fill(Color32::TRANSPARENT).stroke(Stroke::NONE).min_size(egui::vec2(0.0, CONTROL_H - 4.0)));
+                        let shape = if selected {
+                            egui::Shape::Vec(vec![
+                                card_shadow().as_shape(resp.rect, 8.0).into(),
+                                egui::Shape::rect_filled(resp.rect, 8.0, CARD_HOVER()),
+                                egui::Shape::rect_stroke(resp.rect, 8.0, Stroke::new(1.0f32, LINE())),
+                            ])
+                        } else if resp.hovered() {
+                            egui::Shape::rect_filled(resp.rect, 8.0, theme::blend(theme::surf().field, CARD_HOVER(), 0.6))
+                        } else {
+                            egui::Shape::Noop
+                        };
+                        ui.painter().set(slot, shape);
+                        if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() && !selected {
+                            *value = *v;
+                            changed = true;
+                        }
+                    }
+                });
+            });
+        changed
+    }
+
+    pub fn pill(ui: &mut Ui, text: &str, kind: PillKind) -> Response {
+        let c = match kind {
+            PillKind::Ok => theme::GREEN,
+            PillKind::Warn => theme::HP_YELLOW,
+            PillKind::Bad => theme::HP_RED,
+            PillKind::Info => MUTED(),
+        };
+        let light = theme::pal().light;
+        let fg = if light { theme::blend(c, Color32::BLACK, 0.35) } else { theme::blend(c, Color32::WHITE, 0.25) };
+        egui::Frame::none()
+            .fill(tint(c, if light { 0.14 } else { 0.16 }))
+            .stroke(Stroke::new(1.0f32, tint(c, 0.3)))
+            .rounding(12.0)
+            .inner_margin(egui::Margin::symmetric(10.0, 3.0))
+            .show(ui, |ui| ui.label(RichText::new(text).size(fs(12.0)).color(fg)))
+            .response
+    }
+
+    pub fn choice_tile(ui: &mut Ui, size: Vec2, selected: bool, icon: &str, title: &str, subtitle: &str, badge_text: &str) -> Response {
+        let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+        let p = ui.painter_at(rect.expand(14.0));
+        let accent = theme::BUTTON();
+        let hovered = resp.hovered();
+        p.add(card_shadow().as_shape(rect, 14.0));
+        p.rect_filled(rect, 14.0, if selected { tint(accent, 0.08) } else if hovered { CARD_HOVER() } else { CARD() });
+        p.rect_stroke(
+            rect.shrink(if selected { 1.0 } else { 0.5 }),
+            14.0,
+            if selected {
+                Stroke::new(2.0f32, accent)
+            } else if hovered {
+                Stroke::new(1.0f32, CONTROL())
+            } else {
+                Stroke::new(1.0f32, LINE())
+            },
+        );
+        let x = rect.left() + 14.0;
+        if size.y < 112.0 {
+            // Short tile: chip beside the title.
+            let chip = Rect::from_min_size(egui::pos2(x, rect.top() + 12.0), egui::vec2(28.0, 28.0));
+            icon_chip(&p, chip, icon, if selected { accent } else { MUTED() }, selected);
+            let tx = chip.max.x + 10.0;
+            let right = rect.right() - if selected { 34.0 } else { 12.0 };
+            let title_g = p.layout_no_wrap(title.to_string(), crate::fonts::sans_bold_font(13.5), TEXT());
+            p.with_clip_rect(Rect::from_min_max(rect.min, egui::pos2(right, rect.max.y))).galley(egui::pos2(tx, chip.min.y - 1.0), title_g, TEXT());
+            let sub = p.layout(subtitle.to_string(), crate::fonts::sans_font(12.0), MUTED(), (right - tx).max(40.0));
+            p.with_clip_rect(rect.shrink(2.0)).galley(egui::pos2(tx, chip.min.y + 18.0), sub, MUTED());
+        } else {
+            let chip = Rect::from_min_size(egui::pos2(x, rect.top() + 12.0), egui::vec2(28.0, 28.0));
+            icon_chip(&p, chip, icon, if selected { accent } else { MUTED() }, selected);
+            p.text(egui::pos2(x, chip.max.y + 14.0), Align2::LEFT_CENTER, title, crate::fonts::sans_bold_font(13.5), TEXT());
+            let sub = p.layout(subtitle.to_string(), crate::fonts::sans_font(12.0), MUTED(), rect.width() - 28.0);
+            p.galley(egui::pos2(x, chip.max.y + 24.0), sub, MUTED());
+        }
+        if !badge_text.is_empty() {
+            let galley = p.layout_no_wrap(badge_text.to_string(), crate::fonts::sans_font(12.0), if selected { accent } else { MUTED() });
+            let bx = if size.y < 112.0 { x + 36.0 } else { x - 2.0 };
+            let b = Rect::from_min_size(egui::pos2(bx, rect.bottom() - 26.0), galley.size() + egui::vec2(14.0, 4.0));
+            p.rect_filled(b, b.height() / 2.0, if selected { tint(accent, 0.18) } else { CARD_HOVER() });
+            p.galley(b.min + egui::vec2(7.0, 2.0), galley, MUTED());
+        }
+        if selected {
+            let c = rect.right_top() + egui::vec2(-18.0, 18.0);
+            p.circle_filled(c, 9.0, accent);
+            let s = Stroke::new(1.8f32, theme::button_ink());
+            p.line_segment([c + egui::vec2(-3.5, 0.3), c + egui::vec2(-1.0, 2.8)], s);
+            p.line_segment([c + egui::vec2(-1.0, 2.8), c + egui::vec2(3.8, -2.5)], s);
+        }
+        resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+    }
+
+    pub fn stat(ui: &mut Ui, width: f32, label: &str, value: &str) -> Response {
+        let w = (width - 30.0).max(10.0);
+        egui::Frame::none()
+            .fill(CARD())
+            .stroke(Stroke::new(1.0f32, LINE()))
+            .rounding(12.0)
+            .inner_margin(egui::Margin::symmetric(15.0, 12.0))
+            .show(ui, |ui| {
+                ui.set_width(w);
+                ui.vertical(|ui| {
+                    ui.set_max_width(w);
+                    ui.spacing_mut().item_spacing.y = 3.0;
+                    ui.add(egui::Label::new(RichText::new(label).size(12.5).color(MUTED())).wrap_mode(egui::TextWrapMode::Truncate)).on_hover_text(label);
+                    ui.add(egui::Label::new(RichText::new(value).font(crate::fonts::sans_bold_font(20.0)).color(TEXT())).wrap_mode(egui::TextWrapMode::Truncate))
+                        .on_hover_text(value);
+                });
+            })
+            .response
+    }
+
+    /// Sidebar row: an icon chip in the page's colour; the open page sits on
+    /// a raised highlight with its chip filled in. `compact`: icon only.
+    pub fn nav_item(ui: &mut Ui, icon: &str, label: &str, selected: bool, color: Color32, compact: bool) -> Response {
+        let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 38.0), Sense::click());
+        let p = ui.painter();
+        let hovered = resp.hovered();
+        if selected {
+            p.rect_filled(rect, 10.0, theme::blend(SIDEBAR(), color, if theme::pal().light { 0.1 } else { 0.16 }));
+        } else if hovered {
+            p.rect_filled(rect, 10.0, theme::blend(SIDEBAR(), TEXT(), 0.05));
+        }
+        let chip = if compact {
+            Rect::from_center_size(rect.center(), egui::vec2(28.0, 28.0))
+        } else {
+            Rect::from_center_size(rect.left_center() + egui::vec2(22.0, 0.0), egui::vec2(28.0, 28.0))
+        };
+        icon_chip(p, chip, icon, color, selected);
+        if !compact {
+            p.text(
+                chip.right_center() + egui::vec2(11.0, 0.0),
+                Align2::LEFT_CENTER,
+                label,
+                if selected { crate::fonts::sans_bold_font(13.5) } else { crate::fonts::sans_font(13.5) },
+                if selected || hovered { TEXT() } else { theme::blend(SIDEBAR(), TEXT(), 0.72) },
+            );
+        }
+        let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+        if compact {
+            resp.on_hover_text(label)
+        } else {
+            resp
+        }
+    }
+
+    pub fn expander(ui: &mut Ui, label: &str, detail: &str, open: bool) -> Response {
+        let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 44.0), Sense::click());
+        let p = ui.painter();
+        let hovered = resp.hovered();
+        p.rect_filled(rect, 12.0, if hovered { CARD_HOVER() } else { CARD() });
+        p.rect_stroke(rect, 12.0, Stroke::new(1.0f32, if hovered { CONTROL() } else { LINE() }));
+        let g = p.text(egui::pos2(rect.min.x + 16.0, rect.center().y), Align2::LEFT_CENTER, label, crate::fonts::sans_bold_font(13.5), TEXT());
+        let x = g.max.x + 10.0;
+        if !detail.is_empty() {
+            let avail = rect.max.x - 52.0 - x;
+            if avail > 40.0 {
+                let galley = ui.painter().layout(detail.to_string(), crate::fonts::sans_font(12.5), MUTED(), f32::INFINITY);
+                let clip = Rect::from_min_max(egui::pos2(x, rect.min.y), egui::pos2(x + avail, rect.max.y));
+                ui.painter().with_clip_rect(clip).galley(egui::pos2(x, rect.center().y - galley.size().y / 2.0), galley, MUTED());
+            }
+        }
+        let c = egui::pos2(rect.max.x - 24.0, rect.center().y);
+        p.circle_filled(c, 12.0, if hovered { CONTROL() } else { CARD_HOVER() });
+        let s = Stroke::new(1.8f32, TEXT());
+        let (dy, tip) = if open { (2.5, -2.5) } else { (-2.5, 2.5) };
+        p.line_segment([c + egui::vec2(-5.0, dy), c + egui::vec2(0.0, tip)], s);
+        p.line_segment([c + egui::vec2(0.0, tip), c + egui::vec2(5.0, dy)], s);
+        resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+    }
+
+    /// Primary button: the button colour (or gradient), the boldest thing on
+    /// the page.
+    pub fn accent_button(ui: &mut Ui, btn: egui::Button<'_>) -> Response {
+        let slot = ui.painter().add(egui::Shape::Noop);
+        let resp = ui.add(btn.fill(Color32::TRANSPARENT).stroke(Stroke::NONE).min_size(egui::vec2(0.0, CONTROL_H + 2.0)));
+        let mut shape = theme::button_shape(resp.rect, 10.0, resp.hovered());
+        if resp.is_pointer_button_down_on() {
+            shape = theme::button_shape(resp.rect.shrink(0.5), 10.0, false);
+        }
+        let glow = egui::epaint::Shadow {
+            offset: egui::vec2(0.0, 4.0),
+            blur: 14.0,
+            spread: 0.0,
+            color: theme::BUTTON().gamma_multiply(if resp.hovered() { 0.45 } else { 0.28 }),
+        };
+        ui.painter().set(slot, egui::Shape::Vec(vec![glow.as_shape(resp.rect, 10.0).into(), shape]));
         resp.on_hover_cursor(egui::CursorIcon::PointingHand)
     }
 }

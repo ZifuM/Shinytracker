@@ -187,7 +187,59 @@ const CLEAN_LIGHT: Surf = Surf {
     field: rgb(255, 255, 255),
 };
 
-static SURF: std::sync::RwLock<Surf> = std::sync::RwLock::new(CLEAN_DARK);
+static SURF: std::sync::RwLock<Surf> = std::sync::RwLock::new(MODERN_DARK);
+
+// ───────────────────── modern style (the default since 0.5) ─────────────────────
+// Deep ink surfaces with a hint of blue, soft cards with shadows, colour-coded
+// icon chips and the user's accent (or gradient) on primary actions. Built on
+// the clean style's rules (system font, nothing under 12px), so every page
+// that follows those picks the modern look up too. Appearance → Style.
+
+static MODERN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// True when the Companion window uses the modern style.
+pub fn modern() -> bool {
+    MODERN.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+const MODERN_DARK: Surf = Surf {
+    sidebar: rgb(13, 15, 22),
+    page: rgb(18, 20, 29),
+    card: rgb(26, 29, 41),
+    card_hover: rgb(33, 37, 52),
+    line: rgb(39, 43, 59),
+    control: rgb(60, 65, 88),
+    selected: rgb(41, 45, 64),
+    text: rgb(236, 238, 245),
+    muted: rgb(144, 150, 172),
+    field: rgb(14, 16, 24),
+};
+
+const MODERN_SEMI: Surf = Surf {
+    sidebar: rgb(31, 34, 48),
+    page: rgb(38, 41, 57),
+    card: rgb(47, 51, 70),
+    card_hover: rgb(55, 59, 80),
+    line: rgb(63, 68, 91),
+    control: rgb(86, 92, 118),
+    selected: rgb(63, 68, 93),
+    text: rgb(242, 243, 248),
+    muted: rgb(172, 178, 198),
+    field: rgb(31, 34, 48),
+};
+
+const MODERN_LIGHT: Surf = Surf {
+    sidebar: rgb(255, 255, 255),
+    page: rgb(243, 244, 248),
+    card: rgb(255, 255, 255),
+    card_hover: rgb(245, 246, 250),
+    line: rgb(228, 230, 238),
+    control: rgb(204, 208, 220),
+    selected: rgb(236, 238, 246),
+    text: rgb(24, 27, 40),
+    muted: rgb(100, 106, 128),
+    field: rgb(247, 248, 251),
+};
 
 /// The clean style's surface colours for the current mode.
 pub fn surf() -> Surf {
@@ -237,12 +289,16 @@ pub fn set_appearance(ctx: &egui::Context, a: &crate::config::Appearance) {
     if let Ok(mut w) = PAL.write() {
         *w = p;
     }
-    CLEAN.store(a.clean_settings, std::sync::atomic::Ordering::Relaxed);
+    MODERN.store(a.modern_ui, std::sync::atomic::Ordering::Relaxed);
+    CLEAN.store(a.clean_settings || a.modern_ui, std::sync::atomic::Ordering::Relaxed);
     if let Ok(mut w) = SURF.write() {
-        *w = match a.mode {
-            UiMode::Dark => CLEAN_DARK,
-            UiMode::SemiDark => CLEAN_SEMI,
-            UiMode::Light => CLEAN_LIGHT,
+        *w = match (a.modern_ui, a.mode) {
+            (true, UiMode::Dark) => MODERN_DARK,
+            (true, UiMode::SemiDark) => MODERN_SEMI,
+            (true, UiMode::Light) => MODERN_LIGHT,
+            (false, UiMode::Dark) => CLEAN_DARK,
+            (false, UiMode::SemiDark) => CLEAN_SEMI,
+            (false, UiMode::Light) => CLEAN_LIGHT,
         };
     }
     apply(ctx);
@@ -370,7 +426,7 @@ pub fn button_ink() -> Color32 {
     };
     let lum = |c: Color32| 0.2126 * lin(c.r()) + 0.7152 * lin(c.g()) + 0.0722 * lin(c.b());
     // Clean style draws buttons flat in the first colour, so judge that alone.
-    let l = if clean() { lum(pl.button) } else { (lum(pl.button) + lum(pl.button2)) / 2.0 };
+    let l = if clean() && !modern() { lum(pl.button) } else { (lum(pl.button) + lum(pl.button2)) / 2.0 };
     let dark = Color32::from_rgb(30, 28, 44);
     let on_white = 1.05 / (l + 0.05);
     let on_dark = (l + 0.05) / (lum(dark) + 0.05);

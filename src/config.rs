@@ -322,6 +322,11 @@ pub struct Appearance {
     /// Flat "clean" look for the settings window (neutral greys, pill
     /// buttons, system font); the default. Off = the classic look.
     pub clean_settings: bool,
+    /// The modern look for the Companion window (the default since 0.5).
+    /// Off = the clean or classic look above.
+    pub modern_ui: bool,
+    /// Modern look: the sidebar shows icons only.
+    pub nav_compact: bool,
 }
 
 impl Default for Appearance {
@@ -336,6 +341,8 @@ impl Default for Appearance {
             button_gradient: false,
             button2: [128, 78, 208],
             clean_settings: true,
+            modern_ui: true,
+            nav_compact: false,
         }
     }
 }
@@ -422,6 +429,8 @@ pub struct Config {
     pub share_folder: Option<String>,
     /// Show a "Save as" box every time instead of saving straight away.
     pub share_ask: bool,
+    /// Rare grass infographic in the original sea-blue look (else the anime one).
+    pub poster_classic: bool,
     /// Light/dark mode and accent colours.
     pub appearance: Appearance,
     /// Trainer profile name (also used on share images).
@@ -553,6 +562,7 @@ impl Default for Config {
             card_names: Default::default(),
             share_folder: None,
             share_ask: false,
+            poster_classic: false,
             appearance: Appearance::default(),
             trainer_name: String::new(),
             achievements: Vec::new(),

@@ -20,6 +20,8 @@ fn index(face: PFace) -> usize {
         PFace::D600 => 2,
         PFace::T600 => 3,
         PFace::T500 => 4,
+        PFace::Black => 5,
+        PFace::Bold => 6,
     }
 }
 
@@ -52,6 +54,8 @@ impl PosterFonts {
             display(520.0).or_else(|| read("seguisb.ttf")).or_else(bold),
             read("seguisb.ttf").or_else(bold),
             read("segoeui.ttf").or_else(egui_font),
+            read("seguibli.ttf").or_else(|| read("seguibl.ttf")).or_else(bold),
+            bold(),
         ];
         Self { faces }
     }

@@ -27,7 +27,7 @@ impl App {
     }
 
     /// The big Start / Stop button.
-    fn overlay_button(&mut self, ui: &mut egui::Ui, size: egui::Vec2) {
+    pub(super) fn overlay_button(&mut self, ui: &mut egui::Ui, size: egui::Vec2) {
         if self.overlay_on && self.ov_hidden {
             let b = egui::Button::new(RichText::new("▶  Show overlay").size(kit::fs(14.0)).strong().color(theme::button_ink()))
                 .min_size(size);
@@ -119,13 +119,16 @@ impl App {
         }
     }
 
-    fn target_label(&self) -> String {
+    pub(super) fn target_label(&self) -> String {
         self.targets_title().unwrap_or_else(|| "No target yet".to_string())
     }
 
     // ───────────────────────────── Home ─────────────────────────────
 
     pub(super) fn page_home(&mut self, ui: &mut egui::Ui) {
+        if kit::modern() {
+            return self.page_home_modern(ui);
+        }
         kit::page_header(ui, "HOME", "Your Platinum Together tools in one place.");
         self.home_notices(ui);
 
@@ -301,7 +304,7 @@ impl App {
     }
 
     /// Update / break / goal notices, as cards on Home.
-    fn home_notices(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn home_notices(&mut self, ui: &mut egui::Ui) {
         use super::notices::NoticeAction;
         if self.notices.is_empty() {
             return;
@@ -309,9 +312,18 @@ impl App {
         let mut act: Option<(&'static str, NoticeAction)> = None;
         let mut dismiss: Option<&'static str> = None;
         for n in &self.notices {
-            kit::card(ui, |ui| {
+            // Modern: a banner with the notice's colour down its left edge.
+            let slot = ui.painter().add(egui::Shape::Noop);
+            let modern = kit::modern();
+            let mut body = |ui: &mut egui::Ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(n.icon).size(kit::fs(20.0)).color(n.accent));
+                    if modern {
+                        let (r, _) = ui.allocate_exact_size(egui::vec2(34.0, 34.0), Sense::hover());
+                        kit::icon_chip(ui.painter(), r, n.icon, n.accent, false);
+                        ui.add_space(4.0);
+                    } else {
+                        ui.label(RichText::new(n.icon).size(kit::fs(20.0)).color(n.accent));
+                    }
                     ui.vertical(|ui| {
                         ui.label(RichText::new(&n.title).size(kit::fs(13.5)).strong().color(TEXT()));
                         ui.label(RichText::new(&n.body).size(kit::fs(12.0)).color(MUTED()));
@@ -331,8 +343,27 @@ impl App {
                         }
                     });
                 });
-            });
-            ui.add_space(8.0);
+            };
+            if modern {
+                let r = egui::Frame::none()
+                    .fill(kit::tint(n.accent, 0.06))
+                    .stroke(egui::Stroke::new(1.0f32, kit::tint(n.accent, 0.3)))
+                    .rounding(14.0)
+                    .inner_margin(egui::Margin { left: 18.0, right: 14.0, top: 12.0, bottom: 12.0 })
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        body(ui)
+                    })
+                    .response
+                    .rect;
+                let bar = egui::Rect::from_min_size(r.min + egui::vec2(0.0, 12.0), egui::vec2(4.0, r.height() - 24.0));
+                ui.painter().rect_filled(bar, 2.0, n.accent);
+                ui.painter().set(slot, egui::Shape::Noop);
+                ui.add_space(10.0);
+            } else {
+                kit::card(ui, body);
+                ui.add_space(8.0);
+            }
         }
         if let Some(id) = dismiss {
             self.clear_notice(id);
@@ -356,42 +387,47 @@ impl App {
 
     pub(super) fn page_shiny(&mut self, ui: &mut egui::Ui) {
         kit::page_header(ui, "SHINY HUNTER", "Count encounters and catch shinies, with an overlay on top of the game.");
-        kit::card(ui, |ui| {
-            ui.horizontal(|ui| {
-                self.target_badge(ui, 96.0);
-                ui.add_space(6.0);
-                ui.vertical(|ui| {
-                    ui.label(RichText::new("Current hunt").size(kit::fs(11.0)).color(MUTED()));
-                    ui.label(RichText::new(self.target_label()).size(kit::fs(18.0)).strong().color(TEXT()));
-                    ui.label(
-                        RichText::new(format!(
-                            "{} encounters · {} hunted today",
-                            theme::thousands(self.cfg.count),
-                            fmt_duration(self.today_hunt_secs())
-                        ))
-                        .size(kit::fs(12.5))
-                        .color(TEXT()),
-                    );
-                    let (odds, col) = self.odds_line();
-                    ui.label(RichText::new(odds).size(kit::fs(12.0)).color(col));
-                    ui.add_space(4.0);
-                    if ui
-                        .add(egui::Button::new(RichText::new("Change target").size(kit::fs(12.5))).fill(kit::btn_fill()))
-                        .on_hover_text("Pick a different Pokémon to hunt")
-                        .clicked()
-                    {
-                        self.open_target_picker();
-                    }
-                });
-                // Button and status flush right, stacked.
-                ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
-                    ui.add_space(14.0);
-                    self.overlay_button(ui, egui::vec2(180.0, 40.0));
-                    ui.add_space(4.0);
-                    self.overlay_status(ui);
+        if kit::modern() {
+            self.hunt_hero(ui, false);
+            ui.add_space(18.0);
+        } else {
+            kit::card(ui, |ui| {
+                ui.horizontal(|ui| {
+                    self.target_badge(ui, 96.0);
+                    ui.add_space(6.0);
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new("Current hunt").size(kit::fs(11.0)).color(MUTED()));
+                        ui.label(RichText::new(self.target_label()).size(kit::fs(18.0)).strong().color(TEXT()));
+                        ui.label(
+                            RichText::new(format!(
+                                "{} encounters · {} hunted today",
+                                theme::thousands(self.cfg.count),
+                                fmt_duration(self.today_hunt_secs())
+                            ))
+                            .size(kit::fs(12.5))
+                            .color(TEXT()),
+                        );
+                        let (odds, col) = self.odds_line();
+                        ui.label(RichText::new(odds).size(kit::fs(12.0)).color(col));
+                        ui.add_space(4.0);
+                        if ui
+                            .add(egui::Button::new(RichText::new("Change target").size(kit::fs(12.5))).fill(kit::btn_fill()))
+                            .on_hover_text("Pick a different Pokémon to hunt")
+                            .clicked()
+                        {
+                            self.open_target_picker();
+                        }
+                    });
+                    // Button and status flush right, stacked.
+                    ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
+                        ui.add_space(14.0);
+                        self.overlay_button(ui, egui::vec2(180.0, 40.0));
+                        ui.add_space(4.0);
+                        self.overlay_status(ui);
+                    });
                 });
             });
-        });
+        }
 
         kit::section(ui, "Overlay window");
         kit::card(ui, |ui| {
@@ -422,6 +458,22 @@ impl App {
         });
 
         kit::section(ui, "Shiny Hunter pages");
+        if kit::modern() {
+            let w = ui.available_width();
+            self.page_tiles(
+                ui,
+                w,
+                &[
+                    (Tab::Hunt, "Target, method and odds."),
+                    (Tab::Counting, "Game log or screen reading."),
+                    (Tab::Runs, "Every hunt, with stats."),
+                    (Tab::Dex, "The shinies you've caught."),
+                    (Tab::Overlay, "Layout, sections and sounds."),
+                ],
+                3,
+            );
+            return;
+        }
         let pages = [
             (Tab::Hunt, "🎯", "Hunt", "Target, method and odds"),
             (Tab::Counting, "👁", "Counting", "Game log or screen reading"),
