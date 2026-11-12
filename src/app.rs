@@ -18,6 +18,8 @@ mod dex_tabs;
 mod extras;
 mod home;
 mod info_home;
+mod info_guides;
+mod info_md;
 mod hunt_pages;
 mod notices;
 mod onboarding;

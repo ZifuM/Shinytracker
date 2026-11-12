@@ -6,6 +6,7 @@
 use super::pokedex::{type_chip, type_color};
 use super::profile_page::card_head;
 use super::ui_kit::{self as kit, CARD, CARD_HOVER, LINE, MUTED, TEXT};
+use super::info_guides::guide_icon;
 use super::{App, Tab};
 use crate::theme;
 use crate::wiki::{self, Mon, Wiki, Wild};
@@ -79,8 +80,24 @@ struct Hit {
     dex: u32,
 }
 
+/// Which Game Info page is open.
+#[derive(Clone, PartialEq, Debug, Default)]
+pub(super) enum Page {
+    #[default]
+    Home,
+    /// How to Play: the guides library.
+    Guides,
+    /// One guide, by id.
+    Guide(String),
+}
+
 #[derive(Default)]
 pub(super) struct InfoState {
+    pub page: Page,
+    /// Pages to go back to.
+    pub history: Vec<Page>,
+    /// The guides library and reader.
+    pub reader: super::info_guides::ReaderState,
     pub query: String,
     /// Only this kind in the results; with no query, list all of it.
     pub kind: Option<Kind>,
@@ -97,6 +114,16 @@ pub(super) struct InfoState {
 impl InfoState {
     fn browsing(&self) -> bool {
         !self.query.trim().is_empty() || self.kind.is_some()
+    }
+
+    /// Back to the front page with nothing searched (clicking Game Info in
+    /// the sidebar while you're in it).
+    pub fn reset_home(&mut self) {
+        self.page = Page::Home;
+        self.history.clear();
+        self.query.clear();
+        self.kind = None;
+        self.pick = None;
     }
 }
 
@@ -267,27 +294,6 @@ fn deadline_days(text: &str) -> Option<i64> {
     Some(end - today)
 }
 
-fn guide_icon(name: &str) -> &'static str {
-    match name {
-        "bag" => "🎒",
-        "spark" => "✨",
-        "download" => "⬇",
-        "map" => "🗺",
-        "flag" => "🚩",
-        "pad" => "🎮",
-        "people" => "👥",
-        "globe" => "🌐",
-        "badge" => "🏅",
-        "book" => "📖",
-        "heart" => "❤",
-        "gear" => "⚙",
-        "ball" => "⚪",
-        "save" => "💾",
-        "bug" => "🐛",
-        _ => "❓",
-    }
-}
-
 fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{} {}", fmt_n(n), if n == 1 { one } else { many })
 }
@@ -333,6 +339,15 @@ impl App {
         let key = Arc::as_ptr(&w) as usize;
         if self.setup.info.index.as_ref().map(|i| i.0) != Some(key) {
             self.setup.info.index = Some((key, build_index(&w)));
+        }
+        // keys: Alt+Left goes back
+        if ui.input(|i| i.modifiers.alt && i.key_pressed(egui::Key::ArrowLeft)) && !self.setup.info.history.is_empty() {
+            self.info_back();
+        }
+        match self.setup.info.page.clone() {
+            Page::Guides => return self.page_guides(ui, &w),
+            Page::Guide(id) => return self.page_guide(ui, &w, &id),
+            Page::Home => {}
         }
         kit::page_header(
             ui,
@@ -397,7 +412,11 @@ impl App {
                         ui.painter().rect_filled(r, r.height() / 2.0, fill);
                         ui.painter().rect_stroke(r, r.height() / 2.0, Stroke::new(1.0f32, theme::blend(LINE(), k.color(), 0.25 + 0.5 * ht)));
                         ui.painter().galley(r.min + egui::vec2(11.0, 6.0), g, TEXT());
-                        let tip = if k == Kind::Pokemon { "Open the Pokédex".to_string() } else { format!("List every {}", k.one()) };
+                        let tip = match k {
+                            Kind::Pokemon => "Open the Pokédex".to_string(),
+                            Kind::Guide => "Open How to Play".to_string(),
+                            _ => format!("List every {}", k.one()),
+                        };
                         if resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                             pick_kind = Some(k);
                         }
@@ -431,6 +450,8 @@ impl App {
         if let Some(k) = pick_kind {
             if k == Kind::Pokemon {
                 self.info_open_dex(None);
+            } else if k == Kind::Guide && self.setup.info.query.trim().is_empty() {
+                self.info_push(Page::Guides);
             } else {
                 let s = &mut self.setup.info;
                 if s.kind == Some(k) && s.query.trim().is_empty() {
@@ -535,7 +556,42 @@ impl App {
         }
     }
 
-    fn info_open_dex(&mut self, id: Option<String>) {
+    /// Go to a page, remembering this one for "Back".
+    pub(super) fn info_push(&mut self, page: Page) {
+        let s = &mut self.setup.info;
+        if s.page != page {
+            let cur = std::mem::replace(&mut s.page, page);
+            // coming back to a page you were on: drop the loop
+            if let Some(i) = s.history.iter().position(|p| *p == s.page) {
+                s.history.truncate(i);
+            } else {
+                s.history.push(cur);
+            }
+            if s.history.len() > 30 {
+                s.history.remove(0);
+            }
+        }
+        self.setup.scroll_top = true;
+    }
+
+    pub(super) fn info_back(&mut self) {
+        let s = &mut self.setup.info;
+        s.page = s.history.pop().unwrap_or_default();
+        s.reader.scroll_to = None;
+        self.setup.scroll_top = true;
+    }
+
+    /// Show one thing in the search panel (from a guide's link).
+    pub(super) fn info_show(&mut self, kind: Kind, key: String) {
+        self.info_push(Page::Home);
+        let s = &mut self.setup.info;
+        s.query.clear();
+        s.kind = Some(kind);
+        s.pick = Some((kind, key));
+        s.scroll_pick = true;
+    }
+
+    pub(super) fn info_open_dex(&mut self, id: Option<String>) {
         self.setup.pokedex.shiny = false;
         self.setup.pokedex.open = id;
         self.setup.pokedex.tab = Default::default();
@@ -561,7 +617,12 @@ impl App {
         let mut back = false;
         let mut set_kind: Option<Option<Kind>> = None;
         ui.horizontal(|ui| {
-            if ui.add(egui::Button::new(RichText::new("‹  Game Info").size(13.0)).fill(kit::btn_fill())).clicked() {
+            let back_label = match self.setup.info.history.last() {
+                Some(Page::Guide(id)) => w.guide(id).map(|g| if g.short.is_empty() { g.title.clone() } else { g.short.clone() }).unwrap_or_else(|| "Back".into()),
+                Some(Page::Guides) => "How to Play".into(),
+                _ => "Game Info".into(),
+            };
+            if ui.add(egui::Button::new(RichText::new(format!("‹  {back_label}")).size(13.0)).fill(kit::btn_fill())).clicked() {
                 back = true;
             }
             ui.add_space(8.0);
@@ -585,6 +646,9 @@ impl App {
             s.query.clear();
             s.kind = None;
             s.pick = None;
+            if !s.history.is_empty() {
+                self.info_back();
+            }
             return;
         }
         if let Some(k) = set_kind {
@@ -748,6 +812,7 @@ impl App {
     fn info_quick_look(&mut self, ui: &mut egui::Ui, w: &Arc<Wiki>, cur: &(Kind, String)) {
         let mut go: Option<(Kind, String)> = None;
         let mut dex: Option<String> = None;
+        let mut read: Option<(String, Option<usize>)> = None;
         kit::card(ui, |ui| match cur.0 {
             Kind::Pokemon => {
                 if let Some(m) = w.mon(&cur.1).cloned() {
@@ -757,8 +822,15 @@ impl App {
             Kind::Move => look_move(ui, w, &cur.1, &mut go),
             Kind::Item => look_item(ui, w, &cur.1, &mut go),
             Kind::Place => self.look_place(ui, w, &cur.1, &mut go),
-            Kind::Guide => look_guide(ui, w, &cur.1),
+            Kind::Guide => {
+                if let Some(doc) = self.guide_doc(w, &cur.1) {
+                    read = look_guide(ui, w, &cur.1, &doc);
+                }
+            }
         });
+        if let Some((id, sec)) = read {
+            self.info_read(&id, sec, None);
+        }
         if let Some(p) = go {
             // jump to it: make sure it's in the list
             let s = &mut self.setup.info;
@@ -1034,11 +1106,7 @@ impl App {
     }
 
     fn info_open_guide(&mut self, id: &str) {
-        let s = &mut self.setup.info;
-        s.query.clear();
-        s.kind = Some(Kind::Guide);
-        s.pick = Some((Kind::Guide, id.to_string()));
-        s.scroll_pick = true;
+        self.info_read(id, None, None);
     }
 
     /// Where the current target lives, best spots for this time of day first.
@@ -1193,7 +1261,11 @@ impl App {
                 let x = chip.max.x + 12.0;
                 p.text(egui::pos2(x, r.center().y - 8.0), Align2::LEFT_CENTER, title, crate::fonts::sans_bold_font(14.0), TEXT());
                 p.text(egui::pos2(x, r.center().y + 10.0), Align2::LEFT_CENTER, sub, crate::fonts::sans_font(11.5), MUTED());
-                let hint = if *k == Kind::Pokemon { "Pokédex" } else { "List" };
+                let hint = match k {
+                    Kind::Pokemon => "Pokédex",
+                    Kind::Guide => "How to Play",
+                    _ => "List",
+                };
                 let g = p.layout_no_wrap(hint.to_string(), crate::fonts::sans_font(11.5), MUTED());
                 p.text(egui::pos2(r.max.x - 12.0, r.center().y), Align2::RIGHT_CENTER, "›", egui::FontId::proportional(18.0), if ht > 0.5 { TEXT() } else { MUTED() });
                 if ht > 0.0 {
@@ -1206,6 +1278,7 @@ impl App {
         });
         match go {
             Some(Kind::Pokemon) => self.info_open_dex(None),
+            Some(Kind::Guide) => self.info_push(Page::Guides),
             Some(k) => {
                 let s = &mut self.setup.info;
                 s.query.clear();
@@ -1284,9 +1357,7 @@ impl App {
         if let Some(id) = open {
             self.info_open_guide(&id);
         } else if all {
-            let s = &mut self.setup.info;
-            s.kind = Some(Kind::Guide);
-            s.pick = None;
+            self.info_push(Page::Guides);
         }
     }
 
@@ -1612,11 +1683,14 @@ fn look_item(ui: &mut egui::Ui, w: &Wiki, id: &str, go: &mut Option<(Kind, Strin
     }
 }
 
-fn look_guide(ui: &mut egui::Ui, w: &Wiki, id: &str) {
-    let Some(g) = w.guide(id) else { return };
+/// A guide in the side panel; returns (guide, part) to open.
+fn look_guide(ui: &mut egui::Ui, w: &Wiki, id: &str, doc: &super::info_md::Doc) -> Option<(String, Option<usize>)> {
+    let g = w.guide(id)?;
+    let mut open = None;
+    let (_, col) = super::info_guides::topic_meta(&g.group);
     ui.horizontal(|ui| {
         let (r, _) = ui.allocate_exact_size(egui::vec2(44.0, 44.0), Sense::hover());
-        kit::icon_chip(ui.painter(), r, guide_icon(&g.icon), kit::C_CYAN, true);
+        kit::icon_chip(ui.painter(), r, guide_icon(&g.icon), col, true);
         ui.add_space(6.0);
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 1.0;
@@ -1627,13 +1701,15 @@ fn look_guide(ui: &mut egui::Ui, w: &Wiki, id: &str) {
     ui.add_space(10.0);
     ui.add(egui::Label::new(RichText::new(&g.summary).size(13.0).color(TEXT())).wrap());
     ui.add_space(12.0);
-    let heads: Vec<&str> = g.body.lines().filter_map(|l| l.strip_prefix("## ")).map(str::trim).collect();
+    let heads: Vec<(usize, &super::info_md::Section)> = doc.sections.iter().enumerate().filter(|(_, s)| s.level == 2).collect();
     if !heads.is_empty() {
-        look_head(ui, "WHAT'S IN IT", &plural(heads.len(), "part", "parts"));
-        for h in heads.iter().take(10) {
+        look_head(ui, "JUMP TO A PART", &plural(heads.len(), "part", "parts"));
+        for (i, h) in heads.iter().take(10) {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("•").color(kit::C_CYAN));
-                ui.label(RichText::new(h.replace("**", "")).size(12.5).color(TEXT()));
+                ui.label(RichText::new("•").color(col));
+                if ui.link(RichText::new(h.title.replace("**", "")).size(12.5)).clicked() {
+                    open = Some((g.id.clone(), Some(*i)));
+                }
             });
         }
         if heads.len() > 10 {
@@ -1641,13 +1717,13 @@ fn look_guide(ui: &mut egui::Ui, w: &Wiki, id: &str) {
         }
         ui.add_space(10.0);
     }
-    let words = g.body.split_whitespace().count();
     ui.horizontal(|ui| {
-        if ui.add(egui::Button::new(RichText::new("Read it on the wiki  ↗").size(13.0)).fill(kit::btn_fill())).clicked() {
-            ui.ctx().open_url(egui::OpenUrl::new_tab(format!("{}{}", wiki::GUIDE_BASE, g.id)));
+        if ui.add(egui::Button::new(RichText::new("Read the guide  ›").size(13.0)).fill(kit::btn_fill())).clicked() {
+            open = Some((g.id.clone(), None));
         }
-        ui.label(small(format!("about {} min read", (words / 200).max(1))));
+        ui.label(small(format!("about {} min read", (doc.words / 200).max(1))));
     });
+    open
 }
 
 #[cfg(test)]

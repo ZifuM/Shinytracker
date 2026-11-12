@@ -655,6 +655,8 @@ pub struct Config {
     pub runs_sort: u8,
     /// Runs page shows a compact list instead of cards.
     pub runs_list: bool,
+    /// Game Info: the how-to-play guides read to the end (guide ids).
+    pub guides_read: Vec<String>,
 }
 
 impl Default for Config {
@@ -744,6 +746,7 @@ impl Default for Config {
             onboarding_seen: 0,
             star_alert_reset: false,
             star_alert_reset2: false,
+            guides_read: Vec::new(),
             star_alert_on3: false,
             overlay_reset1: false,
             pinned_runs: Vec::new(),

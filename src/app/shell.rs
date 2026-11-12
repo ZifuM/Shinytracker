@@ -78,6 +78,9 @@ impl App {
             }
         }
         self.setup.scroll_top = current == tab || tab != Tab::Pokedex;
+        if tab == Tab::Info && current == Tab::Info {
+            self.setup.info.reset_home();
+        }
         self.setup.tab = tab;
         self.setup.picking_target = false;
         self.setup.view_run = None;
