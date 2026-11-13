@@ -16,10 +16,10 @@ use eframe::egui::{self, Align2, Color32, Rect, RichText, Sense, Stroke};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-const MOM: Color32 = kit::C_PINK;
-const DAD: Color32 = kit::C_BLUE;
-const GOLD: Color32 = kit::C_GOLD;
-const EGG: Color32 = Color32::from_rgb(244, 214, 150);
+pub(super) const MOM: Color32 = kit::C_PINK;
+pub(super) const DAD: Color32 = kit::C_BLUE;
+pub(super) const GOLD: Color32 = kit::C_GOLD;
+pub(super) const EGG: Color32 = Color32::from_rgb(244, 214, 150);
 
 #[derive(Default)]
 pub(super) struct BreedState {
@@ -32,6 +32,20 @@ pub(super) struct BreedState {
     pub notes_open: bool,
     /// Filter for the partner finder.
     pub partner_q: String,
+    pub view: BreedView,
+    /// The Breeders and Hatch log pages.
+    pub boxv: super::breed_box::BoxView,
+    /// A short "done" message: (text, when).
+    pub flash: Option<(String, Instant)>,
+}
+
+/// The Breeding Planner's pages.
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+pub(super) enum BreedView {
+    #[default]
+    DayCare,
+    Breeders,
+    Log,
 }
 
 impl BreedState {
@@ -70,16 +84,16 @@ impl BreedState {
 
 // ───────────────────────────── small helpers ─────────────────────────────
 
-fn name_of(w: &Wiki, id: &str) -> String {
+pub(super) fn name_of(w: &Wiki, id: &str) -> String {
     w.mon(id).map(|m| m.name.clone()).unwrap_or_else(|| id.to_string())
 }
 
-fn move_name(w: &Wiki, key: &str) -> String {
+pub(super) fn move_name(w: &Wiki, key: &str) -> String {
     w.move_info(key).map(|m| m.n.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| key.replace('_', " "))
 }
 
 /// "37.5%", "100%", "<0.1%".
-fn pct(p: f64) -> String {
+pub(super) fn pct(p: f64) -> String {
     let v = p * 100.0;
     if p <= 0.0 {
         "0%".into()
@@ -95,7 +109,7 @@ fn pct(p: f64) -> String {
 }
 
 /// "1 in 1,234" (per Egg).
-fn one_in(p: f64) -> String {
+pub(super) fn one_in(p: f64) -> String {
     if p >= 0.9995 {
         "Every Egg".into()
     } else {
@@ -104,9 +118,9 @@ fn one_in(p: f64) -> String {
 }
 
 /// What to call a parent, and its colour.
-fn role(p: &Parent, i: usize) -> (String, Color32) {
+pub(super) fn role(p: &Parent, i: usize) -> (String, Color32) {
     if p.species.is_empty() {
-        return (format!("PARENT {}", i + 1), kit::C_SLATE);
+        return (if i < 2 { format!("PARENT {}", i + 1) } else { "NEW BREEDER".into() }, kit::C_SLATE);
     }
     if p.is_ditto() {
         return ("DITTO".into(), kit::C_VIOLET);
@@ -119,7 +133,7 @@ fn role(p: &Parent, i: usize) -> (String, Color32) {
 }
 
 /// The species you can put in the Day Care (Ditto first), as (name, id).
-fn breedable(w: &Wiki, world: World) -> Vec<(String, String)> {
+pub(super) fn breedable(w: &Wiki, world: World) -> Vec<(String, String)> {
     let mut v: Vec<(String, String)> = w
         .all()
         .filter(|m| world == World::Modern || !m.modern)
@@ -142,7 +156,7 @@ fn held_label(h: &Held) -> String {
     }
 }
 
-fn nature_label(n: &str) -> String {
+pub(super) fn nature_label(n: &str) -> String {
     match battle::data().nature(n) {
         Some(x) if x.plus != x.minus => format!("{n}  (+{} −{})", STATS[x.plus], STATS[x.minus]),
         Some(_) => format!("{n}  (neutral)"),
@@ -151,12 +165,12 @@ fn nature_label(n: &str) -> String {
 }
 
 /// The ball by name, for drawing.
-fn ball_of(name: &str) -> crate::sim::Ball {
+pub(super) fn ball_of(name: &str) -> crate::sim::Ball {
     crate::sim::BALLS.iter().copied().find(|b| b.name() == name).unwrap_or(crate::sim::Ball::Poke)
 }
 
 /// A parent's stat as a chip: "31", "?" or "–".
-fn iv_text(v: Option<u8>) -> &'static str {
+pub(super) fn iv_text(v: Option<u8>) -> &'static str {
     match v {
         Some(31) => "31",
         Some(_) => "–",
@@ -211,6 +225,34 @@ impl App {
             ui.label(small("Loading the game's data…"));
             return;
         };
+        let (nb, nl) = (self.setup.breed.file().breeders.len(), self.setup.breed.file().log.len());
+        let tabs = [
+            (BreedView::DayCare, "Day Care".to_string()),
+            (BreedView::Breeders, if nb > 0 { format!("Breeders  {nb}") } else { "Breeders".into() }),
+            (BreedView::Log, if nl > 0 { format!("Hatch log  {nl}") } else { "Hatch log".into() }),
+        ];
+        let tabs_ref: Vec<(BreedView, &str)> = tabs.iter().map(|(v, l)| (*v, l.as_str())).collect();
+        let mut view = self.setup.breed.view;
+        kit::tab_bar(ui, &mut view, &tabs_ref);
+        if view != self.setup.breed.view {
+            self.setup.breed.view = view;
+            self.setup.breed.flash = None;
+            self.setup.scroll_top = true;
+        }
+        ui.add_space(14.0);
+        if let Some((msg, at)) = self.setup.breed.flash.clone() {
+            if at.elapsed() < Duration::from_secs(4) {
+                note_bar(ui, kit::C_GREEN, &msg, None);
+                ui.ctx().request_repaint_after(Duration::from_millis(250));
+            } else {
+                self.setup.breed.flash = None;
+            }
+        }
+        match view {
+            BreedView::Breeders => return self.page_breeders(ui, &w),
+            BreedView::Log => return self.page_hatch_log(ui, &w),
+            BreedView::DayCare => {}
+        }
         let before = (self.setup.breed.file().setup, self.setup.breed.file().daycare.clone());
         let mut setup = before.0;
         let mut dc = before.1.clone();
@@ -331,7 +373,7 @@ impl App {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn parent_card(&mut self, ui: &mut egui::Ui, w: &Arc<Wiki>, p: &mut Parent, other: &Parent, i: usize, egg_species: Option<&str>, s: &Setup, egg: Option<&Result<Egg, Why>>) {
+    pub(super) fn parent_card(&mut self, ui: &mut egui::Ui, w: &Arc<Wiki>, p: &mut Parent, other: &Parent, i: usize, egg_species: Option<&str>, s: &Setup, egg: Option<&Result<Egg, Why>>) {
         let (title, col) = role(p, i);
         let species = breedable(w, s.world);
         let names: Vec<String> = species.iter().map(|(n, _)| n.clone()).collect();
@@ -341,6 +383,14 @@ impl App {
         };
         let mut new_species: Option<String> = None;
         let mut clear = false;
+        let mut save = false;
+        let mut load: Option<Parent> = None;
+        let saved: Vec<(String, Parent)> = if i < 2 {
+            self.setup.breed.file().breeders.iter().map(|b| (super::breed_box::breeder_label(w, b), b.parent.clone())).collect()
+        } else {
+            vec![]
+        };
+        let saved_names: Vec<String> = saved.iter().map(|b| b.0.clone()).collect();
         side_card(ui, col, &title, |ui| {
             let full = ui.available_width();
             // Sprite, species and gender.
@@ -407,36 +457,7 @@ impl App {
                 ui.label(small("Tap: 31 · not 31 · don't know"));
             });
             ui.add_space(2.0);
-            let gap = 6.0;
-            let cw = ((full - gap * 5.0) / 6.0).clamp(40.0, 70.0);
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = gap;
-                for st in 0..6 {
-                    let (r, resp) = ui.allocate_exact_size(egui::vec2(cw, 46.0), Sense::click());
-                    let ht = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered(), kit::QUICK);
-                    let v = p.ivs[st];
-                    let on = v == Some(31);
-                    let pnt = ui.painter();
-                    let fill = if on { theme::blend(CARD(), GOLD, 0.22) } else { theme::blend(kit::sunken(), CARD_HOVER(), ht) };
-                    pnt.rect_filled(r, 10.0, fill);
-                    pnt.rect_stroke(r, 10.0, Stroke::new(1.0f32, if on { theme::blend(LINE(), GOLD, 0.8) } else { LINE() }));
-                    pnt.text(egui::pos2(r.center().x, r.min.y + 12.0), Align2::CENTER_CENTER, STATS[st].to_uppercase(), crate::fonts::sans_bold_font(9.5), MUTED());
-                    let ink = if on { super::charts::ink(GOLD) } else if v.is_some() { MUTED() } else { theme::blend(MUTED(), CARD(), 0.3) };
-                    pnt.text(egui::pos2(r.center().x, r.min.y + 31.0), Align2::CENTER_CENTER, iv_text(v), crate::fonts::sans_bold_font(16.0), ink);
-                    let tip = match v {
-                        Some(31) => "31 (perfect). Tap: not 31",
-                        Some(_) => "Not 31. Tap: don't know",
-                        None => "Don't know. Tap: 31",
-                    };
-                    if resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked() {
-                        p.ivs[st] = match v {
-                            None => Some(31),
-                            Some(31) => Some(0),
-                            Some(_) => None,
-                        };
-                    }
-                }
-            });
+            iv_chips(ui, &mut p.ivs, full);
             ui.horizontal(|ui| {
                 if ui.link(RichText::new("All 31").size(12.0)).clicked() {
                     p.ivs = [Some(31); 6];
@@ -586,7 +607,31 @@ impl App {
                 }
                 kit::checkbox(ui, &mut p.partner, RichText::new("Partner").size(12.5)).on_hover_text("A Partner starter: they can never be bred");
             });
+            if i < 2 {
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui.link(RichText::new("Save to your Breeders").size(12.0)).on_hover_text("Keep this Pokémon to use again").clicked() {
+                        save = true;
+                    }
+                    if !saved_names.is_empty() {
+                        ui.label(small("·"));
+                        if let Some(n) = search_pick(ui, egui::Id::new(("breed-load", i)), "Use one of your Breeders", &saved_names, 210.0) {
+                            load = saved.iter().find(|b| b.0 == n).map(|b| b.1.clone());
+                        }
+                    }
+                });
+            }
         });
+        if save {
+            let f = self.setup.breed.file();
+            let id = f.new_id();
+            f.breeders.push(breed::Breeder { id, parent: p.clone(), added: id / 1000, ..Default::default() });
+            self.setup.breed.touch();
+            self.setup.breed.flash = Some((format!("Saved {} to your Breeders.", name_of(w, &p.species)), Instant::now()));
+        }
+        if let Some(b) = load {
+            *p = b;
+        }
         if clear {
             *p = Parent::default();
         }
@@ -1009,6 +1054,40 @@ impl App {
 
 // ───────────────────────────── drawing ─────────────────────────────
 
+/// Six tap-to-change stat chips: 31 → not 31 → don't know.
+pub(super) fn iv_chips(ui: &mut egui::Ui, ivs: &mut [Option<u8>; 6], full: f32) {
+    let gap = 6.0;
+    let cw = ((full - gap * 5.0) / 6.0).clamp(40.0, 70.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = gap;
+        for st in 0..6 {
+            let (r, resp) = ui.allocate_exact_size(egui::vec2(cw, 46.0), Sense::click());
+            let ht = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered(), kit::QUICK);
+            let v = ivs[st];
+            let on = v == Some(31);
+            let pnt = ui.painter();
+            let fill = if on { theme::blend(CARD(), GOLD, 0.22) } else { theme::blend(kit::sunken(), CARD_HOVER(), ht) };
+            pnt.rect_filled(r, 10.0, fill);
+            pnt.rect_stroke(r, 10.0, Stroke::new(1.0f32, if on { theme::blend(LINE(), GOLD, 0.8) } else { LINE() }));
+            pnt.text(egui::pos2(r.center().x, r.min.y + 12.0), Align2::CENTER_CENTER, STATS[st].to_uppercase(), crate::fonts::sans_bold_font(9.5), MUTED());
+            let ink = if on { super::charts::ink(GOLD) } else if v.is_some() { MUTED() } else { theme::blend(MUTED(), CARD(), 0.3) };
+            pnt.text(egui::pos2(r.center().x, r.min.y + 31.0), Align2::CENTER_CENTER, iv_text(v), crate::fonts::sans_bold_font(16.0), ink);
+            let tip = match v {
+                Some(31) => "31 (perfect). Tap: not 31",
+                Some(_) => "Not 31. Tap: don't know",
+                None => "Don't know. Tap: 31",
+            };
+            if resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked() {
+                ivs[st] = match v {
+                    None => Some(31),
+                    Some(31) => Some(0),
+                    Some(_) => None,
+                };
+            }
+        }
+    });
+}
+
 /// The middle of the board: how well they get along, and Swap.
 fn compat_medal(ui: &mut egui::Ui, dc: &breed::DayCare, egg: Option<&Result<Egg, Why>>, s: &Setup, compact: bool) -> bool {
     let state: Result<Option<Compat>, String> = match egg {
@@ -1250,7 +1329,7 @@ fn draw_heart(p: &egui::Painter, c: egui::Pos2, s: f32, col: Color32) {
     ));
 }
 
-fn note_bar(ui: &mut egui::Ui, col: Color32, text: &str, close: Option<&mut bool>) {
+pub(super) fn note_bar(ui: &mut egui::Ui, col: Color32, text: &str, close: Option<&mut bool>) {
     egui::Frame::none()
         .fill(theme::blend(CARD(), col, 0.12))
         .stroke(Stroke::new(1.0f32, theme::blend(LINE(), col, 0.5)))
@@ -1441,7 +1520,7 @@ fn tips(w: &Wiki, dc: &breed::DayCare, s: &Setup, e: &Egg) -> Vec<Tip> {
     out
 }
 
-fn cap_first(s: &str) -> String {
+pub(super) fn cap_first(s: &str) -> String {
     let mut c = s.chars();
     match c.next() {
         Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),

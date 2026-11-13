@@ -31,6 +31,7 @@ mod battlebacks;
 mod sim_foes;
 mod sim_home;
 mod breed_home;
+mod breed_box;
 mod team_analysis;
 mod team_build;
 mod team_calc;

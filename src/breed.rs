@@ -817,6 +817,133 @@ pub struct DayCare {
     pub goal_set: bool,
 }
 
+/// One of your breeding Pokémon, kept to use again.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, Deserialize)]
+#[serde(default)]
+pub struct Breeder {
+    pub id: u64,
+    /// Your name for it ("" = the species).
+    pub name: String,
+    pub parent: Parent,
+    pub notes: String,
+    pub added: u64,
+}
+
+/// A hatched Egg, as you logged it.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, Deserialize)]
+#[serde(default)]
+pub struct Hatch {
+    pub id: u64,
+    /// Unix seconds.
+    pub when: u64,
+    pub species: String,
+    pub gender: Gender,
+    pub nature: Option<String>,
+    pub ivs: [Option<u8>; 6],
+    pub ability: Option<String>,
+    pub shiny: bool,
+    pub ball: String,
+    pub moves: Vec<String>,
+    /// The pair it came from (`pair_key`).
+    pub pair: String,
+    /// Kept as a breeder (its id).
+    pub kept: Option<u64>,
+}
+
+/// Which pair an Egg came from: "GARCHOMP+DITTO" (in a fixed order).
+pub fn pair_key(a: &Parent, b: &Parent) -> String {
+    let mut v = [a.species.as_str(), b.species.as_str()];
+    v.sort();
+    format!("{}+{}", v[0], v[1])
+}
+
+/// Which breeding project an Egg belongs to: the two families
+/// ("GIBLE+DITTO"), so swapping a better offspring in keeps the same log.
+pub fn family_pair(wiki: &Wiki, a: &Parent, b: &Parent) -> String {
+    let fam = |p: &Parent| if p.species.is_empty() { String::new() } else { baby_of(wiki, &p.species) };
+    let mut v = [fam(a), fam(b)];
+    v.sort();
+    format!("{}+{}", v[0], v[1])
+}
+
+impl Parent {
+    /// How many stats it has at 31.
+    pub fn perfect(&self) -> usize {
+        self.ivs.iter().filter(|v| **v == Some(31)).count()
+    }
+
+    /// How much of the goal it already has: wanted stats at 31, plus the
+    /// nature.
+    pub fn goal_score(&self, g: &Goal) -> usize {
+        let stats = (0..6).filter(|s| g.ivs[*s] && self.ivs[*s] == Some(31)).count();
+        let nat = g.nature.as_ref().is_some_and(|n| self.nature.as_deref() == Some(n.as_str())) as usize;
+        stats + nat
+    }
+}
+
+impl Hatch {
+    /// It's everything the goal asks for.
+    pub fn hits(&self, g: &Goal) -> bool {
+        (0..6).all(|s| !g.ivs[s] || self.ivs[s] == Some(31))
+            && g.nature.as_ref().is_none_or(|n| self.nature.as_deref() == Some(n.as_str()))
+            && g.ability.as_ref().is_none_or(|a| self.ability.as_deref() == Some(a.as_str()))
+            && g.gender.is_none_or(|x| x == self.gender)
+    }
+
+    /// As a parent for the Day Care or your Breeders.
+    pub fn to_parent(&self) -> Parent {
+        let mut p = Parent::new(&self.species, self.gender);
+        p.nature = self.nature.clone();
+        p.ivs = self.ivs;
+        p.ball = if self.ball.is_empty() { "Poké Ball".into() } else { self.ball.clone() };
+        p.moves = self.moves.clone();
+        if let (Some(a), Some(sp)) = (&self.ability, battle::data().species(&self.species)) {
+            if sp.hidden == *a {
+                p.ability = Slot::Hidden;
+            } else if normal_abilities(&self.species, World::Modern).iter().position(|x| x == a) == Some(1)
+                || normal_abilities(&self.species, World::Platinum).iter().position(|x| x == a) == Some(1)
+            {
+                p.ability = Slot::Second;
+            }
+        }
+        p
+    }
+}
+
+/// A Team Planner member as a parent (species, gender, nature, IVs,
+/// Ability, item and moves carried over).
+pub fn from_member(m: &crate::teams::Member, world: World, wiki: &Wiki) -> Option<Parent> {
+    let d = battle::data();
+    let sp = d.species(&m.species)?;
+    let id = if !sp.wiki.is_empty() {
+        sp.wiki.clone()
+    } else {
+        d.species(&sp.base).map(|b| b.wiki.clone()).filter(|w| !w.is_empty())?
+    };
+    info(&id)?;
+    let gender = match m.gender {
+        Some('M') => Gender::Male,
+        Some('F') => Gender::Female,
+        _ => Gender::Female,
+    };
+    let mut p = Parent::new(&id, gender);
+    p.gender = p.gender();
+    p.nature = Some(m.nature.clone()).filter(|n| !n.trim().is_empty());
+    for (s, v) in m.ivs.iter().enumerate() {
+        p.ivs[s] = Some((*v).min(31) as u8);
+    }
+    if !m.ability.is_empty() {
+        if hidden_ability(&id).as_deref() == Some(m.ability.as_str()) && normal_abilities(&id, world).first() != Some(&m.ability) {
+            p.ability = Slot::Hidden;
+        } else if normal_abilities(&id, world).iter().position(|a| *a == m.ability) == Some(1) {
+            p.ability = Slot::Second;
+        }
+    }
+    p.held = Held::from_name(&m.item);
+    p.moves = m.moves.iter().filter_map(|mv| wiki.move_key(mv)).collect();
+    Some(p)
+}
+
 /// `breeding.json`: the Breeding Planner's saved state.
 #[derive(Debug, Clone, Default, serde::Serialize, Deserialize)]
 #[serde(default)]
@@ -824,11 +951,25 @@ pub struct BreedFile {
     pub version: u32,
     pub setup: Setup,
     pub daycare: DayCare,
+    pub breeders: Vec<Breeder>,
+    /// Hatched Eggs, oldest first.
+    pub log: Vec<Hatch>,
+    /// Add each logged Egg to the Masuda hunt's count.
+    pub count_hunt: bool,
 }
 
 impl BreedFile {
     fn has_data(&self) -> bool {
-        !self.daycare.a.species.is_empty() || !self.daycare.b.species.is_empty()
+        !self.daycare.a.species.is_empty() || !self.daycare.b.species.is_empty() || !self.breeders.is_empty() || !self.log.is_empty()
+    }
+
+    /// A new id no breeder or hatch uses.
+    pub fn new_id(&self) -> u64 {
+        let mut id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(1);
+        while self.breeders.iter().any(|b| b.id == id) || self.log.iter().any(|h| h.id == id) {
+            id += 1;
+        }
+        id
     }
 }
 
@@ -1109,13 +1250,57 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("st-breed-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let f = BreedFile { version: 1, setup: s, daycare: DayCare { a, b, goal: g, goal_set: true } };
+        let f = BreedFile { version: 1, setup: s, daycare: DayCare { a, b, goal: g, goal_set: true }, ..Default::default() };
         save_to(&dir, &f, true).unwrap();
         let (back, note) = load_from(&dir);
         assert!(note.is_none());
         assert_eq!(back.daycare, f.daycare);
         assert_eq!(back.setup, f.setup);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn hatches_breeders_and_members() {
+        let w = wiki();
+        let mut a = Parent::new("GARCHOMP", Gender::Female);
+        a.nature = Some("Jolly".into());
+        a.ivs = [Some(31), Some(31), None, None, None, Some(31)];
+        let b = Parent::new("DITTO", Gender::Male);
+        assert_eq!(pair_key(&a, &b), pair_key(&b, &a));
+        assert_eq!(family_pair(w, &a, &b), "DITTO+GIBLE");
+        assert_eq!(family_pair(w, &Parent::new("GIBLE", Gender::Female), &b), family_pair(w, &a, &b));
+        let g = Goal { ivs: [true, true, false, false, false, true], nature: Some("Jolly".into()), ..Default::default() };
+        assert_eq!(a.goal_score(&g), 4);
+        assert_eq!(a.perfect(), 3);
+        let mut h = Hatch { species: "GIBLE".into(), gender: Gender::Female, nature: Some("Jolly".into()), ivs: a.ivs, ability: Some("Rough Skin".into()), ..Default::default() };
+        assert!(h.hits(&g));
+        h.ivs[5] = Some(0);
+        assert!(!h.hits(&g));
+        h.ivs[5] = Some(31);
+        assert!(!h.hits(&Goal { gender: Some(Gender::Male), ..g.clone() }));
+        let p = h.to_parent();
+        assert_eq!(p.ability, Slot::Hidden);
+        assert_eq!(p.ball, "Poké Ball");
+        // A Team Planner member, forms and all.
+        let mut m = crate::teams::Member::new("Garchomp", World::Platinum);
+        m.gender = Some('F');
+        m.nature = "Jolly".into();
+        m.item = "Everstone".into();
+        m.moves = vec!["Outrage".into(), "Earthquake".into()];
+        let p = from_member(&m, World::Platinum, w).unwrap();
+        assert_eq!((p.species.as_str(), p.gender, p.nature.as_deref()), ("GARCHOMP", Gender::Female, Some("Jolly")));
+        assert_eq!(p.held, Held::Everstone);
+        assert_eq!(p.moves, vec!["outrage".to_string(), "earthquake".to_string()]);
+        assert_eq!(p.ivs, [Some(31); 6]);
+        let mega = crate::teams::Member::new("Garchomp-Mega", World::Modern);
+        assert_eq!(from_member(&mega, World::Modern, w).map(|p| p.species), Some("GARCHOMP".to_string()));
+        // Saved with the rest.
+        let mut f = BreedFile::default();
+        f.breeders.push(Breeder { id: f.new_id(), parent: p, ..Default::default() });
+        let id = f.new_id();
+        assert_ne!(id, f.breeders[0].id);
+        f.log.push(Hatch { id, ..h });
+        assert!(f.has_data());
     }
 
     #[test]
