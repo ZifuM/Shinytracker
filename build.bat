@@ -33,7 +33,7 @@ powershell -NoProfile -Command "Compress-Archive -Path 'share\Shiny Tracker.exe'
 echo OK> build-status.txt
 rem Say which version was built (the app shows the same number) and note it
 rem next to the files to attach, so a release always gets the right build.
-powershell -NoProfile -Command "$v = (Select-String -Path 'Cargo.toml' -Pattern '^version = .(.+).$' | Select-Object -First 1).Matches[0].Groups[1].Value; Set-Content 'share\version.txt' $v; Write-Host ''; Write-Host ('BUILD OK - Poke Together Companion v' + $v); Write-Host ('Attach share\Shiny Tracker.exe and .zip to the GitHub release v' + $v)"
+powershell -NoProfile -Command "$v = (Select-String -Path 'Cargo.toml' -Pattern '^version = .(.+).$' | Select-Object -First 1).Matches[0].Groups[1].Value; $v = $v -replace '-','.'; Set-Content 'share\version.txt' $v; Write-Host ''; Write-Host ('BUILD OK - Poke Together Companion v' + $v); Write-Host ('Attach share\Shiny Tracker.exe and .zip to the GitHub release v' + $v)"
 echo Starting Shiny Tracker...
 start "" "Shiny Tracker.exe"
 timeout /t 6 >nul

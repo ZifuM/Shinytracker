@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 pub const REPO: &str = "ZifuM/Shinytracker";
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const VERSION: &str = env!("APP_VERSION");
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum State {
@@ -45,14 +45,16 @@ fn set(s: &Shared, v: State) {
     }
 }
 
-/// "v1.2.3" / "1.2" → (1, 2, 3). Anything unreadable → None.
-pub fn parse_version(v: &str) -> Option<(u32, u32, u32)> {
+/// "v1.2.3" / "1.2" → (1, 2, 3, 0); "v0.6.1.2" (a rare grass data build)
+/// → (0, 6, 1, 2). Anything unreadable → None.
+pub fn parse_version(v: &str) -> Option<(u32, u32, u32, u32)> {
     let v = v.trim().trim_start_matches(['v', 'V']);
     let mut it = v.split(|c: char| c == '.' || c == '-' || c == '+');
     let a = it.next()?.parse().ok()?;
     let b = it.next().map_or(Some(0), |x| x.parse().ok())?;
     let c = it.next().map_or(Some(0), |x| x.parse().ok())?;
-    Some((a, b, c))
+    let d = it.next().map_or(Some(0), |x| x.parse().ok())?;
+    Some((a, b, c, d))
 }
 
 /// Is `latest` a newer version than `current`?
@@ -251,8 +253,14 @@ mod tests {
     use super::*;
     #[test]
     fn versions() {
-        assert_eq!(parse_version("v0.2.0"), Some((0, 2, 0)));
-        assert_eq!(parse_version("1.10"), Some((1, 10, 0)));
+        assert_eq!(parse_version("v0.2.0"), Some((0, 2, 0, 0)));
+        assert_eq!(parse_version("1.10"), Some((1, 10, 0, 0)));
+        // rare grass data builds: a fourth number
+        assert_eq!(parse_version("v0.6.1.2"), Some((0, 6, 1, 2)));
+        assert!(is_newer("v0.6.1.1", "0.6.1"));
+        assert!(is_newer("v0.6.1.2", "0.6.1.1"));
+        assert!(is_newer("v0.6.2", "0.6.1.9"));
+        assert!(!is_newer("v0.6.1", "0.6.1.1"));
         assert!(is_newer("v0.3.0", "0.2.9"));
         assert!(is_newer("v1.0", "0.9.9"));
         assert!(!is_newer("v0.2.0", "0.2.0"));

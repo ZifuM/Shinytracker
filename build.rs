@@ -9,6 +9,11 @@ fn main() {
     println!("cargo:rerun-if-changed=assets/wiki.json");
     println!("cargo:rerun-if-changed=build.rs");
 
+    // The version the app shows and compares: Cargo's "0.6.1-2" (Cargo only
+    // takes three numbers) is shown as "0.6.1.2", the rare grass data builds.
+    let v = std::env::var("CARGO_PKG_VERSION").unwrap_or_default();
+    println!("cargo:rustc-env=APP_VERSION={}", v.replace('-', "."));
+
     let out = std::path::PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR")).join("wiki.json");
     let data = std::fs::read("assets/wiki.json").unwrap_or_else(|_| {
         println!("cargo:warning=assets/wiki.json not found: the app will download the Pokedex data on first start.");
