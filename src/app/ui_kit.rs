@@ -819,6 +819,20 @@ pub fn last_card_rect(ui: &Ui) -> Option<egui::Rect> {
     ui.ctx().data(|d| d.get_temp::<egui::Rect>(egui::Id::new("kit-last-card")))
 }
 
+/// The pages still being worked on: they carry an "EXP" mark in the sidebar.
+pub const EXPERIMENTAL_TIP: &str = "Experimental: still being built and tested, so things may change or not work yet";
+
+/// A small "EXP" pill, its right edge centred on `right`; returns its rect.
+pub fn exp_badge(p: &egui::Painter, right: egui::Pos2) -> Rect {
+    let col = C_ORANGE;
+    let g = p.layout_no_wrap("EXP".to_string(), crate::fonts::sans_bold_font(9.0), super::charts::ink(col));
+    let r = Rect::from_min_size(egui::pos2(right.x - g.size().x - 10.0, right.y - 8.0), egui::vec2(g.size().x + 10.0, 16.0));
+    p.rect_filled(r, 8.0, super::charts::faint(col, 0.18));
+    p.rect_stroke(r, 8.0, Stroke::new(1.0f32, super::charts::faint(col, 0.45)));
+    p.galley(egui::pos2(r.min.x + 5.0, r.center().y - g.size().y / 2.0), g, Color32::WHITE);
+    r
+}
+
 /// Rounded card container.
 pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     if modern() {

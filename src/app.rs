@@ -71,6 +71,7 @@ mod profile_page;
 mod appearance_page;
 mod hotkeys_page;
 mod advanced_page;
+mod avatar;
 mod rare_poster;
 mod settings;
 mod shell;
@@ -104,6 +105,7 @@ enum Tab {
     Team,
     Sim,
     Breed,
+    Calc,
     Profile,
     Stats,
     Dex,
@@ -219,6 +221,10 @@ struct Setup {
     ach_sort: u8,
     /// Trainer card image maker, when open.
     profile_card: Option<trainer::ProfileCardView>,
+    /// Profile picture window, when open.
+    avatar_edit: Option<avatar::AvatarEditor>,
+    /// The saved profile picture, loaded once.
+    avatar: avatar::AvatarCache,
     /// Profile page tab.
     profile_section: trainer::ProfileSection,
     dex: extras::DexView,
@@ -564,6 +570,8 @@ impl App {
                 ach_query: String::new(),
                 ach_sort: 0,
                 profile_card: None,
+                avatar_edit: None,
+                avatar: Default::default(),
                 profile_section: Default::default(),
                 dex: extras::DexView::default(),
                 note_draft: String::new(),
@@ -2881,6 +2889,7 @@ impl eframe::App for App {
         self.launcher_ui(ctx);
         self.rare_offer_window(ctx);
         self.rare_poster_window(ctx);
+        self.avatar_window(ctx);
         // The overlay is its own always-on-top window while it's started.
         if self.overlay_on && !self.ov_hidden {
             self.overlay_viewport(ctx);

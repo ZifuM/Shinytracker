@@ -409,6 +409,16 @@ pub fn pick_audio(start: PathBuf, ctx: egui::Context) -> Receiver<Option<PathBuf
     rx
 }
 
+/// "Open" box for a profile picture (PNG, JPG or GIF), on a background thread.
+pub fn pick_image(start: PathBuf, ctx: egui::Context) -> Receiver<Option<PathBuf>> {
+    let (tx, rx) = channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(imp::pick_image(&start));
+        ctx.request_repaint();
+    });
+    rx
+}
+
 /// Backup file box on a background thread: "Save as" (`save`) or "Open".
 pub fn pick_backup(save: bool, start: PathBuf, name: String, ctx: egui::Context) -> Receiver<Option<PathBuf>> {
     let (tx, rx) = channel();
@@ -560,6 +570,14 @@ mod imp {
             .pick_file()
     }
 
+    pub fn pick_image(start: &std::path::Path) -> Option<std::path::PathBuf> {
+        rfd::FileDialog::new()
+            .set_title("Choose a profile picture")
+            .set_directory(start)
+            .add_filter("Pictures", &["png", "jpg", "jpeg", "gif"])
+            .pick_file()
+    }
+
     pub fn pick_save(start: &std::path::Path, name: &str, ext: &str) -> Option<std::path::PathBuf> {
         let kind = if ext == "gif" { "Animated GIF" } else { "PNG image" };
         rfd::FileDialog::new()
@@ -646,6 +664,10 @@ mod imp {
     }
     pub fn pick_audio(_s: &std::path::Path) -> Option<std::path::PathBuf> {
         None
+    }
+    /// Test builds only: `ST_PICK_IMAGE` stands in for the file box.
+    pub fn pick_image(_s: &std::path::Path) -> Option<std::path::PathBuf> {
+        std::env::var_os("ST_PICK_IMAGE").map(std::path::PathBuf::from)
     }
     pub fn pick_backup(_save: bool, _s: &std::path::Path, _n: &str) -> Option<std::path::PathBuf> {
         None

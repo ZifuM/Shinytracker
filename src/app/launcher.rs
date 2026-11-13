@@ -190,6 +190,20 @@ impl App {
                 ui.ctx().request_repaint();
             }
         }
+        ui.add_space(gap);
+        let w_all = ui.available_width();
+        self.page_tiles(
+            ui,
+            w_all,
+            &[
+                (Tab::Info, "Everything from the game's wiki."),
+                (Tab::Team, "Build teams and check what they cover."),
+                (Tab::Sim, "Battle wild Pokémon and trainers."),
+                (Tab::Breed, "Plan Eggs, stats and egg moves."),
+                (Tab::Calc, "Damage maths, any set against any."),
+            ],
+            3,
+        );
         // "Preview" buttons on the soon cards.
         if let Some(t) = ui.ctx().data_mut(|d| d.remove_temp::<u8>(egui::Id::new("home-open"))) {
             self.setup.tab = match t {

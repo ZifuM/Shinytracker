@@ -643,12 +643,15 @@ fn method_tile(ui: &mut egui::Ui, w: f32, m: HuntMethod, sel: bool, badge: &str)
     let room = rect.max.x - 12.0 - x;
     p.text(pos2(x, chip.min.y + 1.0), Align2::LEFT_TOP, ch::clip(ui, title, &ch::bold(13.5), room - 18.0), ch::bold(13.5), TEXT());
     p.text(pos2(x, chip.min.y + 19.0), Align2::LEFT_TOP, ch::clip(ui, sub, &ch::reg(11.5), room), ch::reg(11.5), MUTED());
+    let off = super::settings::method_unavailable(m);
     let bc = if sel { kit::primary() } else { MUTED() };
     let g = p.layout_no_wrap(badge.to_string(), ch::bold(11.0), ch::ink(bc));
     let br = Rect::from_min_size(pos2(rect.min.x + 14.0, rect.max.y - 30.0), vec2(g.size().x + 14.0, 20.0));
-    p.rect_filled(br, 10.0, ch::faint(bc, 0.14));
-    p.galley(pos2(br.min.x + 7.0, br.center().y - g.size().y / 2.0), g, ch::ink(bc));
-    if method_experimental(m) {
+    if !off {
+        p.rect_filled(br, 10.0, ch::faint(bc, 0.14));
+        p.galley(pos2(br.min.x + 7.0, br.center().y - g.size().y / 2.0), g, ch::ink(bc));
+    }
+    if method_experimental(m) && !off {
         let wr = Rect::from_min_size(pos2(br.max.x + 6.0, br.min.y), vec2(20.0, 20.0));
         p.circle_filled(wr.center(), 9.0, ch::faint(theme::HP_YELLOW, 0.2));
         p.text(wr.center(), Align2::CENTER_CENTER, "!", ch::bold(12.0), ch::ink(theme::HP_YELLOW));
@@ -657,6 +660,13 @@ fn method_tile(ui: &mut egui::Ui, w: f32, m: HuntMethod, sel: bool, badge: &str)
         let c = pos2(rect.max.x - 18.0, rect.min.y + 18.0);
         p.circle_filled(c, 9.0 * t, kit::primary());
         p.text(c, Align2::CENTER_CENTER, "✔", egui::FontId::proportional(10.0 * t.max(0.01)), kit::on_primary());
+    }
+    if super::settings::method_unavailable(m) {
+        // shown, but greyed out and not pickable
+        super::settings::grey_tile(ui, rect, 18.0);
+        let tip = format!("{}\n\n{}", super::settings::UNAVAILABLE_NOTE, m.note());
+        resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::NotAllowed);
+        return false;
     }
     let tip = if method_experimental(m) { format!("{}\n\n⚠ {EXPERIMENTAL_NOTE}", m.note()) } else { m.note().to_string() };
     resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() && !sel

@@ -97,7 +97,28 @@ impl App {
             pc.circle_filled(bc, r, ch::faint(mc, a));
         }
         p.rect_stroke(rect, 28.0, Stroke::new(1.0f32, theme::blend(kit::LINE(), mc, 0.35)));
-        theme::level_badge(&p, bc, 62.0, level);
+        // the profile picture (or the level badge), click to change it
+        let ctx = ui.ctx().clone();
+        let has_pic = self.draw_avatar(&ctx, &p, bc, 66.0, level, mc);
+        let pic = ui.interact(Rect::from_center_size(bc, vec2(136.0, 136.0)), ui.id().with("avatar-pic"), Sense::click());
+        if pic.hovered() {
+            if has_pic {
+                p.circle_filled(bc, 66.0, Color32::from_black_alpha(120));
+                p.text(bc - vec2(0.0, 8.0), Align2::CENTER_CENTER, "📷", egui::FontId::proportional(22.0), Color32::WHITE);
+                p.text(bc + vec2(0.0, 16.0), Align2::CENTER_CENTER, "Change", ch::bold(12.5), Color32::WHITE);
+            } else {
+                let chip = Rect::from_center_size(bc + vec2(0.0, 60.0), vec2(104.0, 24.0));
+                p.rect_filled(chip, 12.0, kit::primary());
+                p.text(chip.center(), Align2::CENTER_CENTER, "📷  Add a photo", ch::bold(11.5), kit::on_primary());
+            }
+        }
+        if pic
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(if has_pic { "Change or remove your profile picture" } else { "Add a profile picture" })
+            .clicked()
+        {
+            self.open_avatar_editor(&ctx);
+        }
         p.text(pos2(bc.x, bc.y + 88.0), Align2::CENTER_CENTER, format!("{} badge", metal), ch::bold(11.5), ch::ink(lc));
 
         let x = rect.min.x + 226.0;
@@ -157,6 +178,10 @@ impl App {
         if bc_ui.add(egui::Button::new("📊  Lifetime stats").fill(kit::btn_fill())).clicked() {
             self.setup.stats_tab = super::stats_life::StatsTab::Lifetime;
             self.go_to(super::Tab::Stats);
+        }
+        let pic_label = if has_pic { "📷  Profile picture" } else { "📷  Add a photo" };
+        if bc_ui.add(egui::Button::new(pic_label).fill(kit::btn_fill())).on_hover_text("Pick a picture, then crop and resize it").clicked() {
+            self.open_avatar_editor(&ctx);
         }
 
         // key numbers

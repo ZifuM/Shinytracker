@@ -378,11 +378,16 @@ impl App {
         }
     }
 
-    /// Everything else, one click away: a row of four (two by two when narrow).
+    /// Everything else, one click away: three across (two when narrow).
     fn home_jump(&mut self, ui: &mut egui::Ui) {
-        let items: [(Tab, &str); 4] = [
+        let items: [(Tab, &str); 9] = [
             (Tab::Pokedex, "Every Pokémon, and your Shiny Dex"),
             (Tab::Map, "Areas, Pokémon and rare grass"),
+            (Tab::Info, "Everything from the game's wiki"),
+            (Tab::Team, "Build teams, check what they cover"),
+            (Tab::Sim, "Battle wild Pokémon and trainers"),
+            (Tab::Breed, "Plan Eggs, stats and egg moves"),
+            (Tab::Calc, "Damage maths, any set against any"),
             (Tab::Stats, "Your hunting over time"),
             (Tab::Runs, "Every hunt, saved and caught"),
         ];
@@ -391,7 +396,7 @@ impl App {
             super::profile_page::card_head(ui, "📌", kit::C_CYAN, "Jump to", None);
             ui.add_space(10.0);
             let w = ui.available_width();
-            let cols = if w >= 760.0 { 4 } else { 2 };
+            let cols = if w >= 700.0 { 3 } else { 2 };
             let gap = 10.0;
             let tw = ((w - gap * (cols as f32 - 1.0)) / cols as f32).floor();
             for row in items.chunks(cols) {
@@ -411,6 +416,9 @@ impl App {
                         p.text(egui::pos2(tx, r.center().y - 8.0), Align2::LEFT_CENTER, name, crate::fonts::sans_bold_font(13.5), TEXT());
                         p.text(egui::pos2(tx, r.center().y + 10.0), Align2::LEFT_CENTER, super::charts::clip(ui, about, &crate::fonts::sans_font(11.5), maxw), crate::fonts::sans_font(11.5), MUTED());
                         p.text(egui::pos2(r.max.x - 14.0, r.center().y), Align2::RIGHT_CENTER, "›", egui::FontId::proportional(18.0), if ht > 0.5 { TEXT() } else { MUTED() });
+                        if super::shell::is_experimental(*tab) {
+                            kit::exp_badge(&p, egui::pos2(r.max.x - 10.0, r.min.y + 14.0));
+                        }
                         if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                             go = Some(*tab);
                         }
@@ -599,8 +607,11 @@ impl App {
                     p.rect_stroke(rect, 14.0, Stroke::new(1.0f32, if hov { theme::blend(LINE(), color, 0.6) } else { LINE() }));
                     let chip = Rect::from_min_size(rect.min + egui::vec2(16.0, 16.0), egui::vec2(36.0, 36.0));
                     kit::icon_chip(&p, chip, icon, color, true);
-                    p.text(egui::pos2(chip.max.x + 12.0, chip.center().y), Align2::LEFT_CENTER, name, crate::fonts::sans_bold_font(15.0), TEXT());
+                    let name_r = p.text(egui::pos2(chip.max.x + 12.0, chip.center().y), Align2::LEFT_CENTER, name, crate::fonts::sans_bold_font(15.0), TEXT());
                     p.text(rect.right_top() + egui::vec2(-16.0, 34.0), Align2::RIGHT_CENTER, "›", egui::FontId::proportional(18.0), if hov { TEXT() } else { MUTED() });
+                    if super::shell::is_experimental(*tab) && name_r.max.x + 40.0 < rect.max.x - 32.0 {
+                        kit::exp_badge(&p, rect.right_top() + egui::vec2(-32.0, 34.0));
+                    }
                     let g = p.layout(about.to_string(), crate::fonts::sans_font(12.5), MUTED(), rect.width() - 32.0);
                     p.galley(egui::pos2(rect.min.x + 16.0, chip.max.y + 10.0), g, MUTED());
                     if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {

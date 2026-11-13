@@ -35,14 +35,20 @@ pub(super) fn tab_meta(t: Tab) -> (&'static str, &'static str, Color32) {
         Tab::Team => ("🛡", "Team Planner", kit::C_TEAL),
         Tab::Sim => ("🎮", "Battle Sim", kit::C_RED),
         Tab::Breed => ("🐣", "Breeding", kit::C_PINK),
+        Tab::Calc => ("💥", "Damage Calculator", kit::C_INDIGO),
         Tab::Appearance => ("🎨", "Appearance", kit::C_PINK),
         Tab::Hotkeys => ("⌨", "Hotkeys", kit::C_SLATE),
         Tab::Advanced => ("⚙", "Advanced", kit::C_SLATE),
     }
 }
 
+/// Pages that are still experimental (marked in the sidebar).
+pub(super) fn is_experimental(t: Tab) -> bool {
+    matches!(t, Tab::Map | Tab::Info | Tab::Team | Tab::Sim | Tab::Breed | Tab::Calc)
+}
+
 /// Sidebar entries: (group heading, page, parent app).
-const NAV: [(Option<&str>, Tab, Option<Tab>); 17] = [
+const NAV: [(Option<&str>, Tab, Option<Tab>); 18] = [
     (None, Tab::Home, None),
     (None, Tab::Profile, None),
     (None, Tab::Stats, None),
@@ -57,6 +63,7 @@ const NAV: [(Option<&str>, Tab, Option<Tab>); 17] = [
     (None, Tab::Team, None),
     (None, Tab::Sim, None),
     (None, Tab::Breed, None),
+    (None, Tab::Calc, None),
     (Some("SETTINGS"), Tab::Appearance, None),
     (None, Tab::Hotkeys, None),
     (None, Tab::Advanced, None),
@@ -304,6 +311,17 @@ impl App {
                     };
                     ui.painter().add(egui::Shape::line(pts, st));
                 }
+                if is_experimental(tab) {
+                    let mark = if compact {
+                        let c = resp.rect.center() + egui::vec2(12.0, -12.0);
+                        ui.painter().circle_filled(c, 5.0, SIDEBAR());
+                        ui.painter().circle_filled(c, 3.5, kit::C_ORANGE);
+                        egui::Rect::from_center_size(c, egui::vec2(10.0, 10.0))
+                    } else {
+                        kit::exp_badge(ui.painter(), egui::pos2(resp.rect.max.x - 10.0, resp.rect.center().y))
+                    };
+                    ui.interact(mark, egui::Id::new(("nav-exp", label)), Sense::hover()).on_hover_text(kit::EXPERIMENTAL_TIP);
+                }
                 if tab == Tab::Shiny && self.overlay_on {
                     let chip = if compact { resp.rect.center() + egui::vec2(12.0, -12.0) } else { resp.rect.left_center() + egui::vec2(34.0, -12.0) };
                     ui.painter().circle_filled(chip, 5.0, SIDEBAR());
@@ -354,7 +372,10 @@ impl App {
             p.rect_stroke(rect, 12.0, Stroke::new(1.0f32, theme::blend(SIDEBAR(), TEXT(), 0.08)));
             let level = self.cfg.level_seen.max(1);
             let bc = if compact { rect.center() } else { rect.left_center() + egui::vec2(28.0, 0.0) };
-            theme::level_badge(p, bc, 17.0, level);
+            let (_, main, _) = crate::progress::badge_metal(level);
+            let ctx = ui.ctx().clone();
+            let p = &ui.painter().clone();
+            self.draw_avatar(&ctx, p, bc, 17.0, level, egui::Color32::from_rgb(main[0], main[1], main[2]));
             if !compact {
                 let name = if self.cfg.trainer_name.trim().is_empty() { "Trainer".to_string() } else { self.cfg.trainer_name.clone() };
                 let clip = Rect::from_min_max(egui::pos2(bc.x + 26.0, rect.min.y), egui::pos2(rect.max.x - 8.0, rect.max.y));

@@ -1,5 +1,6 @@
-//! Team Planner → Damage calc: Platinum's own damage maths (the same steps
-//! as Pokémon Showdown's Gen 4 calculator), your team against anything.
+//! Damage Calculator (its own page in the sidebar): Platinum's own damage
+//! maths (the same steps as Pokémon Showdown's Gen 4 calculator), any
+//! Pokémon against any other, or one of your teams against anything.
 
 use super::pokedex::type_color;
 use super::team_build::{mkey, nature_label, pickable};
@@ -45,13 +46,23 @@ pub(super) struct CalcState {
     pub right_side: Side,
     /// (0 = yours, 1 = theirs, move).
     pub pick: (usize, usize),
+    /// The team on your side (None = no team), once picked.
+    pub own: Option<u64>,
+    pub own_set: bool,
+    /// The world when there's no team.
+    pub world: World,
 }
 
 /// A set to face when there's nothing else: a strong, common Pokémon.
 fn default_foe(world: World) -> Member {
+    default_set("Garchomp", world)
+}
+
+/// A well-known set for a Pokémon.
+fn default_set(name: &str, world: World) -> Member {
     let d = battle::data();
-    let s = d.sets_for("Garchomp").into_iter().next();
-    let mut m = Member::new("Garchomp", world);
+    let s = d.sets_for(name).into_iter().next();
+    let mut m = Member::new(name, world);
     if let Some(s) = s {
         m.item = s.item.clone();
         m.ability = s.ab.clone();
@@ -180,8 +191,63 @@ fn describe(a: &Poke, d: &Poke, mv: &calc::Move, h: &calc::Hit, dm: &calc::Mon, 
 }
 
 impl App {
-    pub(super) fn team_calc(&mut self, ui: &mut egui::Ui, world: World) {
-        let Some(t) = self.setup.team.team().cloned() else { return };
+    /// The Damage Calculator page: pick a team for your side (or none),
+    /// then the calculator.
+    pub(super) fn page_damage_calc(&mut self, ui: &mut egui::Ui) {
+        kit::page_header(ui, "DAMAGE CALCULATOR", "Platinum's own damage maths: any Pokémon against any other, or one of your teams against anything.");
+        let teams = self.team_choices();
+        {
+            let c = &mut self.setup.team.calc;
+            if !c.own_set {
+                c.own = teams.first().map(|t| t.0);
+                c.own_set = true;
+            }
+            if c.own.is_some_and(|id| !teams.iter().any(|t| t.0 == id)) {
+                c.own = None;
+            }
+        }
+        let own = self.setup.team.calc.own;
+        let mut pick_team: Option<Option<u64>> = None;
+        let mut world = self.setup.team.calc.world;
+        kit::card(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                ui.label(caps("YOUR SIDE"));
+                ui.add_space(4.0);
+                for (id, name, n) in teams.iter().take(10) {
+                    let label = format!("{}  {n}", if name.trim().is_empty() { "Untitled team" } else { name.trim() });
+                    if chip(ui, &label, own == Some(*id), ACCENT).on_hover_text("Pick from this team, and see the whole team against the foe").clicked() {
+                        pick_team = Some(Some(*id));
+                    }
+                }
+                if chip(ui, "No team", own.is_none(), kit::C_SLATE).on_hover_text("Any Pokémon against any other").clicked() {
+                    pick_team = Some(None);
+                }
+                if own.is_none() {
+                    ui.add_space(10.0);
+                    kit::segmented(ui, &mut world, &[(World::Platinum, "Platinum"), (World::Modern, "MODERN")]);
+                }
+            });
+        });
+        if let Some(p) = pick_team {
+            let c = &mut self.setup.team.calc;
+            c.own = p;
+            c.team = None;
+        }
+        if world != self.setup.team.calc.world {
+            let c = &mut self.setup.team.calc;
+            c.world = world;
+            c.team = None;
+        }
+        let t = match self.setup.team.calc.own {
+            Some(id) => self.setup.team.teams().teams.iter().find(|t| t.id == id).cloned(),
+            None => None,
+        }
+        .unwrap_or_else(|| crate::teams::Team { world: self.setup.team.calc.world, ..Default::default() });
+        self.team_calc(ui, t.world, t);
+    }
+
+    pub(super) fn team_calc(&mut self, ui: &mut egui::Ui, world: World, t: crate::teams::Team) {
         let wiki = self.wiki.clone();
         // start: your selected member against a strong foe
         {
@@ -192,10 +258,10 @@ impl App {
                 c.right = None;
             }
             if c.left.is_none() {
-                let slot = self.setup.team.slot.min(t.members.len().saturating_sub(1));
+                let slot = if self.setup.team.open == Some(t.id) { self.setup.team.slot.min(t.members.len().saturating_sub(1)) } else { 0 };
                 c.left = Some(match t.members.get(slot) {
                     Some(m) => Poke::new(m.clone(), Some(slot)),
-                    None => Poke::new(default_foe(world), None),
+                    None => Poke::new(default_set("Infernape", world), None),
                 });
             }
             if c.right.is_none() {
@@ -267,7 +333,7 @@ impl App {
             self.calc_field(ui);
             self.calc_side(ui, 1, world, &t);
         }
-        ui.label(small("Platinum's damage maths, step for step as Pokémon Showdown's Gen 4 calculator does it. Changes here don't change your team."));
+        ui.label(small("Platinum's damage maths, step for step as Pokémon Showdown's Gen 4 calculator does it. Changes here never change your teams."));
     }
 
     #[allow(clippy::too_many_arguments)]

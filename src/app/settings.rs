@@ -72,6 +72,26 @@ pub(super) fn method_experimental(m: HuntMethod) -> bool {
 
 pub(super) const EXPERIMENTAL_NOTE: &str = "Experimental: issues may occur with this hunting style.";
 
+/// Methods that don't work yet: shown greyed out and can't be picked
+/// (a hunt already set to one is left as it is).
+pub(super) fn method_unavailable(m: HuntMethod) -> bool {
+    matches!(m, HuntMethod::PokeRadar | HuntMethod::Masuda)
+}
+
+pub(super) const UNAVAILABLE_NOTE: &str = "Not working yet: this hunting style comes in a later update.";
+
+/// Grey a method tile out and mark it "Not working yet".
+pub(super) fn grey_tile(ui: &egui::Ui, tile: Rect, rounding: f32) {
+    let p = ui.painter();
+    p.rect_filled(tile, rounding, theme::blend(kit::PAGE(), kit::CARD(), 0.5).gamma_multiply(0.72));
+    let g = p.layout_no_wrap("Not working yet".to_string(), egui::FontId::proportional(kit::fs(10.5)), MUTED());
+    // bottom-left, where the odds would be (they aren't drawn for these)
+    let r = Rect::from_min_size(egui::pos2(tile.min.x + 14.0, tile.max.y - g.size().y - 20.0), g.size() + egui::vec2(12.0, 8.0));
+    p.rect_filled(r, r.height() / 2.0, kit::sunken());
+    p.rect_stroke(r, r.height() / 2.0, egui::Stroke::new(1.0f32, kit::LINE()));
+    p.galley(r.min + egui::vec2(6.0, 4.0), g, MUTED());
+}
+
 /// Small amber "issues may occur" chip in a method tile's bottom-right
 /// corner (clear of the title, beside the odds badge).
 fn warn_chip(ui: &egui::Ui, tile: Rect, _selected: bool) {
@@ -312,7 +332,7 @@ impl App {
                                     || self.setup.caught_pick
                                     || (self.setup.profile_card.is_none()
                                         && self.setup.share.is_none()
-                                        && matches!(self.setup.tab, Tab::Home | Tab::Profile | Tab::Stats | Tab::Dex | Tab::Trophies | Tab::Runs | Tab::Pokedex | Tab::Map | Tab::Info | Tab::Team | Tab::Sim | Tab::Breed));
+                                        && matches!(self.setup.tab, Tab::Home | Tab::Profile | Tab::Stats | Tab::Dex | Tab::Trophies | Tab::Runs | Tab::Pokedex | Tab::Map | Tab::Info | Tab::Team | Tab::Sim | Tab::Breed | Tab::Calc));
                                 let cap = if modern { 1060.0 } else { 900.0 };
                                 let w = if wide { ui.available_width() } else { ui.available_width().min(cap) };
                                 ui.set_max_width(w);
@@ -343,6 +363,7 @@ impl App {
                                         Tab::Team => self.page_team(ui),
                                         Tab::Sim => self.page_sim(ui),
                                         Tab::Breed => self.page_breed(ui),
+                                        Tab::Calc => self.page_damage_calc(ui),
                                         Tab::Profile => self.page_profile(ui),
                                         Tab::Stats => self.page_stats(ui),
                                         Tab::Dex | Tab::Trophies => {
@@ -571,7 +592,7 @@ impl App {
     fn sidebar(&mut self, ui: &mut egui::Ui) {
         ui.add_space(2.0);
         // (group heading, tab, icon, label, parent: the app a page belongs to)
-        let items: [(Option<&str>, Tab, &str, &str, Option<Tab>); 17] = [
+        let items: [(Option<&str>, Tab, &str, &str, Option<Tab>); 18] = [
             (None, Tab::Home, "🏠", "Home", None),
             (None, Tab::Profile, "🏅", "Profile", None),
             (None, Tab::Stats, "📊", "Stats", None),
@@ -586,6 +607,7 @@ impl App {
             (None, Tab::Team, "🛡", "Team Planner", None),
             (None, Tab::Sim, "🎮", "Battle Sim", None),
             (None, Tab::Breed, "🐣", "Breeding", None),
+            (None, Tab::Calc, "💥", "Damage Calculator", None),
             (Some("SETTINGS"), Tab::Appearance, "🎨", "Appearance", None),
             (None, Tab::Hotkeys, "⌨", "Hotkeys", None),
             (None, Tab::Advanced, "⚙", "Advanced", None),
@@ -628,6 +650,22 @@ impl App {
                         [c + egui::vec2(-3.5, -1.5), c + egui::vec2(0.0, 2.0), c + egui::vec2(3.5, -1.5)]
                     };
                     ui.painter().add(egui::Shape::line(pts.to_vec(), st));
+                }
+                if super::shell::is_experimental(tab) {
+                    // the EXP pill, or a dot on the icon when the name runs
+                    // into it (Damage Calculator in the narrow sidebar)
+                    // (measured in the regular weight so it doesn't flip when selected)
+                    let tw = ui.painter().layout_no_wrap(label.to_string(), crate::fonts::sans_font(13.5), MUTED()).size().x;
+                    let fits = rect.min.x + 38.0 + tw + 4.0 < right - 28.0;
+                    let mark = if fits {
+                        kit::exp_badge(ui.painter(), egui::pos2(right, y - 1.0))
+                    } else {
+                        let c = egui::pos2(rect.min.x + 26.0, y - 8.0);
+                        ui.painter().circle_filled(c, 5.0, kit::SIDEBAR());
+                        ui.painter().circle_filled(c, 3.5, kit::C_ORANGE);
+                        Rect::from_center_size(c, egui::vec2(10.0, 10.0))
+                    };
+                    ui.interact(mark, egui::Id::new(("nav-exp-classic", label)), egui::Sense::hover()).on_hover_text(kit::EXPERIMENTAL_TIP);
                 }
                 // A green light on Shiny Hunter's icon while the overlay runs
                 // (a badge on the icon, clear of the name and the chevron).
@@ -803,7 +841,7 @@ impl App {
                 ui.spacing_mut().item_spacing.x = 8.0;
                 for &m in chunk {
                     let (title, sub) = method_short(m);
-                    let badge = method_badge(&self.cfg, m);
+                    let badge = if method_unavailable(m) { String::new() } else { method_badge(&self.cfg, m) };
                     let sel = self.cfg.hunt_method == m;
                     let tile = kit::choice_tile(
                         ui,
@@ -814,15 +852,21 @@ impl App {
                         sub,
                         &badge,
                     );
-                    if method_experimental(m) {
+                    let off = method_unavailable(m);
+                    if off {
+                        grey_tile(ui, tile.rect, 10.0);
+                    } else if method_experimental(m) {
                         warn_chip(ui, tile.rect, sel);
                     }
-                    let tip = if method_experimental(m) {
+                    let tip = if off {
+                        format!("{UNAVAILABLE_NOTE}\n\n{}", m.note())
+                    } else if method_experimental(m) {
                         format!("{}\n\n⚠ {EXPERIMENTAL_NOTE}", m.note())
                     } else {
                         m.note().to_string()
                     };
-                    if tile.on_hover_text(tip).clicked() {
+                    let tile = if off { tile.on_hover_cursor(egui::CursorIcon::NotAllowed) } else { tile };
+                    if tile.on_hover_text(tip).clicked() && !off {
                         self.cfg.hunt_method = m;
                         self.dirty = true;
                     }

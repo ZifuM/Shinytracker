@@ -20,7 +20,6 @@ pub(super) enum View {
     Build,
     Analysis,
     Checklist,
-    Calc,
 }
 
 /// What the builder's picker is choosing.
@@ -447,7 +446,7 @@ impl App {
                 ("🐾", ACCENT, "Build", "Showdown-style sets: moves each one can really learn here, live stats."),
                 ("📊", kit::C_CYAN, "Analysis", "What hits you hard, what you hit hard, who's fastest."),
                 ("📜", kit::C_GOLD, "Checklist", "Where to catch, which TMs and tutors, items to buy: tick it off."),
-                ("💥", kit::C_RED, "Damage calc", "Platinum's own damage maths, against any set."),
+                ("💥", kit::C_RED, "Damage Calculator", "Platinum's own damage maths, against any set (in the sidebar)."),
             ];
             let gap = 12.0;
             let cols = if full > 820.0 { 4 } else { 2 };
@@ -702,11 +701,12 @@ impl App {
         let mut dup = false;
         let mut del = false;
         let mut battle = false;
+        let mut calc = false;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
             back = ui.add(egui::Button::new(RichText::new("‹  Teams").size(13.0)).fill(kit::btn_fill()).min_size(egui::vec2(0.0, 30.0))).clicked();
             ui.add_space(4.0);
-            let w = (ui.available_width() - 580.0).clamp(160.0, 420.0);
+            let w = (ui.available_width() - 770.0).clamp(160.0, 420.0);
             ui.add(
                 egui::TextEdit::singleline(&mut name)
                     .font(crate::fonts::sans_bold_font(20.0))
@@ -717,10 +717,20 @@ impl App {
             .on_hover_text("Rename the team");
             kit::segmented(ui, &mut world, &[(World::Platinum, "Platinum"), (World::Modern, "MODERN")]);
             battle = soft(ui, "⚔  Battle Sim").on_hover_text("Take this team into the Battle Sim").clicked();
+            calc = soft(ui, "💥  Damage Calculator").on_hover_text("Open the Damage Calculator with this team on your side").clicked();
             export = soft(ui, "Export").clicked();
             dup = soft(ui, "Duplicate").clicked();
             del = soft(ui, "Delete").clicked();
         });
+        if calc {
+            let c = &mut self.setup.team.calc;
+            c.own = Some(t.id);
+            c.own_set = true;
+            c.team = None;
+            self.go_to(super::Tab::Calc);
+            self.setup.scroll_top = true;
+            return;
+        }
         if battle {
             let n = t.members.len().min(6);
             self.setup.sim.file();
@@ -803,18 +813,16 @@ impl App {
             ui.add_space(12.0);
         }
         let mut view = self.setup.team.view;
-        kit::tab_bar(ui, &mut view, &[(View::Build, "🐾  Build"), (View::Analysis, "📊  Analysis"), (View::Checklist, "📜  Checklist"), (View::Calc, "💥  Damage calc")]);
+        kit::tab_bar(ui, &mut view, &[(View::Build, "🐾  Build"), (View::Analysis, "📊  Analysis"), (View::Checklist, "📜  Checklist")]);
         if view != self.setup.team.view {
             self.setup.team.view = view;
             self.setup.team.picker = None;
         }
         ui.add_space(14.0);
-        let world = self.setup.team.team().map(|t| t.world).unwrap_or_default();
         match self.setup.team.view {
             View::Build => self.team_build(ui),
             View::Analysis => self.team_analysis(ui),
             View::Checklist => self.team_checklist(ui),
-            View::Calc => self.team_calc(ui, world),
         }
     }
 

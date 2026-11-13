@@ -3225,6 +3225,7 @@ dependencies = [
  "gif 0.13.3",
  "global-hotkey",
  "image 0.25.10",
+ "jpeg-decoder",
  "raw-window-handle",
  "rfd",
  "serde",

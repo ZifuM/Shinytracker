@@ -441,11 +441,14 @@ impl App {
                             if let Some(l) = label {
                                 let resp = if s.kind == StepKind::Climb {
                                     kit::accent_button_w(ui, egui::Button::new(RichText::new(l).size(12.5)), 8.0, 0.0)
+                                } else if s.kind == StepKind::Shiny {
+                                    // the Masuda hunt method doesn't work yet
+                                    ui.add_enabled_ui(false, |ui| soft(ui, l)).inner.on_disabled_hover_text("The Shiny Hunter's Masuda method isn't working yet, so this is off for now")
                                 } else {
                                     soft(ui, l)
                                 };
                                 let resp = if s.kind == StepKind::Shiny { resp.on_hover_text("Sets the Shiny Hunter to the Masuda Method for this Pokémon (asks first if a hunt is going)") } else { resp };
-                                if resp.clicked() {
+                                if resp.clicked() && s.kind != StepKind::Shiny {
                                     *act = Some((s.kind, s.mv.clone()));
                                 }
                             }

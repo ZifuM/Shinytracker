@@ -558,6 +558,9 @@ pub struct Config {
     /// Trainer card image: include the shiny showcase / recent achievements.
     pub profile_card_shinies: bool,
     pub profile_card_achievements: bool,
+    /// Profile picture crop (centre x, centre y in picture pixels, zoom),
+    /// so "Adjust" reopens it where it was. The picture is `avatar.png`.
+    pub avatar_crop: Option<[f32; 3]>,
 
     // Screen reading
     pub monitor: usize,
@@ -711,6 +714,7 @@ impl Default for Config {
             show_session_timer: true,
             profile_card_shinies: true,
             profile_card_achievements: true,
+            avatar_crop: None,
             monitor: 0,
             name_regions: Vec::new(),
             stable_reads: 2,
