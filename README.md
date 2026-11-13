@@ -2,11 +2,6 @@
 
 A free companion app for **Pokémon Platinum Together**: an always-on-top shiny hunting counter, plus a set of apps you pick yourself (Pokédex, map, team planning, breeding, battles and a card collecting mini game).
 
-<p>
-  <img src="docs/dashboard.png" alt="The Dashboard" width="49%">
-  <img src="docs/app-store.png" alt="The App Store" width="49%">
-</p>
-
 ## Download
 
 Grab **Shiny Tracker.zip** from the [latest release](https://github.com/ZifuM/Shinytracker/releases/latest), unzip it and run **Shiny Tracker.exe**.
@@ -26,7 +21,6 @@ Windows 10/11, nothing else to install. It updates itself, and can opt in to pre
 The **Dashboard** is yours to build from 50+ widgets.
 
 <p>
-  <img src="docs/card-collector.png" alt="The Card Collector" width="49%">
   <img src="docs/overlay.png" alt="The shiny overlay" width="49%">
 </p>
 
