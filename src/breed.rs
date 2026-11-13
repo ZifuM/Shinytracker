@@ -192,7 +192,7 @@ impl Held {
 }
 
 /// One parent at the Day Care.
-#[derive(Debug, Clone, Default, serde::Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, Deserialize)]
 #[serde(default)]
 pub struct Parent {
     /// The wiki's species id ("CROAGUNK").
@@ -377,7 +377,8 @@ pub struct Egg {
 }
 
 /// The settings that change what an Egg is like or how long it takes.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, Deserialize)]
+#[serde(default)]
 pub struct Setup {
     pub world: World,
     /// The world has hidden Abilities.
@@ -535,6 +536,17 @@ fn hatches(wiki: &Wiki, id: &str, held: [&Held; 2]) -> (Vec<(String, f64)>, Opti
         off.into_iter().map(|s| (s, each)).collect()
     };
     (species, missing)
+}
+
+/// The family's first stage ("GIBLE" for Garchomp).
+pub fn baby_of(wiki: &Wiki, id: &str) -> String {
+    path_to_root(wiki, id).swap_remove(0)
+}
+
+/// For a family with an incense baby: (the incense, the baby).
+pub fn family_incense(wiki: &Wiki, id: &str) -> Option<(String, String)> {
+    let root = baby_of(wiki, id);
+    info(&root).and_then(|i| i.incense.clone()).map(|inc| (inc, root))
 }
 
 fn normal_ball(ball: &str) -> String {
@@ -739,6 +751,101 @@ pub fn partners(id: &str, wiki: &Wiki, world: World) -> Vec<String> {
         }
     }
     out
+}
+
+// ───────────────────────────── saved state ─────────────────────────────
+
+/// What you're breeding for.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, Deserialize)]
+#[serde(default)]
+pub struct Goal {
+    /// Stats you want at 31.
+    pub ivs: [bool; 6],
+    pub nature: Option<String>,
+    pub ability: Option<String>,
+    pub gender: Option<Gender>,
+}
+
+impl Goal {
+    pub fn want(&self) -> [Option<u8>; 6] {
+        let mut w = [None; 6];
+        for (s, on) in self.ivs.iter().enumerate() {
+            if *on {
+                w[s] = Some(31);
+            }
+        }
+        w
+    }
+
+    /// The chance one Egg is everything you want.
+    pub fn chance(&self, a: &Parent, b: &Parent, egg: &Egg) -> f64 {
+        let mut p = iv_chance(a, b, &self.want());
+        if let Some(n) = &self.nature {
+            p *= egg.nature_chance(n);
+        }
+        if let Some(ab) = &self.ability {
+            p *= egg.ability_chance(ab);
+        }
+        match (self.gender, egg.female) {
+            (Some(Gender::Female), Some(f)) => p *= f,
+            (Some(Gender::Male), Some(f)) => p *= 1.0 - f,
+            _ => {}
+        }
+        p
+    }
+
+    /// The goal the parents point to: the stats either has at 31, the
+    /// nature an Everstone or Rift Knot passes on.
+    pub fn from_parents(a: &Parent, b: &Parent) -> Goal {
+        let mut g = Goal::default();
+        for s in 0..6 {
+            g.ivs[s] = a.ivs[s] == Some(31) || b.ivs[s] == Some(31);
+        }
+        g.nature = [a, b].iter().find(|p| p.held.keeps_nature()).and_then(|p| p.nature.clone());
+        g
+    }
+}
+
+/// The Day Care as you left it.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, Deserialize)]
+#[serde(default)]
+pub struct DayCare {
+    pub a: Parent,
+    pub b: Parent,
+    pub goal: Goal,
+    /// You changed the goal yourself (otherwise it follows the parents).
+    pub goal_set: bool,
+}
+
+/// `breeding.json`: the Breeding Planner's saved state.
+#[derive(Debug, Clone, Default, serde::Serialize, Deserialize)]
+#[serde(default)]
+pub struct BreedFile {
+    pub version: u32,
+    pub setup: Setup,
+    pub daycare: DayCare,
+}
+
+impl BreedFile {
+    fn has_data(&self) -> bool {
+        !self.daycare.a.species.is_empty() || !self.daycare.b.species.is_empty()
+    }
+}
+
+pub fn load_from(dir: &std::path::Path) -> (BreedFile, Option<String>) {
+    crate::safefile::load(dir, "breeding", "Breeding Planner")
+}
+
+pub fn load() -> (BreedFile, Option<String>) {
+    load_from(&crate::config::data_dir())
+}
+
+pub fn save_to(dir: &std::path::Path, f: &BreedFile, first_this_run: bool) -> Result<(), String> {
+    crate::safefile::save(dir, "breeding", f, first_this_run, BreedFile::has_data)
+}
+
+pub fn save(f: &BreedFile, first_this_run: bool) -> Result<(), String> {
+    save_to(&crate::config::data_dir(), f, first_this_run)
 }
 
 // ───────────────────────────── tests ─────────────────────────────
@@ -977,6 +1084,38 @@ mod tests {
         assert_eq!(eggs_for(0.5, 0.5), Some(1));
         assert_eq!(eggs_for(1.0 / 32.0, 0.5), Some(22));
         assert_eq!(eggs_for(0.0, 0.5), None);
+    }
+
+    #[test]
+    fn goals_and_saving() {
+        let w = wiki();
+        let s = setup();
+        let mut a = Parent::new("GARCHOMP", Gender::Female);
+        a.ivs = [Some(31), Some(31), None, None, None, Some(31)];
+        a.nature = Some("Jolly".into());
+        a.held = Held::Everstone;
+        let mut b = Parent::new("DITTO", Gender::Male);
+        b.ivs = [Some(31); 6];
+        b.held = Held::DestinyKnot;
+        let g = Goal::from_parents(&a, &b);
+        assert_eq!(g.ivs, [true; 6]);
+        assert_eq!(g.nature.as_deref(), Some("Jolly"));
+        let e = egg(&a, &b, &s, w).unwrap();
+        let p = g.chance(&a, &b, &e);
+        assert!((p - iv_chance(&a, &b, &[Some(31); 6])).abs() < 1e-12);
+        let female = Goal { gender: Some(Gender::Female), ..g.clone() };
+        assert!((female.chance(&a, &b, &e) - p * 0.5).abs() < 1e-12);
+        // Saved and read back, through the safe file.
+        let dir = std::env::temp_dir().join(format!("st-breed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = BreedFile { version: 1, setup: s, daycare: DayCare { a, b, goal: g, goal_set: true } };
+        save_to(&dir, &f, true).unwrap();
+        let (back, note) = load_from(&dir);
+        assert!(note.is_none());
+        assert_eq!(back.daycare, f.daycare);
+        assert_eq!(back.setup, f.setup);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

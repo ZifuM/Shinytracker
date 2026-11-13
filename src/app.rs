@@ -30,6 +30,7 @@ mod sim_auto;
 mod battlebacks;
 mod sim_foes;
 mod sim_home;
+mod breed_home;
 mod team_analysis;
 mod team_build;
 mod team_calc;
@@ -99,6 +100,7 @@ enum Tab {
     Info,
     Team,
     Sim,
+    Breed,
     Profile,
     Stats,
     Dex,
@@ -187,6 +189,7 @@ struct Setup {
     team: team_home::TeamState,
     /// Battle Sim: the setup being made, saved trainers and opponents.
     sim: sim_home::SimState,
+    breed: breed_home::BreedState,
     /// "Hunt it on rare grass?" after picking a target that's there today.
     rare_offer: Option<rare::RareOffer>,
     /// Apps in the sidebar whose pages are folded away.
@@ -542,6 +545,7 @@ impl App {
                 info: Default::default(),
                 team: Default::default(),
                 sim: Default::default(),
+                breed: Default::default(),
                 rare_offer: None,
                 // Apps start folded; clicking one opens its pages.
                 nav_collapsed: vec![Tab::Shiny],
@@ -2774,6 +2778,7 @@ impl eframe::App for App {
         self.auto_backup_tick();
         self.team_save_tick(false);
         self.sim_save_tick(false);
+        self.breed_save_tick(false);
         self.hotkeys_guard();
         while let Ok(msg) = self.rx.try_recv() {
             self.on_msg(msg);
@@ -2898,6 +2903,7 @@ impl eframe::App for App {
         self.cfg.save();
         self.team_save_tick(true);
         self.sim_save_tick(true);
+        self.breed_save_tick(true);
     }
 }
 
@@ -2906,5 +2912,6 @@ impl Drop for App {
         self.cfg.save();
         self.team_save_tick(true);
         self.sim_save_tick(true);
+        self.breed_save_tick(true);
     }
 }

@@ -34,6 +34,7 @@ pub(super) fn tab_meta(t: Tab) -> (&'static str, &'static str, Color32) {
         Tab::Info => ("📚", "Game Info", kit::C_ORANGE),
         Tab::Team => ("🛡", "Team Planner", kit::C_TEAL),
         Tab::Sim => ("🎮", "Battle Sim", kit::C_RED),
+        Tab::Breed => ("🐣", "Breeding", kit::C_PINK),
         Tab::Appearance => ("🎨", "Appearance", kit::C_PINK),
         Tab::Hotkeys => ("⌨", "Hotkeys", kit::C_SLATE),
         Tab::Advanced => ("⚙", "Advanced", kit::C_SLATE),
@@ -41,7 +42,7 @@ pub(super) fn tab_meta(t: Tab) -> (&'static str, &'static str, Color32) {
 }
 
 /// Sidebar entries: (group heading, page, parent app).
-const NAV: [(Option<&str>, Tab, Option<Tab>); 16] = [
+const NAV: [(Option<&str>, Tab, Option<Tab>); 17] = [
     (None, Tab::Home, None),
     (None, Tab::Profile, None),
     (None, Tab::Stats, None),
@@ -55,6 +56,7 @@ const NAV: [(Option<&str>, Tab, Option<Tab>); 16] = [
     (None, Tab::Info, None),
     (None, Tab::Team, None),
     (None, Tab::Sim, None),
+    (None, Tab::Breed, None),
     (Some("SETTINGS"), Tab::Appearance, None),
     (None, Tab::Hotkeys, None),
     (None, Tab::Advanced, None),
