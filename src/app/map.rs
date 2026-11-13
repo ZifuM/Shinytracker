@@ -1031,6 +1031,17 @@ impl MapState {
         self.export_msg.clone()
     }
 
+    /// The whole-map picture (loaded once) and the map's size in tiles, for
+    /// the Dashboard's Mini map.
+    pub(super) fn overview_loaded(&mut self, ctx: &egui::Context, map: &GameMap) -> Option<(egui::TextureId, Vec2)> {
+        if self.overview.is_none() {
+            let img = map.overview.clone()?;
+            self.overview = Some(ctx.load_texture("map-overview", img, TextureOptions::LINEAR));
+        }
+        let size = Vec2::new((map.world().w * CHUNK) as f32, (map.world().h * CHUNK) as f32);
+        self.overview.as_ref().map(|t| (t.id(), size))
+    }
+
     pub(super) fn overview_tex(&self) -> Option<egui::TextureId> {
         self.overview.as_ref().map(|t| t.id())
     }
@@ -1075,7 +1086,7 @@ impl MapState {
 }
 
 impl App {
-    fn map_data(&mut self) -> Option<Arc<GameMap>> {
+    pub(super) fn map_data(&mut self) -> Option<Arc<GameMap>> {
         while let Ok(r) = self.gamemap_rx.try_recv() {
             self.gamemap = Some(r.map_err(|e| e.to_string()));
         }

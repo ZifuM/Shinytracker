@@ -713,6 +713,18 @@ pub fn ensure_started(
 pub const LAUNCHER_TITLE: &str = "Poke Together Companion";
 /// Title of the Shiny Hunter overlay window (how the keeper finds it).
 pub const OVERLAY_TITLE: &str = "Shiny Hunter overlay";
+/// The Card Collector's XP bar overlay.
+pub const CARD_BAR_TITLE: &str = "Card Collector XP bar";
+
+/// Like `ensure_overlay_keeper`, for another overlay window by its title.
+pub fn ensure_keeper_titled(title: &str, last: &mut Option<isize>, borderless_fix: &std::sync::Arc<std::sync::atomic::AtomicBool>) {
+    if let Some(h) = imp::own_window_titled(title) {
+        if *last != Some(h) {
+            imp::spawn_keeper(h, borderless_fix.clone());
+            *last = Some(h);
+        }
+    }
+}
 
 /// Call every frame while the overlay is open: starts a keeper for each new
 /// overlay window (a closed one's keeper stops by itself).

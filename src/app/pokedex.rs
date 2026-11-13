@@ -119,6 +119,8 @@ pub(super) enum EntryTab {
     Evolution,
     Where,
     Moves,
+    /// Its trading cards.
+    Tcg,
 }
 
 /// What the list needs to know about a Pokémon, worked out once.
@@ -850,6 +852,10 @@ impl App {
         ui.add_space(6.0);
         self.entry_header(ui, w, &m, sp.as_ref(), ready.as_ref());
         ui.add_space(10.0);
+        let tcg = match self.tcg_count(&m) {
+            0 => "TCG".to_string(),
+            n => format!("TCG ({n})"),
+        };
         kit::tab_bar(
             ui,
             &mut self.setup.pokedex.tab,
@@ -858,6 +864,7 @@ impl App {
                 (EntryTab::Evolution, "Evolution"),
                 (EntryTab::Where, "Where to find"),
                 (EntryTab::Moves, "Moves"),
+                (EntryTab::Tcg, tcg.as_str()),
             ],
         );
         ui.add_space(10.0);
@@ -867,6 +874,7 @@ impl App {
             EntryTab::Evolution => self.entry_evolution(ui, w, &m),
             EntryTab::Where => self.entry_where(ui, w, &m),
             EntryTab::Moves => self.entry_moves(ui, w, &m),
+            EntryTab::Tcg => self.entry_tcg(ui, w, &m),
         }
     }
 
@@ -1009,7 +1017,9 @@ impl App {
                             }
                         }
                         let can_map = map_ok && !wild_places.is_empty();
-                        if ui
+                        if !super::app_modal::have(crate::apps::AppId::Map) {
+                            super::app_modal::lock_btn(ui, crate::apps::AppId::Map, "Show on map");
+                        } else if ui
                             .add_enabled(can_map, egui::Button::new("🗺  Show on map").fill(kit::btn_fill()))
                             .on_hover_text("Every place it lives in the wild, flashing on the Map")
                             .on_disabled_hover_text(if map_ok { "Not found in the wild" } else { "The Map needs Platinum Together installed on this PC" })
@@ -1020,7 +1030,11 @@ impl App {
                         if ui.add(egui::Button::new("Wiki  ↗").fill(kit::btn_fill())).on_hover_text(w.page_url(m)).clicked() {
                             open_wiki = true;
                         }
-                        super::team_home::add_to_team_menu(ui, &team_list, &mut add_team);
+                        if super::app_modal::have(crate::apps::AppId::Team) {
+                            super::team_home::add_to_team_menu(ui, &team_list, &mut add_team);
+                        } else {
+                            super::app_modal::lock_btn(ui, crate::apps::AppId::Team, "Add to team");
+                        }
                         if ui.add(egui::Button::new("🎯  Catch odds").fill(kit::btn_fill())).on_hover_text("Every Poké Ball's chance, in the Battle Sim's Catch Lab").clicked() {
                             test_catch = true;
                         }
@@ -1604,7 +1618,9 @@ fn breeding_card(ui: &mut egui::Ui, m: &crate::wiki::Mon, e: Option<&crate::dexe
             }
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = vec2(8.0, 6.0);
-                if kit::accent_button_w(ui, egui::Button::new(RichText::new("🐣  Plan breeding it").size(12.5)), 8.0, 0.0)
+                if !super::app_modal::have(crate::apps::AppId::Breed) {
+                    super::app_modal::lock_btn(ui, crate::apps::AppId::Breed, "Plan breeding it");
+                } else if kit::accent_button_w(ui, egui::Button::new(RichText::new("🐣  Plan breeding it").size(12.5)), 8.0, 0.0)
                     .on_hover_text("Open the Breeding Planner with this as the goal")
                     .clicked()
                 {

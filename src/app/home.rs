@@ -11,107 +11,19 @@ use eframe::egui::{self, Align2, Color32, Rect, RichText, Sense, Stroke};
 
 impl App {
     pub(super) fn page_home_modern(&mut self, ui: &mut egui::Ui) {
-        kit::page_header(ui, "HOME", &self.greeting());
+        kit::page_header(ui, "DASHBOARD", &self.greeting());
         self.home_notices(ui);
-        // the hunt you're on: the card from before, front and centre
+        // the hunt you're on: the banner from before, front and centre
         self.hunt_hero(ui, true);
-        ui.add_space(16.0);
-        self.home_today(ui);
-        ui.add_space(18.0);
-
-        let avail = ui.available_width();
-        let wide = avail >= 980.0;
-        let gap = 18.0;
-        if wide {
-            let left_w = ((avail - gap) * 0.6).floor();
-            let right_w = avail - gap - left_w;
-            // rows of two cards; in each row both cards end level (the
-            // shorter one grows to match)
-            let breeding = self.home_breeding_on();
-            self.home_row(ui, "r1", left_w, right_w, gap, |app, ui, e| {
-                app.home_runs(ui, e);
-                e
-            }, |app, ui, e| {
-                app.home_almost(ui, e);
-                e
-            });
-            ui.add_space(gap);
-            self.home_row(
-                ui,
-                "r2",
-                left_w,
-                right_w,
-                gap,
-                |app, ui, _| {
-                    app.home_rare(ui);
-                    0.0
-                },
-                |app, ui, e| {
-                    app.recent_shinies(ui, e);
-                    e
-                },
-            );
-            if breeding {
-                ui.add_space(gap);
-                self.home_breeding(ui, 0.0);
-            }
-            ui.add_space(gap);
-            self.home_jump(ui);
-        } else {
-            if self.home_runs(ui, 0.0) {
-                ui.add_space(gap);
-            }
-            self.home_almost(ui, 0.0);
-            ui.add_space(gap);
-            if self.home_breeding(ui, 0.0) {
-                ui.add_space(gap);
-            }
-            self.recent_shinies(ui, 0.0);
-            ui.add_space(gap);
-            self.home_rare(ui);
-            ui.add_space(gap);
-            self.home_jump(ui);
-        }
-    }
-
-    /// Two cards side by side whose bottoms line up: each side is told how
-    /// much taller to grow (from last frame's heights) and says how much it
-    /// grew, so the natural heights can be measured again.
-    fn home_row(
-        &mut self,
-        ui: &mut egui::Ui,
-        key: &str,
-        lw: f32,
-        rw: f32,
-        gap: f32,
-        left: impl FnOnce(&mut App, &mut egui::Ui, f32) -> f32,
-        right: impl FnOnce(&mut App, &mut egui::Ui, f32) -> f32,
-    ) {
-        let id = egui::Id::new(("home-row", key));
-        let (ln, rn): (f32, f32) = ui.ctx().data(|d| d.get_temp(id)).unwrap_or((0.0, 0.0));
-        let (el, er) = ((rn - ln).max(0.0), (ln - rn).max(0.0));
-        let (mut lh, mut rh) = (0.0, 0.0);
-        ui.horizontal_top(|ui| {
-            ui.spacing_mut().item_spacing.x = gap;
-            let r = ui.allocate_ui_with_layout(egui::vec2(lw, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                ui.set_width(lw);
-                left(self, ui, el)
-            });
-            lh = r.response.rect.height() - r.inner;
-            let r = ui.allocate_ui_with_layout(egui::vec2(rw, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                ui.set_width(rw);
-                right(self, ui, er)
-            });
-            rh = r.response.rect.height() - r.inner;
-        });
-        if (lh - ln).abs() > 0.5 || (rh - rn).abs() > 0.5 {
-            ui.ctx().data_mut(|d| d.insert_temp(id, (lh, rh)));
-            ui.ctx().request_repaint();
-        }
+        ui.add_space(22.0);
+        // then your widgets, in a waterfall grid you can arrange
+        self.home_widgets_bar(ui);
+        self.home_widget_grid(ui);
+        self.home_gallery(&ui.ctx().clone());
     }
 
     /// Encounters per day over every run (day → encounters).
-    fn home_days(&self) -> std::collections::BTreeMap<i64, u64> {
+    pub(super) fn home_days(&self) -> std::collections::BTreeMap<i64, u64> {
         let mut m = std::collections::BTreeMap::new();
         let mut add = |st: &crate::stats::RunStats| {
             for d in &st.days {
@@ -132,7 +44,7 @@ impl App {
 
     /// Today in four tiles: what you've done, your goal, your streak and your
     /// trainer level, each with a little picture of where it stands.
-    fn home_today(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn home_today(&mut self, ui: &mut egui::Ui) {
         let days = self.home_days();
         let today_n = crate::stats::local_day(crate::stats::now_unix());
         let (today, _) = self.day_totals();
@@ -273,7 +185,7 @@ impl App {
 
     /// Your other hunts, most recent first, each a click from resuming.
     /// Returns false (and draws nothing) when there are none.
-    fn home_runs(&mut self, ui: &mut egui::Ui, extra: f32) -> bool {
+    pub(super) fn home_runs(&mut self, ui: &mut egui::Ui, extra: f32) -> bool {
         let mut runs: Vec<(u64, u64)> = self.cfg.saved_runs.iter().filter(|r| r.id != self.cfg.run_id).map(|r| (r.id, r.stats.last_unix.max(r.saved_unix))).collect();
         runs.sort_by(|a, b| b.1.cmp(&a.1));
         let total = runs.len();
@@ -395,7 +307,15 @@ impl App {
     }
 
     /// Today's rare grass, with a link to the Map.
-    fn home_rare(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn home_rare(&mut self, ui: &mut egui::Ui) {
+        if !self.has_app(crate::apps::AppId::Map) {
+            let w = ui.available_width();
+            let (r, _) = ui.allocate_exact_size(egui::vec2(w, 170.0), Sense::hover());
+            super::store::card_bg(ui.painter(), r, false);
+            ui.painter().text(r.min + egui::vec2(20.0, 22.0), Align2::LEFT_TOP, "🌿  Rare grass today", crate::fonts::sans_bold_font(15.0), TEXT());
+            self.lock_veil(ui, r, crate::apps::AppId::Map, "Rare grass today");
+            return;
+        }
         let head = |ui: &mut egui::Ui, n: usize| -> bool {
             let link = if n > 0 { format!("{n} spot{} on the Map ›", if n == 1 { "" } else { "s" }) } else { "Open the Map ›".to_string() };
             super::profile_page::card_head(ui, "🌿", kit::C_GREEN, "Rare grass today", Some(&link))
@@ -408,7 +328,10 @@ impl App {
     /// What's going on in the Breeding Planner, when something is. Returns
     /// whether it drew anything.
     /// Whether there's anything going on in the Breeding Planner to show.
-    fn home_breeding_on(&mut self) -> bool {
+    pub(super) fn home_breeding_on(&mut self) -> bool {
+        if !self.has_app(crate::apps::AppId::Breed) {
+            return false;
+        }
         if self.wiki.is_none() {
             return false;
         }
@@ -417,7 +340,7 @@ impl App {
         pair || !f.target.species.is_empty()
     }
 
-    fn home_breeding(&mut self, ui: &mut egui::Ui, extra: f32) -> bool {
+    pub(super) fn home_breeding(&mut self, ui: &mut egui::Ui, extra: f32) -> bool {
         let Some(w) = self.wiki.clone() else { return false };
         let f = self.setup.breed.file().clone();
         let pair = !f.daycare.a.species.is_empty() && !f.daycare.b.species.is_empty();
@@ -477,7 +400,7 @@ impl App {
     }
 
     /// The achievements you're closest to.
-    fn home_almost(&mut self, ui: &mut egui::Ui, extra: f32) {
+    pub(super) fn home_almost(&mut self, ui: &mut egui::Ui, extra: f32) {
         let l = self.lifetime_full();
         let near = self.near_achievements(&l);
         let mut go = false;
@@ -499,7 +422,7 @@ impl App {
     }
 
     /// Everything else, one click away: three across (two when narrow).
-    fn home_jump(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn home_jump(&mut self, ui: &mut egui::Ui) {
         let items: [(Tab, &str); 9] = [
             (Tab::Pokedex, "Every Pokémon, and your Shiny Dex"),
             (Tab::Map, "Areas, Pokémon and rare grass"),
@@ -511,6 +434,7 @@ impl App {
             (Tab::Stats, "Your hunting over time"),
             (Tab::Runs, "Every hunt, saved and caught"),
         ];
+        let items: Vec<(Tab, &str)> = items.into_iter().filter(|(t, _)| super::shell::app_of(*t).map_or(true, |a| self.has_app(a))).collect();
         let mut go: Option<Tab> = None;
         kit::card(ui, |ui| {
             super::profile_page::card_head(ui, "📌", kit::C_CYAN, "Jump to", None);
@@ -747,7 +671,7 @@ impl App {
     }
 
     /// The last few shinies caught, newest first.
-    fn recent_shinies(&mut self, ui: &mut egui::Ui, extra: f32) {
+    pub(super) fn recent_shinies(&mut self, ui: &mut egui::Ui, extra: f32) {
         let recent: Vec<(Option<usize>, String, u64, u64)> = self
             .cfg
             .history
@@ -862,7 +786,7 @@ fn sec_button(ui: &mut egui::Ui, text: &str, tip: &str) -> bool {
 }
 
 /// "5m ago", "3h ago", "2d ago" for a unix time.
-fn ago(unix: u64) -> String {
+pub(super) fn ago(unix: u64) -> String {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let s = now.saturating_sub(unix);
     if s < 60 {

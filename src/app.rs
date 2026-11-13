@@ -35,6 +35,10 @@ mod sim_opponents;
 mod sim_history;
 mod pass_page;
 mod breed_home;
+mod cards_app;
+mod dex_tcg;
+mod cards_bar;
+mod cards_trade;
 mod breed_box;
 mod breed_moves;
 mod breed_planner;
@@ -62,6 +66,17 @@ mod ov_broadcast;
 mod ov_terminal;
 mod ov_retro;
 mod ov_toast;
+mod store;
+mod library;
+mod app_modal;
+mod apps_welcome;
+mod widgets;
+mod w_kit;
+mod w_hunt;
+mod w_explore;
+mod w_battle;
+mod w_games;
+mod pins;
 mod map;
 mod map_panel;
 mod overlay_mod;
@@ -105,6 +120,8 @@ fn shiny_alert_text(plate_idx: usize) -> String {
 #[derive(PartialEq, Clone, Copy)]
 enum Tab {
     Home,
+    Store,
+    Library,
     Shiny,
     Pokedex,
     Map,
@@ -113,6 +130,7 @@ enum Tab {
     Sim,
     Breed,
     Calc,
+    Cards,
     Profile,
     Stats,
     Dex,
@@ -141,6 +159,10 @@ struct TestRead {
 
 struct Setup {
     tab: Tab,
+    /// The App Store and the Library.
+    store: store::StoreState,
+    /// Home's widget grid.
+    home: widgets::HomeState,
     search: String,
     monitors: usize,
     shot: Option<Shot>,
@@ -204,6 +226,7 @@ struct Setup {
     /// Battle Sim: the setup being made, saved trainers and opponents.
     sim: sim_home::SimState,
     breed: breed_home::BreedState,
+    cards: cards_app::CardsState,
     /// "Hunt it on rare grass?" after picking a target that's there today.
     rare_offer: Option<rare::RareOffer>,
     /// Apps in the sidebar whose pages are folded away.
@@ -439,6 +462,10 @@ impl App {
         let fonts = FontLoader::start(ctx);
         let species = Arc::new(species::all());
         let mut cfg = cfg;
+        // v0.7.0 has only the Modern look (Classic and Clean are retired).
+        let old_look = (!cfg.appearance.modern_ui).then_some(if cfg.appearance.clean_settings { "Clean" } else { "Classic" });
+        cfg.appearance.modern_ui = true;
+        cfg.appearance.clean_settings = true;
         // (Before the worker starts, so it gets the right setting.)
         // The shiny star alert is on by default. It was switched off for
         // everyone in an earlier version, so turn it back on once; after that
@@ -464,6 +491,15 @@ impl App {
             && (cfg.target.is_some() || cfg.count > 0 || !cfg.name_regions.is_empty())
         {
             cfg.welcome_done = true;
+        }
+        // Apps: someone brand new starts with Shiny Hunter (the tour offers
+        // packs); someone updating keeps every app (the first-launch screen
+        // shows them their data came across).
+        if !cfg.welcome_done && cfg.apps.installed.is_none() {
+            cfg.apps.set_installed(&[]);
+            cfg.apps.open(crate::apps::AppId::Shiny, crate::config::now_unix());
+            cfg.apps.pin(crate::apps::AppId::Shiny);
+            cfg.apps.welcomed = crate::apps::APPS_WELCOME_VERSION;
         }
         let show_setup = !cfg.welcome_done
             || cfg.onboarding_seen < crate::config::ONBOARDING_VERSION
@@ -525,6 +561,8 @@ impl App {
             show_setup,
             setup: Setup {
                 tab: Tab::Home,
+                store: store::StoreState { old_look, ..Default::default() },
+                home: Default::default(),
                 search: String::new(),
                 monitors: 0,
                 shot: None,
@@ -568,6 +606,7 @@ impl App {
                 team: Default::default(),
                 sim: Default::default(),
                 breed: Default::default(),
+                cards: Default::default(),
                 rare_offer: None,
                 // Apps start folded; clicking one opens its pages.
                 nav_collapsed: vec![Tab::Shiny],
@@ -812,7 +851,12 @@ impl App {
 
     fn on_msg(&mut self, msg: WorkerMsg) {
         match msg {
-            WorkerMsg::Encounter { names, added, late } => {
+            WorkerMsg::Encounter { names, added, late, rare, from_log } => {
+                // log encounters earn card XP through the Card Collector's
+                // own log reading (overlay on or off); screen ones here
+                if !from_log || !self.setup.cards.reads_logs {
+                    self.cards_met(&names, added, rare);
+                }
                 self.cfg.count += added as u64;
                 self.counted_since_start = true;
                 self.last_added = Some(added as u64);
@@ -1020,6 +1064,8 @@ impl App {
 
     /// Runs inside the overlay window each frame.
     fn sync_window(&mut self, ctx: &egui::Context) {
+        // where it is, for the Card Collector's bar to snap to
+        self.setup.cards.bar_ui.shiny = ctx.input(|i| i.viewport().outer_rect);
         let want = self.overlay_window_size();
         let ppp = ctx.pixels_per_point();
         let key = self.overlay_layout_key();
@@ -2085,6 +2131,7 @@ impl App {
             run_id: self.cfg.run_id,
         });
         let id = self.cfg.run_id;
+        self.cards_shiny(format!("{id}:{}", slug.as_deref().unwrap_or("")));
         self.cfg.saved_runs.retain(|r| r.id != id);
         self.start_fresh(self.cfg.target.clone());
         self.add_event("caught_it");
@@ -2832,6 +2879,7 @@ impl eframe::App for App {
         self.team_save_tick(false);
         self.sim_save_tick(false);
         self.breed_save_tick(false);
+        self.cards_tick(ctx);
         self.hotkeys_guard();
         while let Ok(msg) = self.rx.try_recv() {
             self.on_msg(msg);
@@ -2872,7 +2920,7 @@ impl eframe::App for App {
             self.show_setup = false;
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-            if !self.setup.phase_pick && !launcher::is_shiny_tab(self.setup.tab) && !self.onboarding_open() {
+            if !self.setup.phase_pick && !launcher::is_shiny_tab(self.setup.tab) && !self.takeover_open() {
                 self.setup.tab = Tab::Shiny;
             }
         }
@@ -2935,7 +2983,12 @@ impl eframe::App for App {
         // The overlay is its own always-on-top window while it's started.
         if self.overlay_on && !self.ov_hidden {
             self.overlay_viewport(ctx);
-        } else if !self.overlay_on && self.ov_geom.is_some() {
+        } else {
+            self.setup.cards.bar_ui.shiny = None;
+        }
+        // the Card Collector's XP bar, beside it
+        self.cards_bar_viewport(ctx);
+        if !self.overlay_on && self.ov_geom.is_some() {
             self.ov_geom = None;
             self.ov_opened = None;
             self.applied_size = None;
@@ -2958,6 +3011,7 @@ impl eframe::App for App {
         self.team_save_tick(true);
         self.sim_save_tick(true);
         self.breed_save_tick(true);
+        self.setup.cards.save_tick(true);
     }
 }
 
@@ -2967,5 +3021,6 @@ impl Drop for App {
         self.team_save_tick(true);
         self.sim_save_tick(true);
         self.breed_save_tick(true);
+        self.setup.cards.save_tick(true);
     }
 }

@@ -596,6 +596,37 @@ impl App {
         }
     }
 
+    /// The best few results for a search, for the Dashboard's Quick lookup:
+    /// (kind, key, icon, colour, title, line under it).
+    pub(super) fn info_quick(&mut self, w: &Arc<Wiki>, q: &str, n: usize) -> Vec<(Kind, String, &'static str, Color32, String, String)> {
+        let key = Arc::as_ptr(w) as usize;
+        if self.setup.info.index.as_ref().map(|i| i.0) != Some(key) {
+            self.setup.info.index = Some((key, build_index(w)));
+        }
+        let q = q.trim().to_lowercase();
+        let Some((_, idx)) = self.setup.info.index.as_ref() else { return Vec::new() };
+        let mut out: Vec<(u32, usize, usize)> = idx.iter().enumerate().filter_map(|(i, h)| score(h, &q).map(|sc| (sc, h.title.chars().count(), i))).collect();
+        out.sort();
+        out.into_iter().take(n).map(|(_, _, i)| {
+            let h = &idx[i];
+            (h.kind, h.key.clone(), h.kind.icon(), h.kind.color(), h.title.clone(), h.sub.clone())
+        }).collect()
+    }
+
+    /// Open a search result in Game Info (or the Pokédex, for a Pokémon).
+    pub(super) fn info_quick_open(&mut self, kind: Kind, key: String) {
+        match kind {
+            Kind::Pokemon => self.open_dex_entry(&key),
+            Kind::Move => self.info_open_page(Page::Move(key)),
+            Kind::Item => self.info_open_page(Page::Item(key)),
+            Kind::Place => self.info_open_page(Page::Place(key)),
+            Kind::Guide => {
+                self.go_to(Tab::Info);
+                self.info_read(&key, None, None);
+            }
+        }
+    }
+
     /// Results for the query and kind filter, best first, grouped by kind.
     fn info_hits(&self, _w: &Wiki) -> Vec<Hit> {
         let s = &self.setup.info;
@@ -1054,10 +1085,16 @@ impl App {
         let teams = self.team_choices();
         let mut add: Option<Option<u64>> = None;
         ui.horizontal(|ui| {
-            if ui.add(egui::Button::new(RichText::new("Open in the Pokédex  ›").size(13.0)).fill(kit::btn_fill())).on_hover_text("Moves, stats, evolutions and every spot on the map").clicked() {
+            if !super::app_modal::have(crate::apps::AppId::Pokedex) {
+                super::app_modal::lock_btn(ui, crate::apps::AppId::Pokedex, "Open in the Pokédex");
+            } else if ui.add(egui::Button::new(RichText::new("Open in the Pokédex  ›").size(13.0)).fill(kit::btn_fill())).on_hover_text("Moves, stats, evolutions and every spot on the map").clicked() {
                 *dex = Some(m.id.clone());
             }
-            super::team_home::add_to_team_menu(ui, &teams, &mut add);
+            if super::app_modal::have(crate::apps::AppId::Team) {
+                super::team_home::add_to_team_menu(ui, &teams, &mut add);
+            } else {
+                super::app_modal::lock_btn(ui, crate::apps::AppId::Team, "Add to team");
+            }
         });
         if let Some(t) = add {
             self.team_add_from(&m.id, t);

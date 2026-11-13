@@ -183,7 +183,11 @@ impl App {
             }
             ui.add_space(6.0);
             add = kit::accent_button_w(ui, egui::Button::new(RichText::new("+  Add one").size(13.0)), 8.0, 110.0).clicked();
-            import = soft(ui, "From your teams").on_hover_text("Add Pokémon from your Team Planner teams").clicked();
+            if super::app_modal::have(crate::apps::AppId::Team) {
+                import = soft(ui, "From your teams").on_hover_text("Add Pokémon from your Team Planner teams").clicked();
+            } else {
+                super::app_modal::lock_btn(ui, crate::apps::AppId::Team, "From your teams");
+            }
         });
         ui.add_space(12.0);
         if add {

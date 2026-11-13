@@ -326,37 +326,6 @@ pub fn card_shadow() -> egui::epaint::Shadow {
     }
 }
 
-/// Dashboard tile: icon chip, small label, big value and an optional
-/// coloured note under it. Clickable (hover lifts the border).
-pub fn stat_tile(ui: &mut Ui, width: f32, icon: &str, color: Color32, label: &str, value: &str, note: Option<(&str, Color32)>) -> Response {
-    let h = if note.is_some() { 104.0 } else { 88.0 };
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, h), Sense::click());
-    let p = ui.painter_at(rect.expand(12.0));
-    let hovered = resp.hovered();
-    // Lifts a little on hover.
-    let lift = anim(ui.ctx(), resp.id.with("lift"), hovered, QUICK);
-    let rect = rect.translate(egui::vec2(0.0, -2.0 * lift));
-    p.add(card_shadow().as_shape(rect, 14.0));
-    if lift > 0.0 {
-        p.add(shadow_tier(2).as_shape(rect, 14.0));
-    }
-    p.rect_filled(rect, 14.0, CARD());
-    p.rect_stroke(rect, 14.0, Stroke::new(1.0f32, if hovered { theme::blend(LINE(), color, 0.6) } else { LINE() }));
-    let chip = Rect::from_min_size(rect.min + egui::vec2(14.0, 14.0), egui::vec2(30.0, 30.0));
-    icon_chip(&p, chip, icon, color, false);
-    let tx = chip.max.x + 10.0;
-    let lab = p.layout_no_wrap(label.to_string(), crate::fonts::sans_font(12.5), MUTED());
-    let clip = Rect::from_min_max(egui::pos2(tx, rect.min.y), egui::pos2(rect.max.x - 10.0, rect.max.y));
-    p.with_clip_rect(clip).galley(egui::pos2(tx, chip.center().y - lab.size().y / 2.0), lab, MUTED());
-    let val = p.layout_no_wrap(value.to_string(), crate::fonts::sans_bold_font(22.0), TEXT());
-    p.with_clip_rect(rect.shrink(8.0)).galley(egui::pos2(rect.min.x + 16.0, chip.max.y + 8.0), val, TEXT());
-    if let Some((t, c)) = note {
-        p.text(egui::pos2(rect.min.x + 16.0, rect.max.y - 16.0), Align2::LEFT_CENTER, t, crate::fonts::sans_font(12.0), c);
-    }
-    p.text(rect.right_bottom() + egui::vec2(-14.0, -16.0), Align2::RIGHT_CENTER, "›", egui::FontId::proportional(16.0), if hovered { TEXT() } else { theme::blend(CARD(), MUTED(), 0.5) });
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
-}
-
 /// A thin progress bar in the accent (gradient if the user has one).
 pub fn bar(ui: &mut Ui, width: f32, height: f32, frac: f32) {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, height), Sense::hover());
@@ -1013,29 +982,6 @@ pub fn pill(ui: &mut Ui, text: &str, kind: PillKind) -> Response {
         .response
 }
 
-/// Small odds badge.
-pub fn badge(ui: &mut Ui, text: &str, gold: bool) {
-    if modern() {
-        let c = if gold { C_GOLD } else { MUTED() };
-        egui::Frame::none()
-            .fill(tint(c, 0.16))
-            .rounding(8.0)
-            .inner_margin(egui::Margin::symmetric(8.0, 2.0))
-            .show(ui, |ui| ui.label(RichText::new(text).size(fs(11.5)).color(if gold { C_GOLD } else { MUTED() })));
-        return;
-    }
-    let (bg, fg) = if gold {
-        (Color32::from_rgb(72, 56, 14), GOLD)
-    } else {
-        (CARD_HOVER(), MUTED())
-    };
-    egui::Frame::none()
-        .fill(bg)
-        .rounding(6.0)
-        .inner_margin(egui::Margin::symmetric(7.0, 2.0))
-        .show(ui, |ui| ui.label(RichText::new(text).size(fs(11.0)).color(fg)));
-}
-
 /// Clickable choice tile: icon, title, subtitle, badge. Highlighted when selected.
 pub fn choice_tile(
     ui: &mut Ui,
@@ -1148,24 +1094,6 @@ pub fn stat(ui: &mut Ui, width: f32, label: &str, value: &str) {
     stat_inner(ui, width, label, value);
 }
 
-/// A stat tile you can click (Home's tiles open the page behind the number).
-pub fn stat_button(ui: &mut Ui, width: f32, label: &str, value: &str, tip: &str) -> bool {
-    let rect = stat_inner(ui, width, label, value).rect;
-    let resp = ui.interact(rect, ui.id().with(("stat-button", label)), Sense::click());
-    if resp.hovered() {
-        ui.painter().rect_stroke(rect, r(12.0), Stroke::new(1.0f32, if modern() { CONTROL() } else { MUTED() }));
-    }
-    // A small arrow says the tile goes somewhere.
-    ui.painter().text(
-        rect.right_top() + egui::vec2(-10.0, 9.0),
-        Align2::RIGHT_TOP,
-        "›",
-        egui::FontId::proportional(14.0),
-        if resp.hovered() { TEXT() } else { MUTED() },
-    );
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked()
-}
-
 fn stat_inner(ui: &mut Ui, width: f32, label: &str, value: &str) -> Response {
     if modern() {
         return modern::stat(ui, width, label, value);
@@ -1251,54 +1179,6 @@ pub fn keycap(ui: &mut Ui, text: &str) {
         .show(ui, |ui| {
             ui.label(RichText::new(text).size(12.0).monospace().color(TEXT()))
         });
-}
-
-/// Sidebar navigation item. Returns true when clicked.
-pub fn nav_item(ui: &mut Ui, icon: &str, label: &str, selected: bool) -> bool {
-    if modern() {
-        return modern::nav_item(ui, icon, label, selected, theme::BUTTON(), false, true).clicked();
-    }
-    if clean() {
-        return clean::nav_item(ui, icon, label, selected);
-    }
-    let (rect, resp) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 34.0), Sense::click());
-    let p = ui.painter();
-    if selected {
-        p.rect_filled(rect, 8.0, SELECTED_BG());
-        p.rect_filled(
-            Rect::from_min_size(rect.min + egui::vec2(0.0, 7.0), egui::vec2(3.0, 20.0)),
-            2.0,
-            RED(),
-        );
-    } else if resp.hovered() {
-        p.rect_filled(rect, 8.0, CARD());
-    }
-    let color = if selected { TEXT() } else { MUTED() };
-    p.text(
-        rect.left_center() + egui::vec2(14.0, 0.0),
-        Align2::LEFT_CENTER,
-        icon,
-        egui::FontId::proportional(14.0),
-        if selected {
-            if theme::pal().light {
-                RED()
-            } else {
-                GOLD
-            }
-        } else {
-            MUTED()
-        },
-    );
-    p.text(
-        rect.left_center() + egui::vec2(40.0, 0.0),
-        Align2::LEFT_CENTER,
-        label,
-        egui::FontId::proportional(13.5),
-        color,
-    );
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
 }
 
 /// Thin progress bar for the welcome steps.
@@ -1566,34 +1446,6 @@ mod clean {
                 });
             })
             .response
-    }
-
-    /// Sidebar row: grey highlight when selected, no accent stripe.
-    pub fn nav_item(ui: &mut Ui, icon: &str, label: &str, selected: bool) -> bool {
-        let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 32.0), Sense::click());
-        let p = ui.painter();
-        let hovered = resp.hovered();
-        if selected {
-            p.rect_filled(rect, 6.0, SELECTED_BG());
-        } else if hovered {
-            p.rect_filled(rect, 6.0, theme::blend(SIDEBAR(), SELECTED_BG(), 0.6));
-        }
-        let color = if selected || hovered { TEXT() } else { MUTED() };
-        p.text(
-            rect.left_center() + egui::vec2(12.0, 0.0),
-            Align2::LEFT_CENTER,
-            icon,
-            egui::FontId::proportional(14.0),
-            color,
-        );
-        p.text(
-            rect.left_center() + egui::vec2(38.0, 0.0),
-            Align2::LEFT_CENTER,
-            label,
-            if selected { crate::fonts::sans_bold_font(13.5) } else { crate::fonts::sans_font(13.5) },
-            color,
-        );
-        resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
     }
 
     pub fn progress(ui: &mut Ui, frac: f32) {

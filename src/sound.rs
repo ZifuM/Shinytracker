@@ -170,6 +170,108 @@ pub fn play(s: Sfx, volume: f32, device: &str) {
     imp::play(bytes, device);
 }
 
+/// 16-bit mono WAV bytes from samples (-1..1).
+fn wav_from(buf: &[f32], gain: f32) -> Vec<u8> {
+    let data: Vec<u8> = buf.iter().flat_map(|v| (((v * gain).clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes()).collect();
+    let mut out = Vec::with_capacity(44 + data.len());
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + data.len() as u32).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&TEAR_RATE.to_le_bytes());
+    out.extend_from_slice(&(TEAR_RATE * 2).to_le_bytes());
+    out.extend_from_slice(&2u16.to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    out.extend_from_slice(&data);
+    out
+}
+
+/// The tear runs at a higher rate than the chimes: it's all crackle.
+const TEAR_RATE: u32 = 44_100;
+
+/// A short bit of foil tearing: a dense run of tiny crackles through a
+/// papery band, soft in and out so the bits join up into one rip as they
+/// play one after another. `snap` is the last, bigger rip as the top comes
+/// off. `seed` picks one of a few versions, so it never sounds looped.
+fn tear(seed: u32, snap: bool) -> Vec<f32> {
+    let len_s = if snap { 0.26 } else { 0.11 };
+    let n = (len_s * TEAR_RATE as f32) as usize;
+    let mut rng = seed.wrapping_mul(2_654_435_761).wrapping_add(0x9E37_79B9) | 1;
+    let mut rand = move || {
+        rng ^= rng << 13;
+        rng ^= rng >> 17;
+        rng ^= rng << 5;
+        (rng as f32 / u32::MAX as f32) * 2.0 - 1.0
+    };
+    let mut out = vec![0f32; n];
+    // crackles: sparse clicks, each a little decaying burst
+    let mut click = 0f32;
+    // a biquad band-pass at `fc` (direct form I state: x1, x2, y1, y2)
+    let band = |fc: f32, q: f32| {
+        let w = std::f32::consts::TAU * fc / TEAR_RATE as f32;
+        let alpha = w.sin() / (2.0 * q);
+        let a0 = 1.0 + alpha;
+        (alpha / a0, -alpha / a0, -2.0 * w.cos() / a0, (1.0 - alpha) / a0)
+    };
+    // the crinkle (2-5 kHz) and a lower crunch (~1 kHz) so it isn't just hiss
+    let hi = band(2_800.0 + 700.0 * (seed % 5) as f32, 1.4);
+    let mid = band(900.0 + 150.0 * (seed % 3) as f32, 1.1);
+    let mut sh = [0f32; 4];
+    let mut sm = [0f32; 4];
+    let run = |f: (f32, f32, f32, f32), st: &mut [f32; 4], x: f32| {
+        let y = f.0 * x + f.1 * st[1] - f.2 * st[2] - f.3 * st[3];
+        st[1] = st[0];
+        st[0] = x;
+        st[3] = st[2];
+        st[2] = y;
+        y
+    };
+    for (i, o) in out.iter_mut().enumerate() {
+        let t = i as f32 / n as f32;
+        // denser in the middle; the snap starts with a burst
+        let density = if snap { 0.05 * (1.0 - t).powf(1.5) + 0.01 } else { 0.012 + 0.012 * (std::f32::consts::PI * t).sin() };
+        if (rand() * 0.5 + 0.5) < density {
+            click += rand().abs() * if snap && t < 0.15 { 1.5 } else { 1.0 };
+        }
+        click *= 0.93;
+        let src = click * rand() + 0.025 * rand();
+        let y = run(hi, &mut sh, src) + 0.9 * run(mid, &mut sm, src);
+        let env = if snap { (t / 0.015).min(1.0) * (1.0 - t).powf(1.4) } else { (t / 0.18).min(1.0) * ((1.0 - t) / 0.3).min(1.0) };
+        *o = y * env;
+    }
+    out
+}
+
+static TEARS: Mutex<Vec<(u32, bool, u32, &'static [u8])>> = Mutex::new(Vec::new());
+
+/// Play a bit of tearing (see `tear`) at `volume` on `device`.
+pub fn play_tear(seed: u32, snap: bool, volume: f32, device: &str) {
+    let vkey = (volume.clamp(0.0, 1.0) * 20.0).round() as u32;
+    if vkey == 0 {
+        return;
+    }
+    let seed = seed % 6;
+    let bytes: &'static [u8] = {
+        let Ok(mut cache) = TEARS.lock() else { return };
+        match cache.iter().find(|(s, sn, v, _)| *s == seed && *sn == snap && *v == vkey) {
+            Some((_, _, _, b)) => b,
+            None => {
+                let buf = tear(seed, snap);
+                let peak = buf.iter().fold(0f32, |m, v| m.max(v.abs())).max(1e-6);
+                let gain = (vkey as f32 / 20.0) * if snap { 0.75 } else { 0.5 } / peak;
+                let b: &'static [u8] = Box::leak(wav_from(&buf, gain).into_boxed_slice());
+                cache.push((seed, snap, vkey, b));
+                b
+            }
+        }
+    };
+    imp::play(bytes, device);
+}
+
 /// Play a song file (MP3, WAV, WMA, M4A…) on the default output device, for
 /// the "Alert song". Stops any song already playing. Returns false if Windows
 /// couldn't open the file.
@@ -380,5 +482,35 @@ mod tests {
             assert_eq!(&w[8..12], b"WAVE");
             assert!(w.len() > 5_000 && w.len() < 200_000, "{s:?} {}", w.len());
         }
+    }
+}
+
+#[cfg(test)]
+mod tear_tests {
+    use super::*;
+
+    /// Writes a preview of a slow, steady tear and the snap to the temp folder.
+    #[test]
+    fn tear_preview() {
+        let total = (1.6 * TEAR_RATE as f32) as usize;
+        let mut mix = vec![0f32; total];
+        let mut put = |at: f32, buf: Vec<f32>, g: f32| {
+            let peak = buf.iter().fold(0f32, |m, v| m.max(v.abs())).max(1e-6);
+            let i0 = (at * TEAR_RATE as f32) as usize;
+            for (k, v) in buf.iter().enumerate() {
+                if i0 + k < mix.len() {
+                    mix[i0 + k] += v / peak * g;
+                }
+            }
+        };
+        // 24 bits over about 1.1 s (a steady drag), then the snap
+        for k in 0..24u32 {
+            put(k as f32 * 0.046, tear(k + 1, false), 0.5);
+        }
+        put(1.15, tear(7, true), 0.75);
+        let peak = mix.iter().fold(0f32, |m, v| m.max(v.abs())).max(1e-6);
+        let bytes = wav_from(&mix, 0.9 / peak);
+        assert!(bytes.len() > 44);
+        let _ = std::fs::write(std::env::temp_dir().join("tear_preview.wav"), bytes);
     }
 }

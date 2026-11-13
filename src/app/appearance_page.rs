@@ -36,7 +36,7 @@ type Hover = Option<(Appearance, String)>;
 
 impl App {
     pub(super) fn page_appearance(&mut self, ui: &mut egui::Ui) {
-        kit::page_header(ui, "APPEARANCE", "Your style, light or dark, and your colours. Hover any choice to try it in the preview first.");
+        kit::page_header(ui, "APPEARANCE", "Light or dark, and your colours. Hover any choice to try it in the preview first.");
         // "Undo changes" goes back to the look the page was opened with.
         let visit = kit::page_visit(ui.ctx());
         if self.setup.look_start.as_ref().map(|(v, _)| *v) != Some(visit) {
@@ -92,43 +92,10 @@ impl App {
 
     fn look_style_card(&mut self, ui: &mut egui::Ui, hover: &mut Hover) {
         kit::card(ui, |ui| {
-            card_head(ui, "✨", PURPLE, "Style & mode");
+            card_head(ui, "✨", PURPLE, "Mode");
             ui.add_space(14.0);
-            label(ui, "STYLE");
-            ui.add_space(8.0);
             let a = self.cfg.appearance.clone();
-            let style: u8 = if a.modern_ui { 0 } else if a.clean_settings { 1 } else { 2 };
             let avail = ui.available_width();
-            let w3 = ((avail - 20.0) / 3.0).floor();
-            let mut pick: Option<u8> = None;
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 10.0;
-                for (v, icon, title, sub) in [
-                    (0u8, "✨", "Modern", "A dashboard Home and colour-coded pages."),
-                    (1, "▭", "Clean", "Flat and simple, your colour on buttons."),
-                    (2, "🎮", "Classic", "The original Pokémon-style look."),
-                ] {
-                    let r = kit::choice_tile(ui, vec2(w3, 104.0), style == v, icon, title, sub, "");
-                    if r.hovered() && style != v {
-                        let mut c = a.clone();
-                        set_style(&mut c, v);
-                        *hover = Some((c, format!("{title} style")));
-                    }
-                    if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                        pick = Some(v);
-                    }
-                }
-            });
-            if let Some(v) = pick {
-                set_style(&mut self.cfg.appearance, v);
-            }
-            ui.add_space(6.0);
-            ui.label(RichText::new("Only this window changes style. The overlay keeps its own theme (on the Overlay page).").size(11.5).color(MUTED()));
-
-            ui.add_space(16.0);
-            label(ui, "MODE");
-            ui.add_space(8.0);
-            let a = self.cfg.appearance.clone();
             let w4 = ((avail - 30.0) / 4.0).floor();
             let mut pick: Option<Option<UiMode>> = None;
             ui.horizontal(|ui| {
@@ -307,7 +274,7 @@ impl App {
                 "Pages fade in, tabs and the sidebar's highlight slide, buttons ease on hover and charts grow in. Off for a still window. (The overlay's own effects aren't affected.)",
                 &mut a.animations,
             );
-            if a.modern_ui {
+            {
                 ui.add_space(10.0);
                 divider(ui);
                 ui.add_space(10.0);
@@ -317,6 +284,10 @@ impl App {
                 });
                 a.nav_compact = compact;
             }
+            ui.add_space(10.0);
+            divider(ui);
+            ui.add_space(12.0);
+            self.pins_place_picker(ui);
         });
     }
 
@@ -474,7 +445,7 @@ impl App {
                 let mh = if tall { (inner * 0.70).clamp(240.0, 320.0) } else { 232.0 };
                 if tall {
                     let (r, _) = ui.allocate_exact_size(vec2(inner, mh), Sense::hover());
-                    draw_mock_window(ui.painter(), r, &lk, a.nav_compact && a.modern_ui);
+                    draw_mock_window(ui.painter(), r, &lk, a.nav_compact);
                     ui.add_space(10.0);
                     // the overlay's header follows the main colour too
                     let (r2, _) = ui.allocate_exact_size(vec2(inner, 64.0), Sense::hover());
@@ -483,18 +454,12 @@ impl App {
                     let ow = (inner * 0.30).min(220.0);
                     let (row, _) = ui.allocate_exact_size(vec2(inner, mh), Sense::hover());
                     let win = Rect::from_min_size(row.min, vec2(inner - ow - 12.0, mh));
-                    draw_mock_window(ui.painter(), win, &lk, a.nav_compact && a.modern_ui);
+                    draw_mock_window(ui.painter(), win, &lk, a.nav_compact);
                     let ov = Rect::from_min_max(pos2(win.max.x + 12.0, row.min.y), row.max);
                     draw_mock_overlay(ui.painter(), ov, &lk);
                 }
                 ui.add_space(10.0);
                 let mut cap = vec![
-                    match (a.modern_ui, a.clean_settings) {
-                        (true, _) => "Modern",
-                        (false, true) => "Clean",
-                        _ => "Classic",
-                    }
-                    .to_string(),
                     if a.follow_system {
                         "Match Windows".to_string()
                     } else {
@@ -511,16 +476,12 @@ impl App {
                 if shown.is_some() {
                     ui.label(RichText::new("Click to keep it.").size(12.0).color(ch::ink(ORANGE)));
                 } else {
-                    ui.label(RichText::new("Hover any style, mode or palette to try it here.").size(12.0).color(MUTED()));
+                    ui.label(RichText::new("Hover any mode or palette to try it here.").size(12.0).color(MUTED()));
                 }
             });
     }
 }
 
-fn set_style(a: &mut Appearance, v: u8) {
-    a.modern_ui = v == 0;
-    a.clean_settings = v != 2;
-}
 
 fn palette_on(a: &Appearance, acc: [u8; 3], sec: Option<[u8; 3]>) -> bool {
     !a.separate_buttons
@@ -557,13 +518,22 @@ pub(super) fn look_code(a: &Appearance) -> String {
         UiMode::SemiDark => 1,
         UiMode::Dark => 2,
     };
-    let style = if a.modern_ui { 0 } else if a.clean_settings { 1 } else { 2 };
+    let style = 0; // Modern
     let flags = (a.gradient as u8) | (a.separate_buttons as u8) << 1 | (a.button_gradient as u8) << 2 | (a.solid_buttons as u8) << 3 | (a.follow_system as u8) << 4;
     format!("PTC1-{mode}{style}{flags:02X}-{}-{}-{}-{}", hex(a.accent), hex(a.accent2), hex(a.button), hex(a.button2))
 }
 
 /// Read a look code (keeps the parts a code doesn't carry, like animations).
 pub(super) fn parse_look(code: &str, keep: &Appearance) -> Option<Appearance> {
+    // (old codes can say Classic or Clean: only Modern exists now)
+    parse_look_raw(code, keep).map(|mut a| {
+        a.modern_ui = true;
+        a.clean_settings = true;
+        a
+    })
+}
+
+fn parse_look_raw(code: &str, keep: &Appearance) -> Option<Appearance> {
     let code: String = code.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_uppercase();
     let rest = code.strip_prefix("PTC1-")?;
     let parts: Vec<&str> = rest.split('-').collect();
@@ -591,7 +561,7 @@ pub(super) fn parse_look(code: &str, keep: &Appearance) -> Option<Appearance> {
     let flags = u8::from_str_radix(&parts[0][2..4], 16).ok()?;
     let mut a = keep.clone();
     a.mode = mode;
-    set_style(&mut a, style);
+    let _ = style; // (Modern is the only look now)
     a.gradient = flags & 1 != 0;
     a.separate_buttons = flags & 2 != 0;
     a.button_gradient = flags & 4 != 0;
@@ -840,7 +810,6 @@ mod tests {
         a.separate_buttons = true;
         a.button = [250, 0, 128];
         a.mode = UiMode::SemiDark;
-        a.modern_ui = false;
         let code = look_code(&a);
         assert_eq!(parse_look(&code, &Appearance::default()), Some(a.clone()));
         assert_eq!(parse_look(&code.to_lowercase(), &Appearance::default()), Some(a));

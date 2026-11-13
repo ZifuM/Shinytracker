@@ -181,7 +181,7 @@ pub fn decode(bytes: &[u8]) -> Result<RgbaImage, String> {
     })
 }
 
-fn decode_jpeg(bytes: &[u8]) -> Result<RgbaImage, String> {
+pub(super) fn decode_jpeg(bytes: &[u8]) -> Result<RgbaImage, String> {
     let bad = || "That JPG looks damaged".to_string();
     let mut d = jpeg_decoder::Decoder::new(std::io::Cursor::new(bytes));
     let px = d.decode().map_err(|_| bad())?;

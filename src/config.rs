@@ -649,6 +649,10 @@ pub struct Config {
     /// The onboarding tour version this user has been through. Below
     /// `ONBOARDING_VERSION` the tour opens (new users get the welcome,
     /// people updating get "What's new" first). Advanced > Updates resets it.
+    /// Which apps are installed and open (App Store and Library).
+    pub apps: crate::apps::AppsCfg,
+    /// Home's widgets and their order.
+    pub home: crate::apps::HomeCfg,
     pub onboarding_seen: u32,
     /// One-time switch-off of the experimental shiny star alert.
     pub star_alert_reset: bool,
@@ -669,6 +673,9 @@ pub struct Config {
     pub guides_read: Vec<String>,
     /// Game Info: pages pinned to its front page ("move:surf", "place:Route 210"…).
     pub info_pins: Vec<String>,
+    /// Shinies the Card Collector has given XP for (hunt id and Pokémon),
+    /// so undoing and logging again doesn't count twice.
+    pub cards_shiny_keys: Vec<String>,
     /// Game Info: how far into the story you are (index into the wiki's
     /// badge stages: 0 = before Roark … 9 = after the League). None: not set.
     pub info_stage: Option<u8>,
@@ -766,11 +773,14 @@ impl Default for Config {
             history: Vec::new(),
             keybinds: KeyBinds::default(),
             welcome_done: false,
+            apps: Default::default(),
+            home: Default::default(),
             onboarding_seen: 0,
             star_alert_reset: false,
             star_alert_reset2: false,
             guides_read: Vec::new(),
             info_pins: Vec::new(),
+            cards_shiny_keys: Vec::new(),
             info_stage: None,
             info_more: true,
             info_modern: false,
@@ -1256,7 +1266,7 @@ impl Config {
 }
 
 /// This app's version (as saved in `saved_by`).
-fn update_version() -> &'static str {
+pub fn update_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 

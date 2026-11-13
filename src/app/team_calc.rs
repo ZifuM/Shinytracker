@@ -58,7 +58,7 @@ fn default_foe(world: World) -> Member {
 }
 
 /// A well-known set for a Pokémon.
-fn default_set(name: &str, world: World) -> Member {
+pub(super) fn default_set(name: &str, world: World) -> Member {
     let d = battle::data();
     let s = d.sets_for(name).into_iter().next();
     let mut m = Member::new(name, world);
@@ -213,6 +213,9 @@ impl App {
             ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
             ui.label(caps("YOUR SIDE"));
             let shown = own.and_then(|id| teams.iter().find(|t| t.0 == id)).map(|(_, name, n)| team_label(name, *n)).unwrap_or_else(|| "No team".to_string());
+            if !super::app_modal::have(crate::apps::AppId::Team) {
+                super::app_modal::lock_btn(ui, crate::apps::AppId::Team, "Pick one of your teams");
+            } else {
             kit::Dropdown::from_id_salt("calc-team").selected_text(shown).width(240.0).height(320.0).show_ui(ui, |ui| {
                 if ui.selectable_label(own.is_none(), "No team: any Pokémon against any other").clicked() {
                     pick_team = Some(None);
@@ -223,6 +226,7 @@ impl App {
                     }
                 }
             });
+            }
             if own.is_none() {
                 ui.add_space(6.0);
                 kit::segmented(ui, &mut world, &[(World::Platinum, "Platinum"), (World::Modern, "Modern")]);

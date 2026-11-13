@@ -462,11 +462,15 @@ impl App {
                 });
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
-                    if ui.link(RichText::new("Open in the Pokédex ›").size(12.0)).clicked() {
+                    if !super::app_modal::have(crate::apps::AppId::Pokedex) {
+                        super::app_modal::lock_btn(ui, crate::apps::AppId::Pokedex, "Open in the Pokédex");
+                    } else if ui.link(RichText::new("Open in the Pokédex ›").size(12.0)).clicked() {
                         to_dex = true;
                     }
                     ui.add_space(8.0);
-                    if ui.link(RichText::new("Plan breeding it ›").size(12.0)).on_hover_text("Open the Breeding Planner with this set as the goal: nature, stats at 31, Ability and egg moves").clicked() {
+                    if !super::app_modal::have(crate::apps::AppId::Breed) {
+                        super::app_modal::lock_btn(ui, crate::apps::AppId::Breed, "Plan breeding it");
+                    } else if ui.link(RichText::new("Plan breeding it ›").size(12.0)).on_hover_text("Open the Breeding Planner with this set as the goal: nature, stats at 31, Ability and egg moves").clicked() {
                         to_breed = true;
                     }
                 });

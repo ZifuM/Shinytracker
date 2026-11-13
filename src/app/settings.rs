@@ -180,11 +180,7 @@ impl App {
                 .frame(egui::Frame::none())
                 .show_separator_line(false)
                 .show(ctx, |ui| {
-                    if modern {
-                        self.modern_header(ctx, ui)
-                    } else {
-                        self.settings_header(ctx, ui)
-                    }
+                    self.modern_header(ctx, ui)
                 });
             let body_top = screen.min.y + top_h;
             let bg = ctx.layer_painter(egui::LayerId::background());
@@ -193,7 +189,11 @@ impl App {
                 egui::Rounding { nw: 0.0, ne: 0.0, sw: r, se: r },
                 PAGE(),
             );
-            if self.onboarding_open() {
+            self.apps_tick(ctx);
+            self.app_overlays(ctx);
+            if self.apps_welcome_open() {
+                self.apps_welcome(ctx);
+            } else if self.onboarding_open() {
                 self.onboarding(ctx);
             } else {
                 // (Panels draw on the background layer, so the sidebar fills
@@ -210,11 +210,7 @@ impl App {
                     )
                     .show(ctx, |ui| {
                         kit::settings_style(ui);
-                        if modern {
-                            self.modern_sidebar(ui)
-                        } else {
-                            self.sidebar(ui)
-                        }
+                        self.modern_sidebar(ui)
                     });
                 kit::set_page_icon(if modern {
                     let (icon, _, color) = super::shell::tab_meta(self.setup.tab);
@@ -332,7 +328,7 @@ impl App {
                                     || self.setup.caught_pick
                                     || (self.setup.profile_card.is_none()
                                         && self.setup.share.is_none()
-                                        && matches!(self.setup.tab, Tab::Home | Tab::Profile | Tab::Stats | Tab::Dex | Tab::Trophies | Tab::Runs | Tab::Pokedex | Tab::Map | Tab::Info | Tab::Team | Tab::Sim | Tab::Breed | Tab::Calc));
+                                        && matches!(self.setup.tab, Tab::Home | Tab::Store | Tab::Library | Tab::Profile | Tab::Stats | Tab::Dex | Tab::Trophies | Tab::Runs | Tab::Pokedex | Tab::Map | Tab::Info | Tab::Team | Tab::Sim | Tab::Breed | Tab::Calc | Tab::Cards));
                                 let cap = if modern { 1060.0 } else { 900.0 };
                                 let w = if wide { ui.available_width() } else { ui.available_width().min(cap) };
                                 ui.set_max_width(w);
@@ -356,6 +352,8 @@ impl App {
                                     }
                                     match self.setup.tab {
                                         Tab::Home => self.page_home(ui),
+                                        Tab::Store => self.page_store(ui),
+                                        Tab::Library => self.page_library(ui),
                                         Tab::Shiny => self.page_shiny(ui),
                                         Tab::Pokedex => self.page_pokedex(ui),
                                         Tab::Map => self.page_map(ui),
@@ -364,6 +362,7 @@ impl App {
                                         Tab::Sim => self.page_sim(ui),
                                         Tab::Breed => self.page_breed(ui),
                                         Tab::Calc => self.page_damage_calc(ui),
+                                        Tab::Cards => self.page_cards(ui),
                                         Tab::Profile => self.page_profile(ui),
                                         Tab::Stats => self.page_stats(ui),
                                         Tab::Dex | Tab::Trophies => {
@@ -475,78 +474,6 @@ impl App {
         }
     }
 
-    /// The accent header bar across the top of the settings window.
-    fn settings_header(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
-        let rect = ui.max_rect();
-        let p = ui.painter().clone();
-        theme::header_bar(&p, rect, if ctx.input(|i| i.viewport().maximized.unwrap_or(false)) { 0.0 } else { 8.0 });
-        p.line_segment(
-            [rect.left_bottom(), rect.right_bottom()],
-            egui::Stroke::new(2.0f32, theme::RED_DARK()),
-        );
-        p.image(
-            self.icon_tex.id(),
-            Rect::from_center_size(rect.left_center() + egui::vec2(20.0, 0.0), egui::vec2(22.0, 22.0)),
-            Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-            Color32::WHITE,
-        );
-        theme::outlined_text(
-            &p,
-            rect.left_center() + egui::vec2(36.0, 1.0),
-            egui::Align2::LEFT_CENTER,
-            "POKE TOGETHER COMPANION",
-            10.0,
-            Color32::WHITE,
-        );
-        let maxed = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-        let bw = 34.0;
-        let close = Rect::from_min_size(egui::pos2(rect.max.x - bw - 4.0, rect.min.y + 4.0), egui::vec2(bw, rect.height() - 8.0));
-        let max = close.translate(egui::vec2(-bw - 2.0, 0.0));
-        let min = max.translate(egui::vec2(-bw - 2.0, 0.0));
-        let drag = Rect::from_min_max(rect.min, egui::pos2(min.min.x - 4.0, rect.max.y));
-        let dr = ui.interact(drag, ui.id().with("settings-drag"), Sense::click_and_drag());
-        if dr.double_clicked() {
-            // Double-click the title bar to maximize / restore, like Windows.
-            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maxed));
-        } else if dr.drag_started() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
-        }
-        for (i, r) in [min, max, close].into_iter().enumerate() {
-            let resp = ui.interact(r, ui.id().with(("hdr-btn", i)), Sense::click());
-            if resp.hovered() {
-                p.rect_filled(r, 6.0, Color32::from_black_alpha(50));
-            }
-            let c = r.center();
-            let s = egui::Stroke::new(2.0f32, Color32::WHITE);
-            if i == 0 {
-                p.line_segment([c - egui::vec2(6.0, -1.0), c + egui::vec2(6.0, 1.0)], s);
-                if resp.on_hover_text("Minimise").clicked() {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-                }
-            } else if i == 1 {
-                let thin = egui::Stroke::new(1.6f32, Color32::WHITE);
-                if maxed {
-                    // "Restore": two overlapping squares
-                    let back = Rect::from_center_size(c + egui::vec2(1.5, -1.5), egui::vec2(9.0, 9.0));
-                    let front = Rect::from_center_size(c + egui::vec2(-1.5, 1.5), egui::vec2(9.0, 9.0));
-                    p.line_segment([back.left_top(), back.right_top()], thin);
-                    p.line_segment([back.right_top(), back.right_bottom()], thin);
-                    p.rect_stroke(front, 1.0, thin);
-                } else {
-                    p.rect_stroke(Rect::from_center_size(c, egui::vec2(11.0, 11.0)), 1.0, thin);
-                }
-                if resp.on_hover_text(if maxed { "Restore" } else { "Maximise" }).clicked() {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maxed));
-                }
-            } else {
-                p.line_segment([c - egui::vec2(5.5, 5.5), c + egui::vec2(5.5, 5.5)], s);
-                p.line_segment([c + egui::vec2(-5.5, 5.5), c + egui::vec2(5.5, -5.5)], s);
-                if resp.on_hover_text("Close the Companion (saves everything)").clicked() {
-                    self.quit_app(ctx);
-                }
-            }
-        }
-    }
 
     /// Remember the settings window's spot, size and maximized state so it
     /// reopens the same way (saved quietly, without the "✔ Saved" flash).
@@ -589,136 +516,6 @@ impl App {
         });
     }
 
-    fn sidebar(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(2.0);
-        // (group heading, tab, icon, label, parent: the app a page belongs to)
-        let items: [(Option<&str>, Tab, &str, &str, Option<Tab>); 18] = [
-            (None, Tab::Home, "🏠", "Home", None),
-            (None, Tab::Profile, "🏅", "Profile", None),
-            (None, Tab::Stats, "📊", "Stats", None),
-            (Some("APPS"), Tab::Shiny, "✨", "Shiny Hunter", None),
-            (None, Tab::Hunt, "🎯", "Hunt", Some(Tab::Shiny)),
-            (None, Tab::Counting, "👁", "Counting", Some(Tab::Shiny)),
-            (None, Tab::Runs, "📜", "Runs", Some(Tab::Shiny)),
-            (None, Tab::Overlay, "🖵", "Overlay", Some(Tab::Shiny)),
-            (None, Tab::Pokedex, "📖", "Pokédex", None),
-            (None, Tab::Map, "🗺", "Map", None),
-            (None, Tab::Info, "📚", "Game Info", None),
-            (None, Tab::Team, "🛡", "Team Planner", None),
-            (None, Tab::Sim, "🎮", "Battle Sim", None),
-            (None, Tab::Breed, "🐣", "Breeding", None),
-            (None, Tab::Calc, "💥", "Damage Calculator", None),
-            (Some("SETTINGS"), Tab::Appearance, "🎨", "Appearance", None),
-            (None, Tab::Hotkeys, "⌨", "Hotkeys", None),
-            (None, Tab::Advanced, "⚙", "Advanced", None),
-        ];
-        let parent_of = |t: Tab| items.iter().find(|i| i.1 == t).and_then(|i| i.4);
-        let has_children = |t: Tab| items.iter().any(|i| i.4 == Some(t));
-        let current = self.setup.tab;
-        for (group, tab, icon, label, parent) in items {
-            if let Some(g) = group {
-                kit::nav_group(ui, g);
-            }
-            // Sub-pages only show while their app is expanded.
-            if let Some(p) = parent {
-                if self.setup.nav_collapsed.contains(&p) {
-                    continue;
-                }
-            }
-            let expandable = has_children(tab);
-            let collapsed = self.setup.nav_collapsed.contains(&tab);
-            // A collapsed app stays highlighted while one of its pages is open.
-            let selected = current == tab || (collapsed && parent_of(current) == Some(tab));
-            let clicked = if parent.is_some() {
-                ui.horizontal(|ui| {
-                    ui.add_space(14.0);
-                    ui.vertical(|ui| kit::nav_item(ui, icon, label, selected)).inner
-                })
-                .inner
-            } else {
-                let r = kit::nav_item(ui, icon, label, selected);
-                let rect = ui.min_rect();
-                let y = ui.cursor().min.y - 18.0;
-                let right = rect.max.x - 12.0;
-                // A chevron shows an app has pages under it, open or folded.
-                if expandable {
-                    let c = egui::pos2(right - 3.0, y - 1.0);
-                    let st = egui::Stroke::new(1.5f32, MUTED());
-                    let pts = if collapsed {
-                        [c + egui::vec2(-1.5, -3.5), c + egui::vec2(2.0, 0.0), c + egui::vec2(-1.5, 3.5)]
-                    } else {
-                        [c + egui::vec2(-3.5, -1.5), c + egui::vec2(0.0, 2.0), c + egui::vec2(3.5, -1.5)]
-                    };
-                    ui.painter().add(egui::Shape::line(pts.to_vec(), st));
-                }
-                if super::shell::is_experimental(tab) {
-                    // the warning triangle, or a small one on the icon when the
-                    // name runs into it (Damage Calculator in the narrow sidebar)
-                    // (measured in the regular weight so it doesn't flip when selected)
-                    let tw = ui.painter().layout_no_wrap(label.to_string(), crate::fonts::sans_font(13.5), MUTED()).size().x;
-                    let fits = rect.min.x + 38.0 + tw + 6.0 < right - 15.0;
-                    let mark = if fits {
-                        kit::exp_badge(ui.painter(), egui::pos2(right, y - 1.0))
-                    } else {
-                        kit::warn_triangle(ui.painter(), egui::pos2(rect.min.x + 27.0, y - 7.0), 10.0, Some(kit::SIDEBAR()))
-                    };
-                    ui.interact(mark, egui::Id::new(("nav-exp-classic", label)), egui::Sense::hover()).on_hover_text(kit::EXPERIMENTAL_TIP);
-                }
-                // A green light on Shiny Hunter's icon while the overlay runs
-                // (a badge on the icon, clear of the name and the chevron).
-                if tab == Tab::Shiny && self.overlay_on {
-                    let c = egui::pos2(rect.min.x + 27.0, y - 8.0);
-                    ui.painter().circle_filled(c, 5.0, if selected { kit::SELECTED_BG() } else { SIDEBAR() });
-                    ui.painter().circle_filled(c, 3.5, theme::GREEN);
-                }
-                r
-            };
-            if clicked {
-                if expandable {
-                    // Opening an app shows its pages; only a second click on
-                    // the app you're already on folds them away again.
-                    if collapsed {
-                        self.setup.nav_collapsed.retain(|t| *t != tab);
-                    } else if current == tab {
-                        self.setup.nav_collapsed.push(tab);
-                    }
-                }
-                // Clicking the page you're on takes you back to its top
-                // (coming back to the Pokédex keeps your place in the grid).
-                self.setup.scroll_top = current == tab || tab != Tab::Pokedex;
-                if tab == Tab::Info && current == Tab::Info {
-                    self.setup.info.reset_home();
-                }
-                // a trophy opened from Stats doesn't stick around in the Pokédex
-                if self.setup.trophy_back.take().is_some() {
-                    self.setup.dex.open = None;
-                }
-                self.setup.tab = tab;
-                self.setup.picking_target = false;
-                self.setup.view_run = None;
-                self.setup.share = None;
-                self.setup.profile_card = None;
-                self.setup.phase_pick = false;
-                self.setup.caught_pick = false;
-            }
-            ui.add_space(2.0);
-        }
-        ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-            let recent = self
-                .saved_flash
-                .is_some_and(|t| t.elapsed() < Duration::from_millis(1500));
-            if recent {
-                ui.label(RichText::new("✔ Saved").size(kit::fs(11.5)).color(theme::GREEN));
-                ui.ctx().request_repaint_after(Duration::from_millis(200));
-            } else {
-                ui.label(
-                    RichText::new("Changes save automatically")
-                        .size(kit::fs(10.5))
-                        .color(MUTED()),
-                );
-            }
-        });
-    }
 
     // ─────────────────────────── shared pieces ───────────────────────────
 

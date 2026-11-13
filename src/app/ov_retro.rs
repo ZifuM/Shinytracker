@@ -521,3 +521,43 @@ pub(super) fn toast_skin() -> super::ov_toast::ToastSkin {
         body_font: pixel_font(7.0),
     }
 }
+
+/// The Card Collector's XP bar in the Retro DS look: a Gen 4 status box
+/// with a "PACK" label, an EXP-blue bar and pixel numbers. `msg` replaces
+/// the numbers for a moment (+XP, a pack, snapping); `glow` lights the
+/// edge gold (0 to 1); `near` lights it blue (about to snap).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn card_xp_strip(p: &Painter, r: Rect, frac: f32, xp: u64, need: u64, packs: u32, msg: Option<&str>, glow: f32, near: bool) {
+    // the box: dark outer edge, light inner edge, cream inside
+    let edge = if near { Color32::from_rgb(96, 200, 248) } else if glow > 0.0 { mix(Color32::from_rgb(88, 96, 120), GOLD, glow) } else { Color32::from_rgb(88, 96, 120) };
+    rrect(p, r, 6.0, edge);
+    rrect(p, r.shrink(1.5), 5.0, Color32::from_rgb(184, 192, 216));
+    let inner = r.shrink(2.5);
+    rrect(p, inner, 4.0, BOX);
+    // left: PACK, with how many wait
+    let ly = inner.center().y;
+    let label = ds(p, pos2(inner.min.x + 6.0, ly), Align2::LEFT_CENTER, "PACK", 8.0, TXT);
+    let mut x = label.max.x + 4.0;
+    if packs > 0 {
+        let b = Rect::from_min_size(pos2(x, ly - 6.0), vec2(if packs > 9 { 20.0 } else { 14.0 }, 12.0));
+        rrect(p, b, 3.0, HP_RED);
+        p.text(b.center(), Align2::CENTER_CENTER, if packs > 9 { "9+".to_string() } else { packs.to_string() }, pixel_font(7.0), Color32::WHITE);
+        x = b.max.x + 4.0;
+    }
+    // right: the numbers (or the message)
+    let right = msg.map(|m| m.to_string()).unwrap_or_else(|| format!("{xp}/{need}"));
+    let g = p.layout_no_wrap(right.clone(), pixel_font(8.0), TXT);
+    let rx = inner.max.x - 6.0;
+    let col = if msg.is_some() { Color32::from_rgb(184, 128, 8) } else { TXT };
+    ds(p, pos2(rx, ly), Align2::RIGHT_CENTER, &right, 8.0, col);
+    // the EXP bar between them
+    let bar = Rect::from_min_max(pos2(x + 2.0, ly - 2.5), pos2((rx - g.size().x - 8.0).max(x + 20.0), ly + 2.5));
+    rrect(p, bar.expand(1.5), 2.0, Color32::from_rgb(64, 64, 72));
+    rrect(p, bar, 1.0, Color32::from_rgb(96, 96, 104));
+    let w = bar.width() * frac.clamp(0.0, 1.0);
+    if w > 0.5 {
+        let f = Rect::from_min_size(bar.min, vec2(w, bar.height()));
+        rrect(p, f, 1.0, EXP);
+        rrect(p, Rect::from_min_size(f.min, vec2(w, 1.5)), 0.5, mix(EXP, Color32::WHITE, 0.45));
+    }
+}

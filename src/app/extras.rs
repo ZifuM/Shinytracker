@@ -235,6 +235,7 @@ impl App {
         let now = now_unix();
         // Undo is offered on the overlay for a few seconds.
         self.undo_caught = Some((std::time::Instant::now(), Box::new(self.cfg.clone())));
+        self.cards_shiny(format!("{}:{}:phase", self.cfg.run_id, slug));
         self.cfg.history.push(HuntRecord {
             target: sp.name.to_string(),
             encounters: self.cfg.count,
@@ -628,7 +629,7 @@ impl App {
         let back = self.setup.trophy_back;
         let back_label = match back {
             Some(Tab::Stats) => "Stats",
-            Some(Tab::Home) => "Home",
+            Some(Tab::Home) => "Dashboard",
             _ => "Shiny Dex",
         };
         if super::hunt_pages::back_button(ui, back_label) {

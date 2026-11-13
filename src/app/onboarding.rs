@@ -22,6 +22,7 @@ use eframe::egui::{self, pos2, vec2, Align2, Color32, Pos2, Rect, RichText, Sens
 #[derive(Clone, Copy, PartialEq)]
 enum Step {
     Welcome,
+    Apps,
     WhatsNew,
     Game,
     Target,
@@ -36,6 +37,7 @@ impl Step {
     fn meta(self) -> (&'static str, &'static str, &'static str) {
         match self {
             Step::Welcome => ("👋", "Welcome", "Hello, trainer"),
+            Step::Apps => ("🏪", "Your apps", "What you play for"),
             Step::WhatsNew => ("✨", "What's new", "In version 0.5"),
             Step::Game => ("🎮", "Your game", "How counting works"),
             Step::Target => ("🎯", "Your target", "What you're hunting"),
@@ -64,8 +66,11 @@ impl App {
     }
 
     fn tour_steps(&self) -> Vec<Step> {
-        let first = if self.returning() { Step::WhatsNew } else { Step::Welcome };
-        vec![first, Step::Game, Step::Look, Step::Overlay, Step::Target, Step::Odds, Step::Done]
+        if self.returning() {
+            vec![Step::WhatsNew, Step::Game, Step::Look, Step::Overlay, Step::Target, Step::Odds, Step::Done]
+        } else {
+            vec![Step::Welcome, Step::Apps, Step::Game, Step::Look, Step::Overlay, Step::Target, Step::Odds, Step::Done]
+        }
     }
 
     /// Draw the tour in the window body (under the top bar).
@@ -214,6 +219,7 @@ impl App {
                     kit::enter_ui(ui, t, 16.0);
                     match step {
                         Step::Welcome => self.tour_welcome(ui),
+                        Step::Apps => self.tour_apps(ui),
                         Step::WhatsNew => self.tour_whats_new(ui),
                         Step::Game => self.tour_game(ui),
                         Step::Target => self.tour_target(ui, body.height()),
@@ -257,7 +263,7 @@ impl App {
                             self.finish_welcome();
                             self.start_overlay();
                         }
-                        if ui.add(egui::Button::new(RichText::new("Go to Home").size(13.5)).fill(kit::btn_fill()).min_size(vec2(120.0, 40.0))).clicked() {
+                        if ui.add(egui::Button::new(RichText::new("Go to the Dashboard").size(13.5)).fill(kit::btn_fill()).min_size(vec2(120.0, 40.0))).clicked() {
                             self.finish_welcome();
                             self.setup.tab = Tab::Home;
                         }
@@ -349,6 +355,77 @@ impl App {
                 ("🗺", kit::C_GREEN, "A friendlier Map", "Floating search, layers, a key and today's rare grass in reach."),
             ],
         );
+    }
+
+    /// New users: which apps to start with. Shiny Hunter is always there;
+    /// each pack adds its apps (all can be changed in the App Store).
+    fn tour_apps(&mut self, ui: &mut egui::Ui) {
+        use crate::apps::{AppId, PACKS};
+        heading(ui, "What do you play for?", "Shiny Hunter is always here. Pick what else you'd like and those apps are added; you can add or remove apps any time in the App Store.");
+        let gap = 14.0;
+        let cols = 2;
+        let w = ((ui.available_width() - gap) / cols as f32).floor();
+        let mut toggle: Option<usize> = None;
+        for (ri, row) in PACKS.chunks(cols).enumerate() {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = gap;
+                for (k, pk) in row.iter().enumerate() {
+                    let i = ri * cols + k;
+                    let on = pk.apps.iter().all(|a| self.cfg.apps.is_installed(*a));
+                    let (r, resp) = ui.allocate_exact_size(vec2(w, 124.0), Sense::click());
+                    let p = ui.painter();
+                    let hov = resp.hovered();
+                    p.rect_filled(r, 20.0, if on { theme::blend(kit::sunken(), kit::primary(), 0.14) } else { kit::sunken() });
+                    p.rect_stroke(r, 20.0, Stroke::new(if on { 1.5f32 } else { 1.0f32 }, if on { kit::primary() } else if hov { kit::CONTROL() } else { LINE() }));
+                    let mut x = r.min.x + 18.0;
+                    for a in pk.apps {
+                        let (icon, _, col) = super::shell::tab_meta(super::shell::app_tab(*a));
+                        kit::icon_chip(p, Rect::from_min_size(pos2(x, r.min.y + 18.0), vec2(32.0, 32.0)), icon, col, true);
+                        x += 38.0;
+                    }
+                    p.text(pos2(r.min.x + 18.0, r.min.y + 66.0), Align2::LEFT_TOP, format!("{} {}", pk.icon, pk.name), title_font(16.0), TEXT());
+                    let names: Vec<&str> = pk.apps.iter().filter(|a| **a != AppId::Shiny).map(|a| a.name()).collect();
+                    let g = p.layout(format!("{} · {}", pk.blurb, names.join(", ")), sans_font(12.5), MUTED(), w - 36.0);
+                    p.galley(pos2(r.min.x + 18.0, r.min.y + 90.0), g, MUTED());
+                    let cb = Rect::from_center_size(pos2(r.max.x - 26.0, r.min.y + 34.0), vec2(22.0, 22.0));
+                    p.rect_filled(cb, 7.0, if on { kit::primary() } else { Color32::TRANSPARENT });
+                    p.rect_stroke(cb, 7.0, Stroke::new(1.5f32, if on { kit::primary() } else { kit::CONTROL() }));
+                    if on {
+                        tick(p, cb.center(), 6.0, kit::on_primary());
+                    }
+                    if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                        toggle = Some(i);
+                    }
+                }
+            });
+            ui.add_space(gap);
+        }
+        if let Some(i) = toggle {
+            let pk = &PACKS[i];
+            let mut list = self.cfg.apps.installed();
+            if pk.apps.iter().all(|a| list.contains(a)) {
+                // take this pack's apps off, unless another chosen pack has them
+                let keep: Vec<AppId> = PACKS
+                    .iter()
+                    .enumerate()
+                    .filter(|(j, o)| *j != i && o.apps.iter().all(|a| list.contains(a)))
+                    .flat_map(|(_, o)| o.apps.iter().copied())
+                    .collect();
+                list.retain(|a| !pk.apps.contains(a) || keep.contains(a));
+                let had = list.clone();
+                list.retain(|a| a.meta().requires.iter().all(|r| had.contains(r)));
+            } else {
+                for a in pk.apps {
+                    for x in crate::apps::with_requirements(*a, &list.clone()) {
+                        list.push(x);
+                    }
+                }
+            }
+            self.cfg.apps.set_installed(&list);
+            self.dirty = true;
+        }
+        let n = self.cfg.apps.installed().len();
+        ui.label(RichText::new(format!("{n} app{} to start with. Nothing here is final.", if n == 1 { "" } else { "s" })).font(sans_font(13.0)).color(MUTED()));
     }
 
     fn tour_game(&mut self, ui: &mut egui::Ui) {

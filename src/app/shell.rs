@@ -6,6 +6,7 @@
 use super::launcher::is_shiny_tab;
 use super::ui_kit::{self as kit, modern, MUTED, PAGE, SIDEBAR, TEXT};
 use super::{App, Tab};
+use crate::apps::AppId;
 use crate::theme;
 use eframe::egui::{self, Align2, Color32, Rect, RichText, Sense, Stroke};
 use std::time::Duration;
@@ -19,7 +20,9 @@ pub(super) const RAIL_W: f32 = 72.0;
 /// Each page's icon, name and colour (sidebar, top bar and page header).
 pub(super) fn tab_meta(t: Tab) -> (&'static str, &'static str, Color32) {
     match t {
-        Tab::Home => ("🏠", "Home", kit::C_BLUE),
+        Tab::Home => ("🏠", "Dashboard", kit::C_BLUE),
+        Tab::Store => ("🏪", "App Store", STORE_COL),
+        Tab::Library => ("⊞", "Library", LIBRARY_COL),
         Tab::Profile => ("🏅", "Profile", kit::C_GOLD),
         Tab::Stats => ("📊", "Stats", kit::C_CYAN),
         Tab::Shiny => ("✨", "Shiny Hunter", kit::C_VIOLET),
@@ -36,6 +39,7 @@ pub(super) fn tab_meta(t: Tab) -> (&'static str, &'static str, Color32) {
         Tab::Sim => ("🎮", "Battle Sim", kit::C_RED),
         Tab::Breed => ("🐣", "Breeding", kit::C_PINK),
         Tab::Calc => ("💥", "Damage Calculator", kit::C_INDIGO),
+        Tab::Cards => ("🃏", "Card Collector", kit::C_GOLD),
         Tab::Appearance => ("🎨", "Appearance", kit::C_PINK),
         Tab::Hotkeys => ("⌨", "Hotkeys", kit::C_SLATE),
         Tab::Advanced => ("⚙", "Advanced", kit::C_SLATE),
@@ -44,30 +48,148 @@ pub(super) fn tab_meta(t: Tab) -> (&'static str, &'static str, Color32) {
 
 /// Pages that are still experimental (marked in the sidebar).
 pub(super) fn is_experimental(t: Tab) -> bool {
-    matches!(t, Tab::Team | Tab::Sim | Tab::Breed | Tab::Calc)
+    matches!(t, Tab::Sim | Tab::Breed | Tab::Cards)
 }
 
-/// Sidebar entries: (group heading, page, parent app).
-const NAV: [(Option<&str>, Tab, Option<Tab>); 18] = [
-    (None, Tab::Home, None),
-    (None, Tab::Profile, None),
-    (None, Tab::Stats, None),
-    (Some("APPS"), Tab::Shiny, None),
-    (None, Tab::Hunt, Some(Tab::Shiny)),
-    (None, Tab::Counting, Some(Tab::Shiny)),
-    (None, Tab::Runs, Some(Tab::Shiny)),
-    (None, Tab::Overlay, Some(Tab::Shiny)),
-    (None, Tab::Pokedex, None),
-    (None, Tab::Map, None),
-    (None, Tab::Info, None),
-    (None, Tab::Team, None),
-    (None, Tab::Sim, None),
-    (None, Tab::Breed, None),
-    (None, Tab::Calc, None),
-    (Some("SETTINGS"), Tab::Appearance, None),
-    (None, Tab::Hotkeys, None),
-    (None, Tab::Advanced, None),
-];
+/// The App Store's and the Library's colours.
+pub(super) const STORE_COL: Color32 = Color32::from_rgb(255, 112, 92);
+pub(super) const LIBRARY_COL: Color32 = Color32::from_rgb(124, 150, 255);
+
+/// Shiny Hunter's own pages, shown under it in the sidebar while it's open.
+pub(super) const SHINY_PAGES: [Tab; 4] = [Tab::Hunt, Tab::Counting, Tab::Runs, Tab::Overlay];
+
+/// The app a page belongs to (None: Home, the store, settings and the like).
+pub(super) fn app_of(t: Tab) -> Option<AppId> {
+    Some(match t {
+        Tab::Shiny | Tab::Hunt | Tab::Counting | Tab::Runs | Tab::Overlay => AppId::Shiny,
+        Tab::Pokedex | Tab::Dex | Tab::Trophies => AppId::Pokedex,
+        Tab::Map => AppId::Map,
+        Tab::Info => AppId::Info,
+        Tab::Team => AppId::Team,
+        Tab::Sim => AppId::Sim,
+        Tab::Breed => AppId::Breed,
+        Tab::Calc => AppId::Calc,
+        Tab::Cards => AppId::Cards,
+        _ => return None,
+    })
+}
+
+/// An app's main page.
+pub(super) fn app_tab(a: AppId) -> Tab {
+    match a {
+        AppId::Shiny => Tab::Shiny,
+        AppId::Pokedex => Tab::Pokedex,
+        AppId::Map => Tab::Map,
+        AppId::Info => Tab::Info,
+        AppId::Team => Tab::Team,
+        AppId::Sim => Tab::Sim,
+        AppId::Breed => Tab::Breed,
+        AppId::Calc => Tab::Calc,
+        AppId::Cards => Tab::Cards,
+    }
+}
+
+/// The page above a sub-page in the sidebar.
+pub(super) fn nav_parent(t: Tab) -> Option<Tab> {
+    SHINY_PAGES.contains(&t).then_some(Tab::Shiny)
+}
+
+/// One row of the sidebar.
+pub(super) struct NavRow {
+    /// A heading above the row.
+    pub group: Option<&'static str>,
+    pub tab: Tab,
+    pub parent: Option<Tab>,
+    /// An open app (has a close button).
+    pub app: Option<AppId>,
+}
+
+impl App {
+    /// The sidebar: Home, the store, the Library, Profile and Stats always;
+    /// then the apps that are open (closing one takes it off); then settings.
+    pub(super) fn nav_rows(&self) -> Vec<NavRow> {
+        let row = |group, tab| NavRow { group, tab, parent: None, app: None };
+        let mut v = vec![row(None, Tab::Home), row(None, Tab::Store), row(None, Tab::Library), row(None, Tab::Profile), row(None, Tab::Stats)];
+        let mut first = true;
+        let sidebar_pins = self.cfg.apps.pins_place == crate::apps::PinsPlace::Sidebar;
+        for a in self.cfg.apps.open_list() {
+            if sidebar_pins && a != AppId::Shiny && self.cfg.apps.is_pinned(a) {
+                continue;
+            }
+            let tab = app_tab(a);
+            v.push(NavRow { group: first.then_some("OPEN APPS"), tab, parent: None, app: Some(a) });
+            first = false;
+            if a == AppId::Shiny {
+                for t in SHINY_PAGES {
+                    v.push(NavRow { group: None, tab: t, parent: Some(Tab::Shiny), app: None });
+                }
+            }
+        }
+        v.push(row(Some("SETTINGS"), Tab::Appearance));
+        v.push(row(None, Tab::Hotkeys));
+        v.push(row(None, Tab::Advanced));
+        v
+    }
+
+    /// The "nothing open" note in the sidebar (where open apps would be).
+    pub(super) fn nav_none_open(&mut self, ui: &mut egui::Ui, compact: bool) {
+        if compact || !self.cfg.apps.open_list().is_empty() {
+            return;
+        }
+        kit::nav_group(ui, "OPEN APPS");
+        let w = ui.available_width();
+        let galley = ui.painter().layout(
+            "Nothing open. Open an app from your Library and it shows up here.".to_string(),
+            crate::fonts::sans_font(12.0),
+            MUTED(),
+            w - 24.0,
+        );
+        let (r, resp) = ui.allocate_exact_size(egui::vec2(w, galley.size().y + 20.0), Sense::click());
+        let p = ui.painter();
+        p.rect_stroke(r.shrink(1.0), 12.0, Stroke::new(1.0f32, kit::LINE()));
+        p.galley(r.min + egui::vec2(12.0, 10.0), galley, MUTED());
+        if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+            self.go_to(Tab::Library);
+        }
+    }
+
+    /// The ✕ on an open app's row (and middle-click, and its right-click menu).
+    /// True when it closed the app.
+    pub(super) fn nav_close_button(&mut self, ui: &mut egui::Ui, row: Rect, resp: &egui::Response, a: AppId, show: bool) -> bool {
+        let xr = Rect::from_center_size(egui::pos2(row.max.x - 16.0, row.center().y), egui::vec2(22.0, 22.0));
+        let mut close = resp.middle_clicked();
+        if show {
+            let xresp = ui.interact(xr, ui.id().with(("nav-close", a)), Sense::click());
+            let hov = xresp.hovered();
+            let p = ui.painter();
+            if hov {
+                p.rect_filled(xr, 7.0, theme::blend(SIDEBAR(), Color32::from_rgb(255, 110, 140), 0.18));
+            }
+            let c = xr.center();
+            let ink = if hov { Color32::from_rgb(255, 150, 170) } else { MUTED() };
+            let s = Stroke::new(1.4f32, ink);
+            p.line_segment([c - egui::vec2(4.0, 4.0), c + egui::vec2(4.0, 4.0)], s);
+            p.line_segment([c + egui::vec2(-4.0, 4.0), c + egui::vec2(4.0, -4.0)], s);
+            if xresp.on_hover_text(format!("Close {}", a.name())).clicked() {
+                close = true;
+            }
+        }
+        resp.context_menu(|ui| {
+            if ui.button(format!("Close {}", a.name())).clicked() {
+                close = true;
+                ui.close_menu();
+            }
+            if ui.button("Store page").clicked() {
+                self.show_store_page(a);
+                ui.close_menu();
+            }
+        });
+        if close {
+            self.close_app(a);
+        }
+        close
+    }
+}
 
 impl App {
     pub(super) fn nav_width(&self) -> f32 {
@@ -81,7 +203,10 @@ impl App {
     /// Open a page from the sidebar (same rules as the classic sidebar).
     pub(super) fn go_to(&mut self, tab: Tab) {
         let current = self.setup.tab;
-        let expandable = NAV.iter().any(|n| n.2 == Some(tab));
+        let expandable = tab == Tab::Shiny;
+        if tab == Tab::Store {
+            self.setup.store.app = None;
+        }
         let collapsed = self.setup.nav_collapsed.contains(&tab);
         if expandable {
             if collapsed {
@@ -110,7 +235,7 @@ impl App {
         let r = if maxed { 0.0 } else { 8.0 };
         let p = ui.painter().clone();
         // (No sidebar during the first-run welcome.)
-        let nav_w = if !self.onboarding_open() { self.nav_width() } else { 0.0 };
+        let nav_w = if !self.takeover_open() { self.nav_width() } else { 0.0 };
         let left = Rect::from_min_max(rect.min, egui::pos2(rect.min.x + nav_w, rect.max.y));
         let right = Rect::from_min_max(egui::pos2(left.max.x, rect.min.y), rect.max);
         p.rect_filled(left, egui::Rounding { nw: r, ..Default::default() }, SIDEBAR());
@@ -126,7 +251,7 @@ impl App {
         ));
 
         // Brand.
-        let compact = self.cfg.appearance.nav_compact && !self.onboarding_open();
+        let compact = self.cfg.appearance.nav_compact && !self.takeover_open();
         let logo_c = if compact { left.center() } else { rect.left_center() + egui::vec2(30.0, 0.0) };
         p.image(
             self.icon_tex.id(),
@@ -142,7 +267,7 @@ impl App {
         // Where you are: "Shiny Hunter › Hunt".
         let tab = self.setup.tab;
         let (_, name, color) = tab_meta(tab);
-        let mut x = if !self.onboarding_open() { right.min.x + 28.0 } else { rect.min.x + 200.0 };
+        let mut x = if !self.takeover_open() { right.min.x + 28.0 } else { rect.min.x + 200.0 };
         let cy = right.center().y;
         if is_shiny_tab(tab) && tab != Tab::Shiny {
             let g = p.text(egui::pos2(x, cy), Align2::LEFT_CENTER, "Shiny Hunter", crate::fonts::sans_font(14.0), MUTED());
@@ -150,9 +275,10 @@ impl App {
             let g = p.text(egui::pos2(x, cy), Align2::LEFT_CENTER, "›", crate::fonts::sans_font(15.0), MUTED());
             x = g.max.x + 10.0;
         }
-        if !self.onboarding_open() {
+        let mut crumb_end = x;
+        if !self.takeover_open() {
             p.circle_filled(egui::pos2(x + 4.0, cy), 4.0, color);
-            p.text(egui::pos2(x + 16.0, cy), Align2::LEFT_CENTER, name, crate::fonts::sans_bold_font(15.0), TEXT());
+            crumb_end = p.text(egui::pos2(x + 16.0, cy), Align2::LEFT_CENTER, name, crate::fonts::sans_bold_font(15.0), TEXT()).max.x;
         }
 
         // Window buttons (right edge).
@@ -205,7 +331,7 @@ impl App {
         // The overlay's status and its Start / Stop, always in reach.
         let controls = Rect::from_min_max(egui::pos2(right.min.x + 240.0, rect.min.y), egui::pos2(minb.min.x - 10.0, rect.max.y));
         let mut drag_until = controls.max.x;
-        if !self.onboarding_open() && controls.width() > 160.0 {
+        if !self.takeover_open() && controls.width() > 160.0 {
             let used = ui
                 .allocate_new_ui(egui::UiBuilder::new().max_rect(controls).layout(egui::Layout::right_to_left(egui::Align::Center)), |ui| {
                     kit::settings_style(ui);
@@ -247,13 +373,18 @@ impl App {
         } else if dr.drag_started() {
             ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
+        // Pinned apps, as a dock after the page name (when they live up here).
+        if !self.takeover_open() {
+            self.top_dock(ui, crumb_end + 22.0, cy, drag_until - 6.0);
+        }
     }
 
     /// The sidebar.
     pub(super) fn modern_sidebar(&mut self, ui: &mut egui::Ui) {
         let compact = self.cfg.appearance.nav_compact;
         let current = self.setup.tab;
-        let parent_of = |t: Tab| NAV.iter().find(|n| n.1 == t).and_then(|n| n.2);
+        let parent_of = nav_parent;
+        let rows = self.nav_rows();
         let mut go: Option<Tab> = None;
         // Room for the trainer card at the bottom.
         let footer_h = if compact { 96.0 } else { 108.0 };
@@ -265,7 +396,15 @@ impl App {
             let pill_slot = ui.painter().add(egui::Shape::Noop);
             let nav_anchor = ui.cursor().min;
             let mut open_rect: Option<egui::Rect> = None;
-            for (group, tab, parent) in NAV {
+            let mut pins_done = false;
+            for NavRow { group, tab, parent, app } in rows {
+                if !pins_done && (group == Some("OPEN APPS") || tab == Tab::Appearance) {
+                    pins_done = true;
+                    self.nav_pins(ui, compact);
+                }
+                if tab == Tab::Appearance {
+                    self.nav_none_open(ui, compact);
+                }
                 if let Some(g) = group {
                     if compact {
                         ui.add_space(8.0);
@@ -281,7 +420,7 @@ impl App {
                     }
                 }
                 let (icon, label, color) = tab_meta(tab);
-                let has_children = NAV.iter().any(|n| n.2 == Some(tab));
+                let has_children = tab == Tab::Shiny;
                 let folded = self.setup.nav_collapsed.contains(&tab);
                 let selected = current == tab || ((folded || compact) && parent_of(current) == Some(tab));
                 let resp = if parent.is_some() {
@@ -300,8 +439,17 @@ impl App {
                 if selected || (parent.is_some() && current == tab) {
                     open_rect = Some(resp.rect);
                 }
+                // An open app's ✕ (on hover, or while it's the page you're on)
+                // takes the chevron's and the warning's place.
+                let show_x = app.is_some() && !compact && (resp.hovered() || ui.rect_contains_pointer(resp.rect));
+                if let Some(a) = app {
+                    if self.nav_close_button(ui, resp.rect, &resp, a, show_x) {
+                        ui.add_space(2.0);
+                        continue;
+                    }
+                }
                 // Chevron on an app with pages; a dot while the overlay runs.
-                if !compact && has_children {
+                if !compact && has_children && !show_x {
                     let c = egui::pos2(resp.rect.max.x - 14.0, resp.rect.center().y);
                     let st = Stroke::new(1.5f32, MUTED());
                     let pts = if folded {
@@ -311,7 +459,7 @@ impl App {
                     };
                     ui.painter().add(egui::Shape::line(pts, st));
                 }
-                if is_experimental(tab) {
+                if is_experimental(tab) && !show_x {
                     let mark = if compact {
                         let c = resp.rect.center() + egui::vec2(12.0, -11.0);
                         kit::warn_triangle(ui.painter(), c, 11.0, Some(SIDEBAR()))

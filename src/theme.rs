@@ -297,11 +297,12 @@ pub fn set_appearance(ctx: &egui::Context, a: &crate::config::Appearance) {
     if let Ok(mut w) = PAL.write() {
         *w = p;
     }
-    MODERN.store(a.modern_ui, std::sync::atomic::Ordering::Relaxed);
+    // only the Modern look now
+    MODERN.store(true, std::sync::atomic::Ordering::Relaxed);
     MOTION.store(a.animations, std::sync::atomic::Ordering::Relaxed);
-    CLEAN.store(a.clean_settings || a.modern_ui, std::sync::atomic::Ordering::Relaxed);
+    CLEAN.store(true, std::sync::atomic::Ordering::Relaxed);
     if let Ok(mut w) = SURF.write() {
-        *w = match (a.modern_ui, a.mode) {
+        *w = match (true, a.mode) {
             (true, UiMode::Dark) => MODERN_DARK,
             (true, UiMode::SemiDark) => MODERN_SEMI,
             (true, UiMode::Light) => MODERN_LIGHT,

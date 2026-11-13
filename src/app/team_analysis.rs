@@ -213,7 +213,7 @@ pub(super) fn colosseum(t: &Team, rules: usize) -> Vec<String> {
     out
 }
 
-fn weak_resist(fs: &[Option<Facts>], at: &str, world: World) -> (usize, usize) {
+pub(super) fn weak_resist(fs: &[Option<Facts>], at: &str, world: World) -> (usize, usize) {
     let mut weak = 0;
     let mut resist = 0;
     for f in fs.iter().flatten() {
@@ -228,7 +228,7 @@ fn weak_resist(fs: &[Option<Facts>], at: &str, world: World) -> (usize, usize) {
 }
 
 /// Fast Pokémon to measure Speed against: (name, base Speed).
-const BENCH: [(&str, u16); 10] = [
+pub(super) const BENCH: [(&str, u16); 10] = [
     ("Jolteon", 130),
     ("Weavile", 125),
     ("Starmie", 115),

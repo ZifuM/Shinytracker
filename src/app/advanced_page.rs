@@ -678,7 +678,7 @@ impl App {
     /// A short, private-data-free description of the setup.
     fn app_info(&self) -> String {
         let a = &self.cfg.appearance;
-        let style = if a.modern_ui { "Modern" } else if a.clean_settings { "Clean" } else { "Classic" };
+        let style = "Modern";
         format!(
             "Poke Together Companion v{}\nOS: {} {}\nLook: {} / {:?}\nOverlay: {} theme, {:?}, {}\nCounting: {:?}, method {:?}\nHotkeys: {} set{}",
             crate::update::VERSION,

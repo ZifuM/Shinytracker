@@ -2,6 +2,9 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
+mod apps;
+mod cards;
+mod masonry;
 mod battle;
 mod breed;
 mod breed_plan;
@@ -35,6 +38,7 @@ mod safefile;
 mod sim;
 mod stats;
 mod teams;
+mod trade;
 mod theme;
 mod topmost;
 mod update;

@@ -92,6 +92,11 @@ pub enum WorkerMsg {
         names: Vec<usize>,
         added: u32,
         late: bool,
+        /// The game's log says it was on rare grass.
+        rare: bool,
+        /// Counted from the game's log (the Card Collector reads the log
+        /// itself for XP, so these aren't counted twice).
+        from_log: bool,
     },
     BattleOver,
     ShinyStar {
@@ -192,7 +197,8 @@ fn run(
                                 .filter_map(|w| (w.species as usize).checked_sub(1))
                                 .filter(|&i| i < species.len())
                                 .collect();
-                            send(WorkerMsg::Encounter { names, added: g.len() as u32, late: false });
+                            let rare = g.iter().any(|w| w.method.contains("rare grass"));
+                            send(WorkerMsg::Encounter { names, added: g.len() as u32, late: false, rare, from_log: true });
                             log_battle_at = Some(Instant::now());
                             star_done = false;
                 star_track.clear();
@@ -217,7 +223,7 @@ fn run(
                             .filter(|&i| i < species.len())
                             .into_iter()
                             .collect();
-                        send(WorkerMsg::Encounter { names, added: 1, late: false });
+                        send(WorkerMsg::Encounter { names, added: 1, late: false, rare: false, from_log: false });
                         if gift.shiny {
                             send(WorkerMsg::ShinyGift);
                         }
@@ -364,6 +370,8 @@ fn run(
                     names,
                     added,
                     late: false,
+                    rare: false,
+                    from_log: false,
                 });
             }
             Some(TrackerEvent::LateNames { names, added }) => {
@@ -371,6 +379,8 @@ fn run(
                     names,
                     added,
                     late: true,
+                    rare: false,
+                    from_log: false,
                 });
             }
             Some(TrackerEvent::BattleOver) => send(WorkerMsg::BattleOver),
