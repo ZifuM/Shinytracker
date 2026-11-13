@@ -112,6 +112,8 @@ pub(super) struct BattleView {
     snap_len: usize,
     /// Leave and run the auto-sim of this battle.
     auto_after: bool,
+    /// Its entry in the battle history, once it has one.
+    recorded: Option<u64>,
 }
 
 /// A battle built from the setup, not started yet.
@@ -147,6 +149,244 @@ fn status_tag(st: Status) -> Option<(&'static str, Color32)> {
         Status::Toxic => Some(("TOX", kit::C_VIOLET)),
         Status::Sleep => Some(("SLP", kit::C_SLATE)),
         Status::Freeze => Some(("FRZ", kit::C_CYAN)),
+    }
+}
+
+/// One label by an HP box: its words, colour, and an arrow (up, down or
+/// none) for stat changes.
+struct Chip {
+    text: String,
+    col: Color32,
+    arrow: i8,
+}
+
+/// Which way a row of labels runs from where it starts.
+#[derive(Clone, Copy, PartialEq)]
+enum ChipFlow {
+    /// Left-aligned under a point, wrapping downward.
+    Down,
+    /// Left-aligned over a point, wrapping upward.
+    Up,
+    /// One row to the right of a point, centred on it.
+    Right,
+    /// One row to the left of a point, centred on it.
+    Left,
+}
+
+/// What to show by battler `s`'s HP box: its status (as the screen has got
+/// to it), then its stat changes and lasting effects (only while nothing's
+/// playing, so they don't give away what's coming).
+fn battle_chips(v: &BattleView, s: usize) -> Vec<Chip> {
+    let mut out = Vec::new();
+    let st = v.disp[s].status;
+    let status = match st {
+        Status::None => None,
+        Status::Paralysis => Some(("Paralysed", kit::C_GOLD)),
+        Status::Burn => Some(("Burned", kit::C_ORANGE)),
+        Status::Poison => Some(("Poisoned", kit::C_VIOLET)),
+        Status::Toxic => Some(("Badly poisoned", kit::C_VIOLET)),
+        Status::Sleep => Some(("Asleep", kit::C_SLATE)),
+        Status::Freeze => Some(("Frozen", kit::C_CYAN)),
+    };
+    if let Some((t, c)) = status {
+        out.push(Chip { text: t.into(), col: c, arrow: 0 });
+    }
+    if v.busy() || v.disp[s].out || (s >> 1) >= v.b.sides[s & 1].slots.len() {
+        return out;
+    }
+    let m = v.b.act(s);
+    if m.fainted() {
+        return out;
+    }
+    let names = ["", "Atk", "Def", "Sp. Atk", "Sp. Def", "Speed", "Accuracy", "Evasion"];
+    for i in 1..8 {
+        let n = m.boosts[i];
+        if n != 0 {
+            let (col, arrow) = if n > 0 { (kit::C_GREEN, 1) } else { (kit::C_RED, -1) };
+            out.push(Chip { text: format!("{} {:+}", names[i], n), col, arrow });
+        }
+    }
+    let vo = &m.v;
+    let mut add = |t: String, c: Color32| out.push(Chip { text: t, col: c, arrow: 0 });
+    if vo.confusion > 0 {
+        add("Confused".into(), kit::C_PINK);
+    }
+    if vo.attract {
+        add("In love".into(), kit::C_PINK);
+    }
+    if vo.sub > 0 {
+        add("Substitute".into(), kit::C_SLATE);
+    }
+    if vo.seeded {
+        add("Leech Seed".into(), kit::C_GREEN);
+    }
+    if vo.yawn > 0 {
+        add("Drowsy".into(), kit::C_SLATE);
+    }
+    if vo.perish > 0 {
+        add(format!("Perish {}", vo.perish), kit::C_RED);
+    }
+    if vo.taunt > 0 {
+        add(format!("Taunted · {}", vo.taunt), kit::C_ORANGE);
+    }
+    if vo.encore.is_some() {
+        add("Encore".into(), kit::C_ORANGE);
+    }
+    if vo.disable.is_some() {
+        add("Disabled move".into(), kit::C_ORANGE);
+    }
+    if vo.focus_energy {
+        add("Pumped".into(), kit::C_GOLD);
+    }
+    if vo.cursed {
+        add("Cursed".into(), kit::C_VIOLET);
+    }
+    if vo.nightmare {
+        add("Nightmare".into(), kit::C_VIOLET);
+    }
+    if let Some((_, by)) = &vo.bound {
+        add(format!("Trapped by {by}"), kit::C_ORANGE);
+    } else if vo.cant_escape {
+        add("Can't escape".into(), kit::C_ORANGE);
+    }
+    if vo.ingrain {
+        add("Ingrain".into(), kit::C_GREEN);
+    }
+    if vo.aqua_ring {
+        add("Aqua Ring".into(), kit::C_CYAN);
+    }
+    if vo.magnet_rise > 0 {
+        add("Magnet Rise".into(), kit::C_INDIGO);
+    }
+    if vo.charge {
+        add("Charged".into(), kit::C_GOLD);
+    }
+    if vo.stockpile > 0 {
+        add(format!("Stockpile {}", vo.stockpile), kit::C_SLATE);
+    }
+    if vo.torment {
+        add("Tormented".into(), kit::C_ORANGE);
+    }
+    if vo.embargo > 0 {
+        add("Embargo".into(), kit::C_SLATE);
+    }
+    if vo.heal_block > 0 {
+        add("Heal Block".into(), kit::C_RED);
+    }
+    if vo.flash_fire {
+        add("Flash Fire".into(), kit::C_ORANGE);
+    }
+    out
+}
+
+/// The name of the Pokémon battler `s` shows (as the screen has got to it).
+fn battler_name(v: &BattleView, s: usize) -> String {
+    v.b.sides[s & 1].mons.get(v.disp[s].mon).map(|m| m.name.clone()).unwrap_or_default()
+}
+
+/// One label as a widget (for the side column).
+fn chip_widget(ui: &mut egui::Ui, c: &Chip) {
+    let font = crate::fonts::sans_bold_font(11.0);
+    let g = ui.painter().layout_no_wrap(c.text.clone(), font, Color32::WHITE);
+    let w = g.size().x + 16.0 + if c.arrow != 0 { 12.0 } else { 0.0 };
+    let (r, _) = ui.allocate_exact_size(egui::vec2(w, 20.0), Sense::hover());
+    let p = ui.painter();
+    p.rect_filled(r, 10.0, theme::blend(CARD(), c.col, 0.22));
+    p.rect_stroke(r, 10.0, Stroke::new(1.0f32, c.col.gamma_multiply(0.85)));
+    let mut tx = r.min.x + 8.0;
+    if c.arrow != 0 {
+        let (cx, cy) = (tx + 4.0, r.center().y);
+        let pts = if c.arrow > 0 {
+            vec![egui::pos2(cx, cy - 3.5), egui::pos2(cx + 4.0, cy + 2.5), egui::pos2(cx - 4.0, cy + 2.5)]
+        } else {
+            vec![egui::pos2(cx - 4.0, cy - 2.5), egui::pos2(cx + 4.0, cy - 2.5), egui::pos2(cx, cy + 3.5)]
+        };
+        p.add(egui::Shape::convex_polygon(pts, c.col, Stroke::NONE));
+        tx += 12.0;
+    }
+    p.galley(egui::pos2(tx, r.center().y - g.size().y / 2.0), g, TEXT());
+}
+
+/// Draw `chips` as pills from `at`, running `flow`, `max` points wide at most.
+fn draw_chips(p: &egui::Painter, chips: &[Chip], at: egui::Pos2, flow: ChipFlow, max: f32) {
+    if chips.is_empty() || max < 40.0 {
+        return;
+    }
+    let h = 22.0;
+    let gap = 5.0;
+    let font = crate::fonts::sans_bold_font(11.0);
+    // measure
+    let sized: Vec<(f32, std::sync::Arc<egui::Galley>, &Chip)> = chips
+        .iter()
+        .map(|c| {
+            let g = p.layout_no_wrap(c.text.clone(), font.clone(), Color32::WHITE);
+            let w = g.size().x + 18.0 + if c.arrow != 0 { 13.0 } else { 0.0 };
+            (w, g, c)
+        })
+        .collect();
+    // place: rows for Down/Up, one row for Left/Right
+    let mut places: Vec<Rect> = Vec::new();
+    match flow {
+        ChipFlow::Down | ChipFlow::Up => {
+            // which row each goes on, then rows top to bottom (reading order
+            // either way; over the box, the last row sits on it)
+            let (mut x, mut row) = (0.0f32, 0usize);
+            let mut at_row: Vec<(f32, usize)> = Vec::new();
+            for (w, _, _) in &sized {
+                if x > 0.0 && x + w > max {
+                    x = 0.0;
+                    row += 1;
+                }
+                at_row.push((x, row));
+                x += w + gap;
+            }
+            let rows = row as f32 + 1.0;
+            let top = if flow == ChipFlow::Down { at.y } else { at.y - rows * h - (rows - 1.0) * gap };
+            for ((x, row), (w, _, _)) in at_row.iter().zip(sized.iter()) {
+                places.push(Rect::from_min_size(egui::pos2(at.x + x, top + *row as f32 * (h + gap)), egui::vec2(*w, h)));
+            }
+        }
+        ChipFlow::Right | ChipFlow::Left => {
+            // as many as fit, in reading order (ending at the box on the left)
+            let mut total = 0.0f32;
+            let mut n = 0;
+            for (w, _, _) in &sized {
+                let add = if n == 0 { *w } else { w + gap };
+                if total + add > max {
+                    break;
+                }
+                total += add;
+                n += 1;
+            }
+            let mut x = if flow == ChipFlow::Right { at.x } else { at.x - total };
+            for (w, _, _) in sized.iter().take(n) {
+                places.push(Rect::from_min_size(egui::pos2(x, at.y - h / 2.0), egui::vec2(*w, h)));
+                x += w + gap;
+            }
+        }
+    }
+    for (r, (_, g, c)) in places.iter().zip(sized.iter()) {
+        let base = Color32::from_rgb(18, 20, 28);
+        let fill = theme::blend(base, c.col, 0.32);
+        p.rect_filled(r.translate(egui::vec2(0.0, 1.5)), h / 2.0, Color32::from_black_alpha(70));
+        p.rect_filled(*r, h / 2.0, Color32::from_rgba_unmultiplied(fill.r(), fill.g(), fill.b(), 235));
+        p.rect_stroke(*r, h / 2.0, Stroke::new(1.0f32, c.col.gamma_multiply(0.9)));
+        let mut tx = r.min.x + 9.0;
+        if c.arrow != 0 {
+            // a small solid arrow, up for a raise, down for a drop
+            let cx = tx + 4.0;
+            let cy = r.center().y;
+            let pts = if c.arrow > 0 {
+                vec![egui::pos2(cx, cy - 4.0), egui::pos2(cx + 4.5, cy + 3.0), egui::pos2(cx - 4.5, cy + 3.0)]
+            } else {
+                vec![egui::pos2(cx - 4.5, cy - 3.0), egui::pos2(cx + 4.5, cy - 3.0), egui::pos2(cx, cy + 4.0)]
+            };
+            p.add(egui::Shape::convex_polygon(pts, theme::blend(c.col, Color32::WHITE, 0.25), Stroke::NONE));
+            tx += 13.0;
+        } else {
+            p.circle_filled(egui::pos2(tx + 1.0, r.center().y), 0.0, c.col);
+        }
+        p.galley(egui::pos2(tx, r.center().y - g.size().y / 2.0), g.clone(), Color32::WHITE);
     }
 }
 
@@ -510,6 +750,7 @@ impl App {
             bar: [0.0; 4],
             text: None,
             lines: Vec::new(),
+            recorded: None,
             flash: [None; 4],
             hold: None,
             throw: None,
@@ -535,6 +776,10 @@ impl App {
         };
         // nothing's on the field until the intro plays
         v.disp = [Disp { out: true, ..Default::default() }; 4];
+        // a catch test opens on the Poké Balls
+        if self.setup.sim.catch_first {
+            v.panel = Panel::Bag;
+        }
         self.setup.sim.battle = Some(Box::new(v));
         self.setup.scroll_top = true;
         Ok(())
@@ -568,6 +813,9 @@ impl App {
                 ui.allocate_ui_with_layout(egui::vec2(main_w, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
                     ui.set_width(main_w);
                     self.battle_main(ui, &mut v, &mut leave, &mut rematch);
+                    // the side column's log reaches down to here
+                    let bottom = ui.min_rect().max.y;
+                    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("battle-main-bottom"), Some(bottom)));
                 });
                 ui.allocate_ui_with_layout(egui::vec2(side_w, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
                     ui.set_width(side_w);
@@ -576,6 +824,7 @@ impl App {
             });
         } else {
             self.battle_main(ui, &mut v, &mut leave, &mut rematch);
+            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("battle-main-bottom"), None::<f32>));
             ui.add_space(12.0);
             self.battle_side(ui, &mut v);
         }
@@ -606,6 +855,12 @@ impl App {
         }
         self.setup.sim.speed = v.speed;
         self.setup.sim.hide_odds = !v.odds;
+        // keep it in the battle history: when it ends, and again on leaving
+        // (a taken-back turn or a battle left halfway is kept as it stands)
+        let done = v.b.result.is_some() && !v.busy();
+        if (done && v.recorded.is_none()) || ((leave || rematch) && (v.b.turn > 0 || v.b.result.is_some())) {
+            self.sim_record(&mut v);
+        }
         if rematch {
             self.setup.sim.setup = v.setup.clone();
             self.setup.sim.battle = None;
@@ -623,6 +878,41 @@ impl App {
                 self.sim_auto_start();
             }
         }
+    }
+
+    /// Put this battle in the history (or bring its entry up to date).
+    fn sim_record(&mut self, v: &mut BattleView) {
+        let id = match v.recorded {
+            Some(id) => id,
+            None => self.setup.sim.new_id(),
+        };
+        v.recorded = Some(id);
+        let result = match v.b.result {
+            Some(Outcome::Won) => "Won",
+            Some(Outcome::Lost) => "Lost",
+            Some(Outcome::Caught) => "Caught",
+            Some(Outcome::Ran) => "Ran",
+            Some(Outcome::Fled) => "Fled",
+            Some(Outcome::Draw) => "Draw",
+            None => "",
+        };
+        let team = v.setup.team.and_then(|tid| self.setup.team.teams().teams.iter().find(|t| t.id == tid).map(|t| t.name.clone())).unwrap_or_default();
+        let side = |i: usize| v.b.sides[i].mons.iter().map(|m| (m.species.clone(), m.shiny)).collect::<Vec<_>>();
+        let r = sim::BattleRecord {
+            id,
+            when: super::team_home::now_secs(),
+            title: v.title.clone(),
+            sub: v.sub.clone(),
+            team,
+            result: result.to_string(),
+            turns: v.b.turn,
+            ours: side(0),
+            theirs: side(1),
+            setup: v.setup.clone(),
+            lines: v.lines.clone(),
+        };
+        self.setup.sim.file().record(r);
+        self.setup.sim.touch();
     }
 
     fn battle_header(&mut self, ui: &mut egui::Ui, v: &mut BattleView, leave: &mut bool, rematch: &mut bool) {
@@ -646,7 +936,7 @@ impl App {
                     v.take_back();
                 }
                 ui.add_space(8.0);
-                ui.menu_button(RichText::new(format!("Text: {}", v.speed.label())).size(13.0), |ui| {
+                kit::menu(ui, RichText::new(format!("Text: {}", v.speed.label())).size(13.0), |ui| {
                     for sp in [Speed::Slow, Speed::Normal, Speed::Fast, Speed::Instant] {
                         if ui.selectable_label(v.speed == sp, sp.label()).clicked() {
                             v.speed = sp;
@@ -654,7 +944,7 @@ impl App {
                         }
                     }
                 });
-                ui.menu_button(RichText::new(format!("Place: {}", v.scene.label)).size(13.0), |ui| {
+                kit::menu(ui, RichText::new(format!("Place: {}", v.scene.label)).size(13.0), |ui| {
                     for sc in SCENES {
                         if ui.selectable_label(v.scene == sc, sc.label).clicked() {
                             v.scene = sc;
@@ -897,21 +1187,34 @@ impl App {
         let fw = if dbl { (200.0 * k).clamp(176.0, 260.0) } else { (220.0 * k).clamp(190.0, 300.0) };
         let gap = 6.0;
         let theirs: Vec<usize> = [1usize, 3].into_iter().filter(|b| (b >> 1) < v.b.sides[1].slots.len()).collect();
+        // statuses and stat changes: by the boxes in singles; in doubles
+        // they'd cover the Pokémon, so they go in the side column
         for (n, b) in theirs.into_iter().enumerate() {
+            let r = Rect::from_min_size(at(14.0, 14.0) + egui::vec2(0.0, n as f32 * (62.0 + gap)), egui::vec2(fw, 62.0));
             if !v.disp[b].out || (v.b.result.is_some() && !dbl) {
-                let r = Rect::from_min_size(at(14.0, 14.0) + egui::vec2(0.0, n as f32 * (62.0 + gap)), egui::vec2(fw, 62.0));
                 self.hp_box(&p, r, v, b);
+                // statuses and stat changes under the box
+                let chips = battle_chips(v, b);
+                if !dbl {
+                    draw_chips(&p, &chips, egui::pos2(r.min.x, r.max.y + 7.0), ChipFlow::Down, fw);
+                }
             }
         }
         let ours: Vec<usize> = [0usize, 2].into_iter().filter(|b| (b >> 1) < v.b.sides[0].slots.len()).collect();
         let k_ours = ours.len() as f32;
         // two of yours: shorter boxes, so they stay clear of their base
         let oh = if dbl { 56.0 } else { 74.0 };
+        let first_top = rect.max.y - 10.0 * k - k_ours * oh - (k_ours - 1.0) * gap;
         for (n, b) in ours.into_iter().enumerate() {
             if !v.disp[b].out {
-                let top = rect.max.y - 10.0 * k - k_ours * oh - (k_ours - 1.0) * gap + n as f32 * (oh + gap);
+                let top = first_top + n as f32 * (oh + gap);
                 let r = Rect::from_min_size(egui::pos2(rect.max.x - fw - 14.0 * k, top), egui::vec2(fw, oh));
                 self.hp_box(&p, r, v, b);
+                // statuses and stat changes over the box
+                let chips = battle_chips(v, b);
+                if !dbl {
+                    draw_chips(&p, &chips, egui::pos2(r.min.x, r.min.y - 7.0), ChipFlow::Up, fw);
+                }
             }
         }
         // weather and field words
@@ -955,15 +1258,7 @@ impl App {
         let g = p.layout_no_wrap(name, crate::fonts::sans_bold_font(14.0), TEXT());
         let nw = g.size().x;
         p.galley(egui::pos2(x, r.min.y + 8.0), g, TEXT());
-        let mut tx = x + nw + 8.0;
-        if let Some((t, c)) = status_tag(d.status) {
-            let g = p.layout_no_wrap(t.to_string(), crate::fonts::sans_bold_font(10.0), Color32::WHITE);
-            let rr = Rect::from_min_size(egui::pos2(tx, r.min.y + 10.0), g.size() + egui::vec2(10.0, 4.0));
-            p.rect_filled(rr, 4.0, c);
-            p.galley(rr.min + egui::vec2(5.0, 2.0), g, Color32::WHITE);
-            tx = rr.max.x + 6.0;
-        }
-        let _ = tx;
+        let _ = nw;
         p.text(egui::pos2(r.max.x - 12.0, r.min.y + 9.0), Align2::RIGHT_TOP, format!("Lv {}", m.level), kit::font_bold(12.0), MUTED());
         // the bar (a little higher in a short box)
         let by = if r.height() < 60.0 { 28.0 } else { 32.0 };
@@ -976,20 +1271,8 @@ impl App {
         if s & 1 == 0 {
             let hp = (f * d.max as f32).round() as u32;
             p.text(egui::pos2(r.max.x - 12.0, bar.max.y + if r.height() < 60.0 { 4.0 } else { 6.0 }), Align2::RIGHT_TOP, format!("{hp} / {}", d.max), kit::font_bold(13.0), TEXT());
-            // stat changes, when nothing's playing
-            let boosts = v.b.act(s).boosts;
-            let names = ["", "Atk", "Def", "SpA", "SpD", "Spe", "Acc", "Eva"];
-            let txt: Vec<String> = (1..8).filter(|i| boosts[*i] != 0).map(|i| format!("{} {:+}", names[i], boosts[i])).collect();
-            if !txt.is_empty() && !v.busy() {
-                p.text(egui::pos2(x, bar.max.y + if r.height() < 60.0 { 5.0 } else { 7.0 }), Align2::LEFT_TOP, txt.join("  "), kit::font_small(11.0), MUTED());
-            }
-        } else if !v.busy() {
-            let boosts = v.b.act(s).boosts;
-            let names = ["", "Atk", "Def", "SpA", "SpD", "Spe", "Acc", "Eva"];
-            let txt: Vec<String> = (1..8).filter(|i| boosts[*i] != 0).map(|i| format!("{} {:+}", names[i], boosts[i])).collect();
-            let pct = format!("{}%", (f * 100.0).ceil() as u32);
-            let line = if txt.is_empty() { pct } else { format!("{pct}   {}", txt.join("  ")) };
-            p.text(egui::pos2(x, bar.max.y + 4.0), Align2::LEFT_TOP, line, kit::font_small(11.0), MUTED());
+        } else {
+            p.text(egui::pos2(x, bar.max.y + 4.0), Align2::LEFT_TOP, format!("{}%", (f * 100.0).ceil() as u32), kit::font_small(11.0), MUTED());
         }
     }
 
@@ -1048,14 +1331,29 @@ impl App {
             for (i, mv) in me.moves.iter().enumerate() {
                 let why = usable.get(i).and_then(|x| x.1);
                 let (r, resp) = ui.allocate_exact_size(egui::vec2(tile_w, 66.0), if why.is_none() { Sense::click() } else { Sense::hover() });
-                let ht = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered() && why.is_none(), kit::QUICK);
+                let live = why.is_none();
+                let hot = live && (resp.hovered() || resp.has_focus());
+                let ht = kit::anim(ui.ctx(), resp.id.with("h"), hot, kit::QUICK);
+                let down = live && resp.is_pointer_button_down_on();
                 let col = type_color(&mv.t);
                 let p = ui.painter();
-                let fill = if why.is_some() { kit::sunken() } else { theme::blend(CARD(), col, 0.10 + 0.10 * ht) };
+                // hovered: lifts, fills with its type colour and gets a bold edge
+                let r = r.translate(egui::vec2(0.0, -2.0 * ht + if down { 1.5 } else { 0.0 }));
+                if ht > 0.01 {
+                    p.add(egui::epaint::RectShape::filled(r.translate(egui::vec2(0.0, 4.0)).expand(1.0), kit::r(10.0), Color32::from_black_alpha((60.0 * ht) as u8)));
+                }
+                let fill = if !live { kit::sunken() } else { theme::blend(CARD(), col, 0.10 + 0.22 * ht) };
                 p.rect_filled(r, kit::r(10.0), fill);
-                let ring = if v.suggest.is_some_and(|x| x.0 == i) { kit::C_GOLD } else { theme::blend(LINE(), col, 0.5 + 0.3 * ht) };
-                p.rect_stroke(r, kit::r(10.0), Stroke::new(if v.suggest.is_some_and(|x| x.0 == i) { 2.0f32 } else { 1.0 }, ring));
-                p.rect_filled(Rect::from_min_size(r.min + egui::vec2(0.0, 10.0), egui::vec2(4.0, r.height() - 20.0)), 2.0, col);
+                let ai = v.suggest.is_some_and(|x| x.0 == i);
+                let (ring, width) = if ai { (kit::C_GOLD, 2.0f32) } else if live { (theme::blend(theme::blend(LINE(), col, 0.5), col, ht), 1.0 + 1.5 * ht) } else { (LINE(), 1.0) };
+                p.rect_stroke(r, kit::r(10.0), Stroke::new(width, ring));
+                p.rect_filled(Rect::from_min_size(r.min + egui::vec2(0.0, 10.0), egui::vec2(4.0 + 2.0 * ht, r.height() - 20.0)), 2.0, col);
+                // its number key
+                if live {
+                    let kr = Rect::from_center_size(egui::pos2(r.max.x - 14.0, r.max.y - 13.0), egui::vec2(16.0, 16.0));
+                    p.rect_filled(kr, 4.0, theme::blend(kit::sunken(), col, 0.15 + 0.35 * ht));
+                    p.text(kr.center(), Align2::CENTER_CENTER, (i + 1).to_string(), kit::font_bold(10.0), if ht > 0.5 { TEXT() } else { MUTED() });
+                }
                 let ink = if why.is_some() { MUTED() } else { TEXT() };
                 p.text(r.min + egui::vec2(16.0, 10.0), Align2::LEFT_TOP, format!("{}", mv.name), crate::fonts::sans_bold_font(15.0), ink);
                 let tw = super::team_home::type_tag(p, r.min + egui::vec2(16.0, 46.0), &mv.t, 9.5);
@@ -1100,7 +1398,7 @@ impl App {
                         None => String::new(),
                     };
                     if !line.is_empty() {
-                        p.text(egui::pos2(r.max.x - 12.0, r.min.y + 46.0), Align2::RIGHT_CENTER, line, kit::font_bold(12.0), TEXT());
+                        p.text(egui::pos2(r.max.x - 32.0, r.min.y + 46.0), Align2::RIGHT_CENTER, line, kit::font_bold(12.0), TEXT());
                     }
                 } else if let Some(w) = why {
                     p.text(egui::pos2(r.max.x - 12.0, r.min.y + 46.0), Align2::RIGHT_CENTER, w, kit::font_small(11.0), kit::C_ORANGE);
@@ -1109,6 +1407,7 @@ impl App {
                 let acc = if mv.acc == 0 { "—".to_string() } else { format!("{}%", mv.acc) };
                 let pw = if mv.bp == 0 { "—".to_string() } else { mv.bp.to_string() };
                 let resp = resp.on_hover_text(format!("Power {pw} · Accuracy {acc}{}\n{desc}", if mv.pri != 0 { format!(" · Priority {:+}", mv.pri) } else { String::new() }));
+                let resp = if live { resp.on_hover_cursor(egui::CursorIcon::PointingHand) } else { resp.on_hover_cursor(egui::CursorIcon::NotAllowed) };
                 if resp.clicked() && why.is_none() {
                     pick = Some(i);
                 }
@@ -1214,16 +1513,17 @@ impl App {
             ui.label(caps("POKÉ BALLS  ·  YOUR ODDS THIS TURN"));
             ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
                 let mut balls: Vec<(Ball, f64)> = sim::BALLS
                     .iter()
                     .filter(|b| !matches!(b, Ball::Safari | Ball::Cherish))
                     .map(|b| (*b, sim::catch_chance(rate, them.max() as u32, them.hp as u32, sim::ball_mult(*b, &sit), sim::status_mult(them.status))))
                     .collect();
                 balls.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                let top = balls.iter().find(|x| x.0 != Ball::Master).map(|x| x.0);
                 for (b, c) in balls {
-                    let label = format!("{}  {}", b.name(), if c >= 0.9995 { "100%".to_string() } else { format!("{:.1}%", c * 100.0) });
-                    if chip(ui, &label, false, kit::C_GOLD).clicked() {
+                    let pct = if c >= 0.9995 { "100%".to_string() } else { format!("{:.1}%", c * 100.0) };
+                    if ball_tile(ui, b, &pct, top == Some(b)).clicked() {
                         act = Some(Action::Ball(b));
                     }
                 }
@@ -1303,7 +1603,7 @@ impl App {
                     v.take_back();
                 }
                 let n = super::sim_auto::auto_count(self.setup.sim.auto_n);
-                if soft(ui, &format!("Simulate {} like this", thousands(n))).on_hover_text("The AI plays this battle on both sides, many times: how often would you win?").clicked() {
+                if super::sim_auto::READY && soft(ui, &format!("Simulate {} like this", thousands(n))).on_hover_text("The AI plays this battle on both sides, many times: how often would you win?").clicked() {
                     v.auto_after = true;
                     *leave = true;
                 }
@@ -1426,11 +1726,53 @@ impl App {
             }
         });
         ui.add_space(10.0);
+        // doubles: each Pokémon's status and stat changes (kept off the field)
+        if v.b.doubles() {
+            let rows: Vec<(usize, String, Vec<Chip>)> = [1usize, 3, 0, 2]
+                .into_iter()
+                .filter(|b| (b >> 1) < v.b.sides[b & 1].slots.len() && !v.disp[*b].out)
+                .map(|b| (b, battler_name(v, b), battle_chips(v, b)))
+                .collect();
+            kit::card(ui, |ui| {
+                ui.label(caps("STATUS & STAT CHANGES"));
+                ui.add_space(6.0);
+                if rows.iter().all(|r| r.2.is_empty()) {
+                    ui.label(small("No statuses or stat changes yet."));
+                }
+                let mut first = true;
+                for (side, name, chips) in rows.iter().filter(|r| !r.2.is_empty()) {
+                    if !first {
+                        ui.add_space(4.0);
+                    }
+                    first = false;
+                    ui.horizontal_top(|ui| {
+                        let col = if side & 1 == 1 { RED } else { OURS };
+                        let who = if side & 1 == 1 { format!("Foe {name}") } else { name.clone() };
+                        // the name in a fixed column, the labels wrapping beside it
+                        ui.allocate_ui_with_layout(egui::vec2(104.0, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.set_min_size(egui::vec2(104.0, 20.0));
+                            ui.add(egui::Label::new(RichText::new(who).font(crate::fonts::sans_bold_font(12.0)).color(super::charts::ink(col))).truncate());
+                        });
+                        let rest = ui.available_width();
+                        ui.allocate_ui_with_layout(egui::vec2(rest, 20.0), egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true), |ui| {
+                            ui.spacing_mut().item_spacing = egui::vec2(5.0, 5.0);
+                            for c in chips {
+                                chip_widget(ui, c);
+                            }
+                        });
+                    });
+                }
+            });
+            ui.add_space(10.0);
+        }
         // the log
         kit::card(ui, |ui| {
             ui.label(caps("BATTLE LOG"));
             ui.add_space(4.0);
-            egui::ScrollArea::vertical().id_salt("battle-log").max_height(280.0).stick_to_bottom(true).auto_shrink([false, true]).show(ui, |ui| {
+            // as tall as the battle beside it (a good size when stacked)
+            let bottom: Option<f32> = ui.ctx().data(|d| d.get_temp(egui::Id::new("battle-main-bottom"))).flatten();
+            let h = bottom.map(|y| y - ui.cursor().min.y - 16.0).unwrap_or(420.0).max(320.0);
+            egui::ScrollArea::vertical().id_salt("battle-log").max_height(h).min_scrolled_height(h).stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 for (n, t) in &v.lines {
                     if t.is_empty() {
@@ -1446,6 +1788,22 @@ impl App {
 }
 
 /// Where a battler stands on the 512×288 field: (x, y of its feet, size).
+/// A Poké Ball in the bag: its picture, name and the odds, lighting up
+/// under the pointer.
+fn ball_tile(ui: &mut egui::Ui, b: Ball, pct: &str, best: bool) -> egui::Response {
+    let (r, resp) = ui.allocate_exact_size(egui::vec2(132.0, 46.0), Sense::click());
+    let ht = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered(), kit::QUICK);
+    let col = kit::C_GOLD;
+    let p = ui.painter();
+    let r = r.translate(egui::vec2(0.0, -1.5 * ht));
+    p.rect_filled(r, 10.0, theme::blend(kit::sunken(), col, 0.06 + 0.16 * ht));
+    p.rect_stroke(r, 10.0, Stroke::new(1.0 + 1.0 * ht, if best { col } else { theme::blend(LINE(), col, 0.8 * ht) }));
+    super::sim_catch::draw_ball(p, egui::pos2(r.min.x + 22.0, r.center().y), 12.0 + 1.5 * ht, 0.0, b);
+    p.text(egui::pos2(r.min.x + 42.0, r.min.y + 15.0), Align2::LEFT_CENTER, b.name(), kit::font_bold(12.0), TEXT());
+    p.text(egui::pos2(r.min.x + 42.0, r.min.y + 32.0), Align2::LEFT_CENTER, pct, kit::font_bold(12.0), super::charts::ink(if best { col } else { MUTED() }));
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(format!("Throw a {}", b.name()))
+}
+
 fn spot(b: usize, doubles: bool) -> (f32, f32, f32) {
     match (b, doubles) {
         (1, false) => (384.0, 192.0, 150.0),

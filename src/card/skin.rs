@@ -17,6 +17,8 @@ mod holo;
 mod journal;
 #[path = "skin/neon.rs"]
 mod neon;
+#[path = "skin/pass.rs"]
+mod pass;
 #[path = "skin/poketch.rs"]
 mod poketch;
 #[path = "skin/retro.rs"]
@@ -41,6 +43,10 @@ pub(super) fn of(style: CardStyle) -> Option<&'static dyn Skin> {
         CardStyle::Holo => &holo::Holo,
         CardStyle::Broadcast => &broadcast::Broadcast,
         CardStyle::Terminal => &terminal::Terminal,
+        CardStyle::Distortion => &pass::Distortion { live: false },
+        CardStyle::DistortionLive => &pass::Distortion { live: true },
+        CardStyle::Aurora => &pass::Aurora { live: false },
+        CardStyle::AuroraLive => &pass::Aurora { live: true },
         CardStyle::Anime | CardStyle::Classic => return None,
     })
 }
@@ -122,6 +128,10 @@ pub(super) trait Skin: Sync {
     }
     /// A small label; `fill` = a coloured chip (else plain). Returns its width.
     #[allow(clippy::too_many_arguments)]
+    /// How wide `chip` draws `text`.
+    fn chip_w(&self, pen: &Pen, text: &str) -> f32 {
+        pen.width(&self.case(text), 16.0, self.faces().label) + 30.0
+    }
     fn chip(&self, pen: &mut Pen, o: &CardOptions, text: &str, x: f32, y: f32, fill: Option<Col>, align: Align) -> f32 {
         let f = self.faces().label;
         let t = self.case(text);
@@ -129,7 +139,8 @@ pub(super) trait Skin: Sync {
         let x0 = aligned(x, w, align);
         let fill = fill.unwrap_or(self.accent(o));
         pen.rrect(x0, y, w, 34.0, 17.0, fill);
-        pen.text(&t, x0 + 15.0, y + 8.0, 16.0, ink_on(fill, BLACK), f, Align::Left, false);
+        let ty = y + 17.0 - pen.mid(16.0, f);
+        pen.text(&t, x0 + 15.0, ty, 16.0, ink_on(fill, BLACK), f, Align::Left, false);
         w
     }
     /// The big title. Returns the size used.
@@ -150,6 +161,11 @@ pub(super) trait Skin: Sync {
     fn label(&self, pen: &mut Pen, _o: &CardOptions, text: &str, x: f32, y: f32, size: f32, col: Col, align: Align) -> f32 {
         let t = self.case(text);
         pen.text(&t, x, y, size, col, self.faces().label, align, false)
+    }
+    /// How far below `y` the middle of a `label`'s capitals is (to centre it
+    /// on a line).
+    fn label_mid(&self, pen: &Pen, size: f32) -> f32 {
+        pen.mid(size, self.faces().label)
     }
     fn gauge_h(&self) -> f32 {
         24.0
@@ -173,16 +189,23 @@ pub(super) trait Skin: Sync {
         pen.line(x0, y, x1, y, 1.5, self.soft().alpha(0.4));
         let f = self.faces();
         let mut x = x0;
+        // everything on one line: the middle of every text's capitals, the
+        // picture, the chip and the icon all on `cy`
         if !left.is_empty() {
-            x += self.label(pen, o, left, x, cy - 8.0, 14.0, self.soft(), Align::Left) + 12.0;
+            x += self.label(pen, o, left, x, cy - self.label_mid(pen, 14.0), 14.0, self.soft(), Align::Left) + 12.0;
         }
         if !name.is_empty() {
-            x += pen.text(name, x, cy - 11.0, 20.0, self.text(), f.body, Align::Left, false) + 12.0;
+            x += pen.avatar(x, cy, 32.0, self.text());
+            let nw = pen.width(name, 20.0, f.body);
+            let ny = cy - pen.mid(20.0, f.body);
+            let off = pen.plate_under(x, ny, nw, 20.0, f.body);
+            let ink = pen.plate_ink().unwrap_or(self.text());
+            x += pen.text(name, x + off, ny, 20.0, ink, f.body, Align::Left, false) + 12.0 + off * 2.0;
         }
         if let Some(lv) = level {
-            self.chip(pen, o, &format!("LV {lv}"), x, cy - 13.0, None, Align::Left);
+            self.chip(pen, o, &format!("LV {lv}"), x, cy - 17.0, None, Align::Left);
         }
-        let bw = self.label(pen, o, BRAND, x1, cy - 8.0, 14.0, self.soft(), Align::Right);
+        let bw = self.label(pen, o, BRAND, x1, cy - self.label_mid(pen, 14.0), 14.0, self.soft(), Align::Right);
         if let Some(icon) = icon {
             pen.blit_smooth(icon, x1 - bw - 38.0, cy - 14.0, 28.0, 28.0);
         }
@@ -449,7 +472,7 @@ impl Info {
 pub(super) fn base(sk: &dyn Skin, o: &CardOptions) -> Canvas {
     let (w, h, s) = o.output_size();
     let (dw, dh) = o.layout.size();
-    let mut pen = Pen { c: Canvas::new(w, h, sk.bg(o)), t: &NoText, p: o.theme.palette(), phase: None, s, w: dw as f32, h: dh as f32 };
+    let mut pen = Pen { c: Canvas::new(w, h, sk.bg(o)), t: &NoText, p: o.theme.palette(), phase: None, s, w: dw as f32, h: dh as f32, av: None, plate: String::new(), frame: String::new() };
     sk.backdrop(&mut pen, o);
     pen.c
 }
@@ -467,6 +490,21 @@ pub(super) fn hunt(sk: &dyn Skin, pen: &mut Pen, d: &CardData, o: &CardOptions) 
 }
 
 const FOOT_H: f32 = 56.0;
+
+/// How much bigger the hunt image footer is drawn than the rest (it used to
+/// be small and lost in the bottom band).
+const FOOT_K: f32 = 1.45;
+
+/// A hunt image's footer: trainer on the left, the app on the right, drawn
+/// `FOOT_K` times bigger and centred in the whole bottom band (the footer
+/// strip plus most of the bottom margin), so the two sit down in the bottom
+/// corners. Every style's own footer is used as it is: it's simply drawn in a
+/// scaled-up frame.
+#[allow(clippy::too_many_arguments)]
+fn big_footer(sk: &dyn Skin, pen: &mut Pen, o: &CardOptions, x0: f32, x1: f32, y: f32, band: f32, left: &str, name: &str, level: Option<u32>, icon: Option<&Img>) {
+    let k = FOOT_K;
+    pen.scaled(k, |pen| sk.footer(pen, o, x0 / k, x1 / k, y / k, band / k, left, name, level, icon));
+}
 
 /// Status chips: "CAUGHT!" / "HUNTING". Returns the bottom.
 fn chips(sk: &dyn Skin, pen: &mut Pen, o: &CardOptions, info: &Info, x: f32, y: f32, align: Align, cw: f32) -> f32 {
@@ -599,7 +637,7 @@ fn hunt_wide(sk: &dyn Skin, pen: &mut Pen, d: &CardData, o: &CardOptions, info: 
         luck_gauge(sk, pen, o, info, x0, gauge_y, cw);
     }
     tile_row(sk, pen, o, &info.tiles, x0, tiles_y, cw, 3, th);
-    sk.footer(pen, o, m, w - m, foot_y, FOOT_H, "Trainer", o.trainer.trim(), d.trainer_level, d.icon.as_ref());
+    big_footer(sk, pen, o, m, w - m, foot_y, h - foot_y - m * 0.25, "Trainer", o.trainer.trim(), d.trainer_level, d.icon.as_ref());
 }
 
 fn hunt_square(sk: &dyn Skin, pen: &mut Pen, d: &CardData, o: &CardOptions, info: &Info) {
@@ -634,7 +672,7 @@ fn hunt_square(sk: &dyn Skin, pen: &mut Pen, d: &CardData, o: &CardOptions, info
         luck_gauge(sk, pen, o, info, m, gauge_y, cw);
     }
     tile_row(sk, pen, o, &info.tiles, m, tiles_y, cw, 4, th);
-    sk.footer(pen, o, m, w - m, foot_y, FOOT_H, "Trainer", o.trainer.trim(), d.trainer_level, d.icon.as_ref());
+    big_footer(sk, pen, o, m, w - m, foot_y, h - foot_y - m * 0.25, "Trainer", o.trainer.trim(), d.trainer_level, d.icon.as_ref());
 }
 
 // ───────────────────────────── trainer card ─────────────────────────────
@@ -649,6 +687,33 @@ pub(super) fn profile(sk: &dyn Skin, pen: &mut Pen, d: &ProfileData, o: &CardOpt
     sk.overlay(pen, o);
 }
 
+/// The big name: in the style's own title look, or on a battle pass plate
+/// in the plate's ink (a dark style's ink would vanish on a dark plate).
+#[allow(clippy::too_many_arguments)]
+fn name_on_plate(sk: &dyn Skin, pen: &mut Pen, o: &CardOptions, name: &str, x: f32, y: f32, size: f32) {
+    match pen.plate_ink() {
+        Some(ink) => {
+            pen.text(name, x, y, size, ink, sk.faces().title, Align::Left, true);
+        }
+        None => sk.title(pen, o, name, x, y, size, Align::Left),
+    }
+}
+
+/// A battle pass title in its look's colour (deepened on a light style so
+/// it reads), any other title in the style's accent.
+fn title_ink(sk: &dyn Skin, o: &CardOptions, title: &str) -> Col {
+    match crate::pass::title_theme(title) {
+        Some(t) => {
+            let [r, g, b] = t.rgb();
+            let c = Col(r, g, b, 255);
+            let ink = sk.text();
+            let dark_ink = (ink.0 as u32 * 3 + ink.1 as u32 * 6 + ink.2 as u32) < 1280;
+            if dark_ink { c.mix(Col(0, 0, 0, 255), 0.35) } else { c }
+        }
+        None => sk.accent(o),
+    }
+}
+
 /// Badge, name, title and XP inside a panel.
 #[allow(clippy::too_many_arguments)]
 fn identity(sk: &dyn Skin, pen: &mut Pen, d: &ProfileData, o: &CardOptions, x: f32, y: f32, w: f32, h: f32, vertical: bool) {
@@ -661,13 +726,47 @@ fn identity(sk: &dyn Skin, pen: &mut Pen, d: &ProfileData, o: &CardOptions, x: f
     } else {
         (x + 140.0, y + h / 2.0, 92.0, x + 270.0, y + 46.0, w - 300.0, Align::Left)
     };
-    sk.badge(pen, o, cx, cy, br, d.level, metal, light);
-    let ns = pen.fit(&name, 46.0, tw, f.title);
-    sk.title(pen, o, &name, tx, ty, ns, align);
-    let mut yy = ty + ns * 1.2;
+    // the player's picture where the badge goes (the level moves next to
+    // the name), or the badge
+    let photo = pen.av.is_some();
+    if photo {
+        pen.avatar(cx - br, cy, br * 2.0, sk.accent(o));
+    } else {
+        sk.badge(pen, o, cx, cy, br, d.level, metal, light);
+    }
+    let ns = if photo {
+        let lv = format!("LV {}", d.level);
+        let cw = sk.chip_w(pen, &lv);
+        let base = if pen.plate.is_empty() { 46.0 } else { 46.0 * PLATE_SHRINK };
+        let (ns, _, _) = pen.name_inline(&name, tx, tw, base, f.title, align, cw + pen.plate_room(base, PLATE_K_BIG));
+        let nw = pen.width(&name, ns, f.title);
+        // place the name (on its plate) and the chip as one group, measured
+        // at the size the name ended up: the plate reaches 4 left of where
+        // it starts and `room` past the name
+        let (gap, edge) = (14.0, if pen.plate.is_empty() { 0.0 } else { 4.0 });
+        let room = pen.plate_room(ns, PLATE_K_BIG);
+        let total = edge + nw + room + gap + cw;
+        let start = aligned(tx, total, align) + edge;
+        let nx = start + pen.plate_under_k(start, ty, nw, ns, f.title, PLATE_K_BIG);
+        let chip_x = start + nw + room + gap;
+        name_on_plate(sk, pen, o, &name, nx, ty, ns);
+        // the chip's middle on the name's middle
+        sk.chip(pen, o, &lv, chip_x, ty + pen.mid(ns, f.title) - 17.0, None, Align::Left);
+        ns
+    } else {
+        let base = if pen.plate.is_empty() { 46.0 } else { 46.0 * PLATE_SHRINK };
+        let ns = pen.fit(&name, base, tw - pen.plate_room(base, PLATE_K_BIG), f.title);
+        let nw = pen.width(&name, ns, f.title);
+        let left = aligned(tx, nw + pen.plate_room(ns, PLATE_K_BIG), align);
+        let off = pen.plate_under_k(left, ty, nw, ns, f.title, PLATE_K_BIG);
+        name_on_plate(sk, pen, o, &name, left + off, ty, ns);
+        ns
+    };
+    // below the name (and its plate)
+    let mut yy = (ty + ns * 1.2).max(pen.plate_bottom(ty, ns, f.title, PLATE_K_BIG) + 8.0);
     let t = sk.case(&d.title);
     let tsz = pen.fit(&t, 20.0, tw, f.label);
-    pen.text(&t, tx, yy, tsz, sk.accent(o), f.label, align, false);
+    pen.text(&t, tx, yy, tsz, title_ink(sk, o, &d.title), f.label, align, false);
     yy += tsz + 22.0;
     let gx = if vertical { x + 30.0 } else { tx };
     let gw = if vertical { w - 60.0 } else { tw };
@@ -782,7 +881,12 @@ fn profile_wide(sk: &dyn Skin, pen: &mut Pen, d: &ProfileData, o: &CardOptions) 
         let ah = foot_y - 16.0 - y - 26.0;
         achievements(sk, pen, d, o, x0, y, cw, ah);
     }
+    // the picture goes by the name, not the date
+    let av = pen.av.take();
+    let plate = std::mem::take(&mut pen.plate);
     sk.footer(pen, o, m, w - m, foot_y, FOOT_H, "", &d.date, None, d.icon.as_ref());
+    pen.av = av;
+    pen.plate = plate;
 }
 
 fn profile_square(sk: &dyn Skin, pen: &mut Pen, d: &ProfileData, o: &CardOptions) {
@@ -804,7 +908,12 @@ fn profile_square(sk: &dyn Skin, pen: &mut Pen, d: &ProfileData, o: &CardOptions
         let ah = foot_y - 18.0 - y - 26.0;
         achievements(sk, pen, d, o, m, y, cw, ah);
     }
+    // the picture goes by the name, not the date
+    let av = pen.av.take();
+    let plate = std::mem::take(&mut pen.plate);
     sk.footer(pen, o, m, w - m, foot_y, FOOT_H, "", &d.date, None, d.icon.as_ref());
+    pen.av = av;
+    pen.plate = plate;
 }
 
 // ───────────────────────────── rare grass poster ─────────────────────────────
@@ -855,7 +964,7 @@ pub(super) fn poster(sk: &dyn Skin, data: &PosterData, mode: PosterMode, theme: 
 
     let max_px = 40_000_000.0;
     let r = if W * h * 4.0 > max_px { (max_px / (W * h)).sqrt().max(1.0) } else { 2.0 };
-    let mut pen = Pen { c: Canvas::new((W * r).round() as u32, (h * r).round() as u32, sk.bg(&o)), t: &NoText, p: o.theme.palette(), phase: None, s: r, w: W, h };
+    let mut pen = Pen { c: Canvas::new((W * r).round() as u32, (h * r).round() as u32, sk.bg(&o)), t: &NoText, p: o.theme.palette(), phase: None, s: r, w: W, h, av: None, plate: String::new(), frame: String::new() };
     sk.backdrop(&mut pen, &o);
     pen.t = t;
     let pen = &mut pen;

@@ -337,9 +337,29 @@ pub enum CardStyle {
     Broadcast,
     /// A console window: log lines and ASCII bars.
     Terminal,
+    /// Battle pass: Giratina's Distortion World (still / animated).
+    Distortion,
+    DistortionLive,
+    /// Battle pass: the northern lights over Snowpoint (still / animated).
+    Aurora,
+    AuroraLive,
 }
 
 impl CardStyle {
+    /// The battle pass styles (only once claimed).
+    pub const PASS: [CardStyle; 4] = [CardStyle::Distortion, CardStyle::Aurora, CardStyle::DistortionLive, CardStyle::AuroraLive];
+    /// Always animated (made as a GIF).
+    pub fn live(self) -> bool {
+        matches!(self, CardStyle::DistortionLive | CardStyle::AuroraLive)
+    }
+    /// The still version of an animated style (for pictures that can't move).
+    pub fn still(self) -> CardStyle {
+        match self {
+            CardStyle::DistortionLive => CardStyle::Distortion,
+            CardStyle::AuroraLive => CardStyle::Aurora,
+            s => s,
+        }
+    }
     pub const ALL: [CardStyle; 10] = [
         CardStyle::Anime,
         CardStyle::Classic,
@@ -364,6 +384,10 @@ impl CardStyle {
             CardStyle::Holo => "Holo card",
             CardStyle::Broadcast => "Broadcast",
             CardStyle::Terminal => "Terminal",
+            CardStyle::Distortion => "Distortion World",
+            CardStyle::DistortionLive => "Distortion World · Animated",
+            CardStyle::Aurora => "Snowpoint Aurora",
+            CardStyle::AuroraLive => "Snowpoint Aurora · Animated",
         }
     }
     pub fn about(self) -> &'static str {
@@ -378,6 +402,10 @@ impl CardStyle {
             CardStyle::Holo => "A gold collectible card with a foil shimmer.",
             CardStyle::Broadcast => "An esports scoreboard with a ticker.",
             CardStyle::Terminal => "A console window with log lines.",
+            CardStyle::Distortion => "Giratina's upside-down world: violet rifts and Griseous gold.",
+            CardStyle::DistortionLive => "Distortion World, fully animated: rifts open and shadows swirl.",
+            CardStyle::Aurora => "Northern lights over Snowpoint, ice and falling snow.",
+            CardStyle::AuroraLive => "Snowpoint Aurora, fully animated: the lights dance and snow falls.",
         }
     }
     pub fn icon(self) -> &'static str {
@@ -392,6 +420,8 @@ impl CardStyle {
             CardStyle::Holo => "🃏",
             CardStyle::Broadcast => "📺",
             CardStyle::Terminal => "⌨",
+            CardStyle::Distortion | CardStyle::DistortionLive => "🌀",
+            CardStyle::Aurora | CardStyle::AuroraLive => "❄",
         }
     }
 }
@@ -451,6 +481,8 @@ pub struct CardOptions {
     pub res: u32,
     /// Show the latest hunt journal note.
     pub show_note: bool,
+    /// The player's profile picture next to their name.
+    pub show_avatar: bool,
     /// Nickname and gender of the Pokémon on the image being made. Kept per
     /// hunt in the settings (not here), so they aren't saved with the style.
     #[cfg_attr(not(offline_test), serde(skip))]
@@ -477,6 +509,7 @@ impl Default for CardOptions {
             animated: false,
             res: 1080,
             show_note: true,
+            show_avatar: true,
             nickname: String::new(),
             gender: Gender::None,
         }
@@ -528,6 +561,11 @@ pub struct CardData {
     /// The player's nickname for it (shown as the title, species underneath).
     pub nickname: Option<String>,
     pub gender: Gender,
+    /// The player's profile picture, already round.
+    pub avatar: Option<Img>,
+    /// Battle pass name plate and picture frame worn (ids; empty = none).
+    pub plate: String,
+    pub frame: String,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -556,13 +594,36 @@ pub trait TextDraw {
     fn width(&self, s: &str, size: f32, face: Face) -> f32;
     /// Draw with the top of the text box at `y`.
     fn draw(&self, c: &mut Canvas, s: &str, x: f32, y: f32, size: f32, col: Col, face: Face);
+    /// How far below the top of the text box the middle of its capital
+    /// letters is (to centre a name on something).
+    fn cap_mid(&self, size: f32, _face: Face) -> f32 {
+        size * 0.5
+    }
 }
+
+/// A plate's height for a name of size 1: roomy enough that it frames the
+/// name rather than hugging it (footers), and a slimmer one for the big name
+/// on a trainer card.
+const PLATE_K: f32 = 1.95;
+const PLATE_K_BIG: f32 = 1.45;
+/// A big name is set this much smaller on a plate, so the two together take
+/// about the room the name alone did.
+const PLATE_SHRINK: f32 = 0.8;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Align {
     Left,
     Center,
     Right,
+}
+
+/// The left edge of something `w` wide placed at `x` with `align`.
+fn aligned_x(x: f32, w: f32, align: Align) -> f32 {
+    match align {
+        Align::Left => x,
+        Align::Center => x - w / 2.0,
+        Align::Right => x - w,
+    }
 }
 
 /// Draws in design units (e.g. 1200 × 675) onto a canvas of any size.
@@ -576,6 +637,11 @@ struct Pen<'a> {
     /// design width / height
     w: f32,
     h: f32,
+    /// The player's round picture, drawn next to their name.
+    av: Option<Img>,
+    /// Battle pass name plate (behind the name) and frame (round the picture).
+    plate: String,
+    frame: String,
 }
 
 impl Pen<'_> {
@@ -635,6 +701,110 @@ impl Pen<'_> {
     fn blit_smooth(&mut self, img: &Img, x: f32, y: f32, w: f32, h: f32) {
         let s = self.s;
         self.c.blit_smooth(img, x * s, y * s, w * s, h * s);
+    }
+    /// The player's round picture, `d` across, its left edge at `x` and
+    /// centred on `cy`, with a ring. Returns the room it took with a gap
+    /// after it (0 when there's no picture).
+    fn avatar(&mut self, x: f32, cy: f32, d: f32, ring: Col) -> f32 {
+        let Some(img) = self.av.take() else { return 0.0 };
+        let r = d / 2.0;
+        self.circle(x + r, cy + d * 0.05, r + 1.0, Col(0, 0, 0, 80));
+        self.blit_smooth(&img, x, cy - r, d, d);
+        self.av = Some(img);
+        if self.frame.is_empty() {
+            self.ring(x + r, cy, r, (d * 0.06).max(1.5), ring);
+            d + (d * 0.3).max(8.0)
+        } else {
+            // the battle pass frame round it
+            let s = self.s;
+            let id = self.frame.clone();
+            crate::cosmetics::draw_frame(&mut self.c, &id, (x + r) * s, cy * s, r * s);
+            d + r * crate::cosmetics::FRAME_REACH + (d * 0.3).max(8.0)
+        }
+    }
+    /// The biggest size up to `size` at which `name` (and its plate, if one
+    /// is worn) fits in `room`, so a long name never runs into what's next to it.
+    fn fit_name(&self, name: &str, size: f32, face: Face, room: f32) -> f32 {
+        let pad = if self.plate.is_empty() { 0.0 } else { 1.95 * crate::cosmetics::PLATE_PAD * 2.0 };
+        let mut s = size;
+        while s > size * 0.5 && self.width(name, s, face) + pad * s > room {
+            s *= 0.94;
+        }
+        s
+    }
+    /// The colour a name should be on the worn plate (None without one).
+    fn plate_ink(&self) -> Option<Col> {
+        (!self.plate.is_empty()).then(|| crate::cosmetics::plate_text(&self.plate))
+    }
+    /// Draw with everything `k` times bigger: positions given to `f` are in
+    /// the scaled frame (divide real positions by `k`), sizes come out bigger.
+    fn scaled(&mut self, k: f32, f: impl FnOnce(&mut Self)) {
+        let (s, w, h) = (self.s, self.w, self.h);
+        self.s = s * k;
+        self.w = w / k;
+        self.h = h / k;
+        f(self);
+        self.s = s;
+        self.w = w;
+        self.h = h;
+    }
+    /// The battle pass name plate behind a name of width `nw` and `size`
+    /// whose text starts at `x` with its top at `y` (nothing without one).
+    /// Returns how far the text should move right to sit on the plate.
+    /// The plate is centred on the name: the same room either side, and the
+    /// middle of its capitals on the plate's middle line.
+    fn plate_under(&mut self, x: f32, y: f32, nw: f32, size: f32, face: Face) -> f32 {
+        self.plate_under_k(x, y, nw, size, face, PLATE_K)
+    }
+    /// The middle of the capitals of text `size` tall in `face`, below its top.
+    fn mid(&self, size: f32, face: Face) -> f32 {
+        self.t.cap_mid(size, face)
+    }
+    /// How much wider a name gets on its plate (both ends), at `k` × its size tall.
+    fn plate_room(&self, size: f32, k: f32) -> f32 {
+        if self.plate.is_empty() {
+            0.0
+        } else {
+            2.0 * (size * k * crate::cosmetics::PLATE_PAD - 4.0)
+        }
+    }
+    /// Where the plate under a name (top `y`, `size`, `face`, `k` × size tall)
+    /// ends; just under the text without one.
+    fn plate_bottom(&self, y: f32, size: f32, face: Face, k: f32) -> f32 {
+        if self.plate.is_empty() {
+            y + size
+        } else {
+            y + self.mid(size, face) + size * k / 2.0
+        }
+    }
+    /// `plate_under` with the plate `k` × the text size tall.
+    fn plate_under_k(&mut self, x: f32, y: f32, nw: f32, size: f32, face: Face, k: f32) -> f32 {
+        if self.plate.is_empty() {
+            return 0.0;
+        }
+        let h = size * k;
+        let pad = h * crate::cosmetics::PLATE_PAD;
+        let s = self.s;
+        let id = self.plate.clone();
+        let mid = y + self.t.cap_mid(size, face);
+        crate::cosmetics::draw_plate(&mut self.c, &id, (x - 4.0) * s, (mid - h / 2.0) * s, (nw + pad * 2.0) * s, h * s);
+        pad - 4.0
+    }
+    /// A big name with something `extra` wide after it on the same line
+    /// (the level): returns the name's size, where the name starts (drawn
+    /// left-aligned) and where the extra goes.
+    #[allow(clippy::too_many_arguments)]
+    fn name_inline(&mut self, name: &str, x: f32, max_w: f32, size: f32, face: Face, align: Align, extra: f32) -> (f32, f32, f32) {
+        let gap = 14.0;
+        let ns = self.fit(name, size, (max_w - extra - gap).max(40.0), face);
+        let nw = self.width(name, ns, face);
+        let total = nw + gap + extra;
+        let start = match align {
+            Align::Left => x,
+            Align::Center => x - total / 2.0,
+            Align::Right => x - total,
+        };
+        (ns, start, start + nw + gap)
     }
     /// Text width in design units.
     fn width(&self, text: &str, size: f32, face: Face) -> f32 {
@@ -818,7 +988,8 @@ pub fn render_on(base: Canvas, d: &CardData, o: &CardOptions, t: &dyn TextDraw, 
     let (_, _, s) = o.output_size();
     let (dw, dh) = o.layout.size();
     let p = o.theme.palette();
-    let mut pen = Pen { c: base, t, p, phase, s, w: dw as f32, h: dh as f32 };
+    let av = if o.show_avatar { d.avatar.clone() } else { None };
+    let mut pen = Pen { c: base, t, p, phase, s, w: dw as f32, h: dh as f32, av, plate: d.plate.clone(), frame: d.frame.clone() };
     if o.style == CardStyle::Anime {
         anime::hunt(&mut pen, d, o);
         return pen.c;
@@ -1120,22 +1291,39 @@ fn tile_row(pen: &mut Pen, list: &[(&str, String)], x: f32, y: f32, w: f32, per_
 
 fn footer(pen: &mut Pen, d: &CardData, o: &CardOptions, x0: f32, x1: f32, y: f32) {
     let p = pen.p;
+    // where the trainer part ends (the app name only goes in if it fits after)
+    let mut end = x0;
     if !o.trainer.trim().is_empty() {
-        let w = pen.text("TRAINER", x0, y + 8.0, 12.0, p.muted, Face::Pixel, Align::Left, false);
+        // the row's middle line is y + 14: every text's capitals, the
+        // picture, the chip and the icon are centred on it
+        let w = pen.text("TRAINER", x0, y + 14.0 - pen.mid(12.0, Face::Pixel), 12.0, p.muted, Face::Pixel, Align::Left, false);
         let name = o.trainer.trim().to_uppercase();
-        let nw = pen.text(&name, x0 + w + 14.0, y + 5.0, 18.0, p.text, Face::Pixel, Align::Left, false);
+        let ax = x0 + w + 14.0;
+        let nx = ax + pen.avatar(ax, y + 14.0, 30.0, p.text);
+        // leave room for the level chip and the app's icon
+        let ns = pen.fit_name(&name, 18.0, Face::Pixel, x1 - nx - 130.0);
+        let w0 = pen.width(&name, ns, Face::Pixel);
+        let ty = y + 14.0 - pen.mid(ns, Face::Pixel);
+        let nx = nx + pen.plate_under(nx, ty, w0, ns, Face::Pixel);
+        let ink = pen.plate_ink().unwrap_or(p.text);
+        let nw = pen.text(&name, nx, ty, ns, ink, Face::Pixel, Align::Left, false) + if pen.plate.is_empty() { 0.0 } else { ns };
         if let Some(lv) = d.trainer_level {
             let chip = format!("LV {lv}");
             let cw = pen.width(&chip, 11.0, Face::Pixel) + 16.0;
-            let cx = x0 + w + 14.0 + nw + 12.0;
+            let cx = nx + nw + 12.0;
             pen.rrect(cx, y + 2.0, cw, 24.0, 12.0, p.accent);
-            pen.text(&chip, cx + 8.0, y + 8.5, 11.0, ink_on(p.accent, p.bg_a), Face::Pixel, Align::Left, false);
+            pen.text(&chip, cx + 8.0, y + 14.0 - pen.mid(11.0, Face::Pixel), 11.0, ink_on(p.accent, p.bg_a), Face::Pixel, Align::Left, false);
+            end = cx + cw;
+        } else {
+            end = nx + nw;
         }
     }
-    let brand = "SHINY TRACKER";
-    let bw = pen.text(brand, x1, y + 8.0, 12.0, p.muted, Face::Pixel, Align::Right, false);
+    let brand = "POKE TOGETHER COMPANION";
+    let full = pen.width(brand, 12.0, Face::Pixel);
+    // narrow (the wide card's right column): just the app's icon if the name won't fit
+    let bw = if x1 - full - 38.0 > end + 24.0 { pen.text(brand, x1, y + 14.0 - pen.mid(12.0, Face::Pixel), 12.0, p.muted, Face::Pixel, Align::Right, false) } else { -10.0 };
     if let Some(icon) = &d.icon {
-        pen.blit_smooth(icon, x1 - bw - 38.0, y - 1.0, 28.0, 28.0);
+        pen.blit_smooth(icon, x1 - bw - 38.0, y, 28.0, 28.0);
     }
 }
 
@@ -1258,7 +1446,17 @@ fn wide(pen: &mut Pen, d: &CardData, o: &CardOptions) {
     if y + 92.0 <= footer_y - 16.0 {
         tile_row(pen, &t, x0, y.max(footer_y - 16.0 - 92.0 - 6.0).min(footer_y - 16.0 - 92.0), cw, 3);
     }
-    footer(pen, d, o, x0, w - m, footer_y);
+    big_footer(pen, d, o, x0, w - m, footer_y, h - m * 0.3);
+}
+
+/// The footer drawn bigger and centred between `top` and `bottom`, so it
+/// fills the band at the bottom of a hunt image.
+#[allow(clippy::too_many_arguments)]
+fn big_footer(pen: &mut Pen, d: &CardData, o: &CardOptions, x0: f32, x1: f32, top: f32, bottom: f32) {
+    let k = 1.4;
+    // the footer row is about 28 tall with its middle 14 below its top
+    let y = (top + bottom) / 2.0 - 14.0 * k;
+    pen.scaled(k, |pen| footer(pen, d, o, x0 / k, x1 / k, y / k));
 }
 
 fn square(pen: &mut Pen, d: &CardData, o: &CardOptions) {
@@ -1279,7 +1477,7 @@ fn square(pen: &mut Pen, d: &CardData, o: &CardOptions) {
     if y + 92.0 <= footer_y - 16.0 {
         tile_row(pen, &t, m, y, cw, 4);
     }
-    footer(pen, d, o, m, w - m, footer_y);
+    big_footer(pen, d, o, m, w - m, footer_y, h - m * 0.3);
 }
 
 
@@ -1308,6 +1506,11 @@ pub struct ProfileData {
     pub show_achievements: bool,
     pub date: String,
     pub icon: Option<Img>,
+    /// The player's profile picture, already round.
+    pub avatar: Option<Img>,
+    /// Battle pass name plate and picture frame worn (ids; empty = none).
+    pub plate: String,
+    pub frame: String,
 }
 
 fn rgb(c: [u8; 3]) -> Col {
@@ -1368,7 +1571,8 @@ pub fn render_profile(d: &ProfileData, o: &CardOptions, t: &dyn TextDraw) -> Can
     let (_, _, s) = o.output_size();
     let (dw, dh) = o.layout.size();
     let p = o.theme.palette();
-    let mut pen = Pen { c: render_base(o), t, p, phase: None, s, w: dw as f32, h: dh as f32 };
+    let av = if o.show_avatar { d.avatar.clone() } else { None };
+    let mut pen = Pen { c: render_base(o), t, p, phase: None, s, w: dw as f32, h: dh as f32, av, plate: d.plate.clone(), frame: d.frame.clone() };
     if o.style == CardStyle::Anime {
         anime::profile(&mut pen, d, o);
         return pen.c;
@@ -1397,17 +1601,53 @@ fn profile_identity(pen: &mut Pen, d: &ProfileData, x: f32, y: f32, w: f32, h: f
     } else {
         (x + 150.0, y + h / 2.0, 100.0, x + 290.0, y + 60.0, w - 330.0, Align::Left)
     };
-    badge(pen, cx, cy, br, d);
-    // LEVEL chip under the badge
-    let chip = format!("LEVEL {}", d.level);
-    let cw = pen.width(&chip, 13.0, Face::Pixel) + 26.0;
-    pen.rrect(cx - cw / 2.0, cy + br + 4.0, cw, 30.0, 15.0, p.accent);
-    pen.text(&chip, cx, cy + br + 13.0, 13.0, ink_on(p.accent, p.bg_a), Face::Pixel, Align::Center, false);
-    // name + title
-    let ns = pen.fit(&name, 36.0, tw, Face::Pixel);
-    pen.text(&name, tx, ty, ns, p.text, Face::Pixel, align, true);
-    let mut yy = ty + ns + 18.0;
-    pen.text(&d.title, tx, yy, 26.0, p.highlight, Face::Body, align, false);
+    // the player's picture where the badge goes (the level moves next to
+    // the name), or the badge with its LEVEL chip
+    let photo = pen.av.is_some();
+    let ns = if photo {
+        pen.avatar(cx - br, cy, br * 2.0, rgb(d.metal.1));
+        let chip = format!("LV {}", d.level);
+        let cw = pen.width(&chip, 13.0, Face::Pixel) + 26.0;
+        let base = if pen.plate.is_empty() { 36.0 } else { 36.0 * PLATE_SHRINK };
+        let (ns, _, _) = pen.name_inline(&name, tx, tw, base, Face::Pixel, align, cw + pen.plate_room(base, PLATE_K_BIG));
+        let nw = pen.width(&name, ns, Face::Pixel);
+        // name (on its plate) and chip placed as one group at the size used
+        let (gap, edge) = (14.0, if pen.plate.is_empty() { 0.0 } else { 4.0 });
+        let room = pen.plate_room(ns, PLATE_K_BIG);
+        let start = aligned_x(tx, edge + nw + room + gap + cw, align) + edge;
+        let nx = start + pen.plate_under_k(start, ty, nw, ns, Face::Pixel, PLATE_K_BIG);
+        let chip_x = start + nw + room + gap;
+        let ink = pen.plate_ink().unwrap_or(p.text);
+        pen.text(&name, nx, ty, ns, ink, Face::Pixel, Align::Left, true);
+        // the chip's middle on the name's middle
+        let cy2 = ty + pen.mid(ns, Face::Pixel) - 15.0;
+        pen.rrect(chip_x, cy2, cw, 30.0, 15.0, p.accent);
+        pen.text(&chip, chip_x + cw / 2.0, cy2 + 15.0 - pen.mid(13.0, Face::Pixel), 13.0, ink_on(p.accent, p.bg_a), Face::Pixel, Align::Center, false);
+        ns
+    } else {
+        badge(pen, cx, cy, br, d);
+        let chip = format!("LEVEL {}", d.level);
+        let cw = pen.width(&chip, 13.0, Face::Pixel) + 26.0;
+        pen.rrect(cx - cw / 2.0, cy + br + 4.0, cw, 30.0, 15.0, p.accent);
+        pen.text(&chip, cx, cy + br + 13.0, 13.0, ink_on(p.accent, p.bg_a), Face::Pixel, Align::Center, false);
+        let base = if pen.plate.is_empty() { 36.0 } else { 36.0 * PLATE_SHRINK };
+        let ns = pen.fit(&name, base, tw - pen.plate_room(base, PLATE_K_BIG), Face::Pixel);
+        let nw = pen.width(&name, ns, Face::Pixel);
+        // centred as a whole, plate included
+        let left = aligned_x(tx, nw + pen.plate_room(ns, PLATE_K_BIG), align);
+        let off = pen.plate_under_k(left, ty, nw, ns, Face::Pixel, PLATE_K_BIG);
+        let ink = pen.plate_ink().unwrap_or(p.text);
+        pen.text(&name, left + off, ty, ns, ink, Face::Pixel, Align::Left, true);
+        ns
+    };
+    // below the name (and its plate)
+    let mut yy = (ty + ns).max(pen.plate_bottom(ty, ns, Face::Pixel, PLATE_K_BIG)) + 18.0;
+    // a battle pass title in its look's colour
+    let tcol = crate::pass::title_theme(&d.title).map_or(p.highlight, |t| {
+        let [r, g, b] = t.rgb();
+        Col(r, g, b, 255)
+    });
+    pen.text(&d.title, tx, yy, 26.0, tcol, Face::Body, align, false);
     yy += 40.0;
     let metal = format!("{} badge  ·  {} / {} achievements", d.metal.0, d.ach_count.0, d.ach_count.1);
     let ms = pen.fit(&metal, 19.0, tw, Face::Body);
@@ -1582,4 +1822,90 @@ fn profile_square(pen: &mut Pen, d: &ProfileData) {
 pub fn render_poster(data: &crate::poster::PosterData, mode: crate::poster::PosterMode, style: CardStyle, theme: CardTheme, t: &dyn TextDraw) -> Option<Canvas> {
     let sk = skin::of(style)?;
     Some(skin::poster(sk, data, mode, theme, t))
+}
+
+#[cfg(test)]
+mod pass_dump {
+    use super::*;
+
+    /// CARD_DUMP=dir renders the battle pass styles full size (and the animated ones
+    /// at many phases) so they can be looked at.
+    #[test]
+    fn pass_styles_dump() {
+        let Ok(dir) = std::env::var("CARD_DUMP") else { return };
+        let av = std::env::var("CARD_AVATAR").ok().and_then(|p| image::open(p).ok()).map(|i| {
+            let i = image::imageops::resize(&i.to_rgba8(), 256, 256, image::imageops::FilterType::Triangle);
+            let mut px = i.into_raw();
+            for y in 0..256u32 {
+                for x in 0..256u32 {
+                    let d = ((x as f32 + 0.5 - 128.0).powi(2) + (y as f32 + 0.5 - 128.0).powi(2)).sqrt();
+                    let a = &mut px[((y * 256 + x) * 4 + 3) as usize];
+                    *a = (*a as f32 * (128.0 - d + 0.5).clamp(0.0, 1.0)) as u8;
+                }
+            }
+            crate::canvas::Img { w: 256, h: 256, px }
+        });
+        let slug = std::env::var("CARD_SLUG").unwrap_or_else(|_| "giratina".into());
+        let d = CardData {
+            name: "Giratina".into(),
+            dex: Some(487),
+            caught: true,
+            encounters: 8_421,
+            odds_one_in: Some(8192.0),
+            method: "Rare grass · Singles".into(),
+            hunt_secs: 9 * 3600 + 1240,
+            per_hour: Some(912.0),
+            days_hunted: 3,
+            started: Some("10 Nov 2026".into()),
+            finished: Some("13 Nov 2026".into()),
+            shiny: crate::share::sprite_frame(&slug, true),
+            normal: crate::share::sprite_frame(&slug, false),
+            icon: Some(crate::share::icon()),
+            trainer_level: Some(27),
+            avatar: av,
+            plate: std::env::var("CARD_PLATE").unwrap_or_default(),
+            frame: std::env::var("CARD_FRAME").unwrap_or_default(),
+            ..Default::default()
+        };
+        let fonts = crate::share::AbText::load();
+        if std::env::var("CARD_PROFILE").is_ok() {
+            let pd = ProfileData {
+                name: std::env::var("CARD_NAME").unwrap_or_else(|_| "ZifuGG".into()),
+                level: 19,
+                title: std::env::var("CARD_TITLE").unwrap_or_else(|_| "Shiny Spotter".into()),
+                metal: ("Silver".into(), [150, 158, 176], [232, 236, 244]),
+                xp_into: 575,
+                xp_need: 1900,
+                total_xp: 17_675,
+                stats: vec![("Encounters".into(), "1,222".into()), ("Hunt time".into(), "53m".into()), ("Shinies".into(), "5".into()), ("Achievements".into(), "44 / 172".into())],
+                ach_count: (44, 172),
+                date: "13 Nov 2026".into(),
+                icon: Some(crate::share::icon()),
+                avatar: d.avatar.clone(),
+                plate: d.plate.clone(),
+                frame: d.frame.clone(),
+                ..Default::default()
+            };
+            for style in CardStyle::ALL.into_iter().chain([CardStyle::Distortion, CardStyle::Aurora]) {
+                for layout in [CardLayout::Wide, CardLayout::Square] {
+                    let o = CardOptions { style, layout, res: 1080, ..CardOptions::default() };
+                    let c = render_profile(&pd, &o, &fonts);
+                    image::RgbaImage::from_raw(c.w, c.h, c.px).unwrap().save(format!("{dir}/P_{:?}_{:?}.png", style, layout)).unwrap();
+                }
+            }
+            return;
+        }
+        let styles: Vec<CardStyle> = if std::env::var("CARD_ALL").is_ok() { CardStyle::ALL.into_iter().chain(CardStyle::PASS.into_iter().filter(|s| !s.live())).collect() } else { CardStyle::PASS.to_vec() };
+        let quick = std::env::var("CARD_ALL").is_ok();
+        for style in styles {
+            for layout in [CardLayout::Wide, CardLayout::Square] {
+                let o = CardOptions { style, layout, res: 1080, trainer: std::env::var("CARD_NAME").unwrap_or_else(|_| "Zifu".into()), ..CardOptions::default() };
+                let phases: Vec<Option<f32>> = if !quick && style.live() && layout == CardLayout::Wide { (0..24).map(|i| Some(i as f32 / 24.0)).collect() } else { vec![None] };
+                for (i, ph) in phases.into_iter().enumerate() {
+                    let c = render_frame(&d, &o, &fonts, ph);
+                    image::RgbaImage::from_raw(c.w, c.h, c.px).unwrap().save(format!("{dir}/{:?}_{:?}_{i:02}.png", style, layout)).unwrap();
+                }
+            }
+        }
+    }
 }

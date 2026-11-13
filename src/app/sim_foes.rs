@@ -33,7 +33,7 @@ pub(super) enum Time {
 }
 
 impl Time {
-    fn label(self) -> &'static str {
+    pub(super) fn label(self) -> &'static str {
         match self {
             Time::Morning => "Morning",
             Time::Day => "Day",
@@ -87,7 +87,7 @@ const METHODS: [(&str, &str); 7] = [
     ("radar", "Poké Radar"),
 ];
 
-fn method_label(m: &str) -> &str {
+pub(super) fn method_label(m: &str) -> &str {
     METHODS.iter().find(|x| x.0 == m).map(|x| x.1).unwrap_or(m)
 }
 
@@ -193,6 +193,17 @@ pub(super) fn describe(m: &Member) -> String {
     format!("Lv {} · {}{g} · IVs {}", m.level, m.nature, m.ivs.iter().map(|v| v.to_string()).collect::<Vec<_>>().join("/"))
 }
 
+/// What the trainer list and editor asked for this frame.
+#[derive(Default)]
+pub(super) struct TrAct {
+    pub pick: Option<u64>,
+    pub from_team: Option<u64>,
+    pub new_blank: bool,
+    pub edit: Option<Trainer>,
+    pub delete: Option<u64>,
+    pub copy: Option<u64>,
+}
+
 pub(super) const CLASSES: [&str; 14] = [
     "Trainer", "Ace Trainer", "Gym Leader", "Elite Four", "Champion", "Rival", "Team Galactic", "Veteran", "Black Belt", "Psychic", "Swimmer", "Hiker", "Dragon Tamer", "Bug Catcher",
 ];
@@ -201,7 +212,7 @@ pub(super) const CLASSES: [&str; 14] = [
 pub(super) const TRAINER_ITEMS: [&str; 11] = ["Potion", "Super Potion", "Hyper Potion", "Max Potion", "Full Restore", "Full Heal", "X Attack", "X Defend", "X Special", "X Speed", "Guard Spec."];
 
 impl App {
-    fn sim_world(&mut self) -> World {
+    pub(super) fn sim_world(&mut self) -> World {
         let s = &self.setup.sim.setup;
         let team = s.team;
         team.and_then(|id| self.setup.team.teams().teams.iter().find(|t| t.id == id).map(|t| t.world)).unwrap_or_default()
@@ -276,7 +287,7 @@ impl App {
     }
 
     /// Sprite, name and what it's like.
-    fn foe_hero(&mut self, ui: &mut egui::Ui, f: &Member, world: World) {
+    pub(super) fn foe_hero(&mut self, ui: &mut egui::Ui, f: &Member, world: World) {
         let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 96.0), Sense::hover());
         let p = ui.painter().clone();
         let sp = battle::data().species(&f.species);
@@ -307,7 +318,7 @@ impl App {
     }
 
     /// Pick a place, a way to meet them and a time; roll one or click one.
-    fn foe_route(&mut self, ui: &mut egui::Ui, w: &Wiki, world: World, v: &mut FoeView, foes: &mut [Member], doubles: bool) {
+    pub(super) fn foe_route(&mut self, ui: &mut egui::Ui, w: &Wiki, world: World, v: &mut FoeView, foes: &mut [Member], doubles: bool) {
         let more = self.cfg.info_more;
         let list = places(w, world, more);
         if list.is_empty() {
@@ -448,7 +459,7 @@ impl App {
         }
     }
 
-    fn foe_saved(&mut self, ui: &mut egui::Ui, foe: &mut Member) {
+    pub(super) fn foe_saved(&mut self, ui: &mut egui::Ui, foe: &mut Member) {
         let saved: Vec<SavedFoe> = self.setup.sim.file().foes.clone();
         let mut forget: Option<u64> = None;
         if saved.is_empty() {
@@ -488,6 +499,16 @@ impl App {
 
     /// Everything about one Pokémon, in a compact form.
     pub(super) fn foe_editor(&mut self, ui: &mut egui::Ui, m: &mut Member, world: World, key: &str, col: Color32) {
+        self.foe_basics(ui, m, world, key, col);
+        ui.add_space(8.0);
+        self.foe_moves(ui, m, world, key);
+        ui.add_space(8.0);
+        self.foe_stats(ui, m, world, key);
+        self.foe_sets(ui, m, world, col);
+    }
+
+    /// Pokémon, level, ability, nature, item, gender and shiny.
+    pub(super) fn foe_basics(&mut self, ui: &mut egui::Ui, m: &mut Member, world: World, key: &str, col: Color32) {
         let d = battle::data();
         let wiki = self.wiki.clone();
         let names: Vec<String> = pickable(world).iter().map(|s| s.name.clone()).collect();
@@ -524,7 +545,7 @@ impl App {
             });
             ui.end_row();
             ui.label(caps("NATURE"));
-            egui::ComboBox::from_id_salt(("foe-nat", key)).selected_text(nature_label(&m.nature)).width(200.0).height(320.0).show_ui(ui, |ui| {
+            kit::Dropdown::from_id_salt(("foe-nat", key)).selected_text(nature_label(&m.nature)).width(200.0).height(320.0).show_ui(ui, |ui| {
                 for n in &d.natures {
                     ui.selectable_value(&mut m.nature, n.name.clone(), nature_label(&n.name));
                 }
@@ -557,8 +578,11 @@ impl App {
             });
             ui.end_row();
         });
-        // moves: what it can learn first
-        ui.add_space(8.0);
+    }
+
+    /// Its four moves, with what a wild one knows at its level.
+    pub(super) fn foe_moves(&mut self, ui: &mut egui::Ui, m: &mut Member, world: World, key: &str) {
+        let wiki = self.wiki.clone();
         ui.horizontal(|ui| {
             ui.label(caps("MOVES"));
             if let Some(w) = wiki.as_deref() {
@@ -602,13 +626,19 @@ impl App {
                 }
             });
         }
-        // stats, EVs and IVs
-        ui.add_space(8.0);
+    }
+
+    /// Stats, with the EVs and IVs behind an expander.
+    pub(super) fn foe_stats(&mut self, ui: &mut egui::Ui, m: &mut Member, world: World, key: &str) {
         let open_id = egui::Id::new(("foe-stats-open", key));
         let mut open = ui.ctx().data(|d| d.get_temp::<bool>(open_id).unwrap_or(false));
         let stats = m.final_stats(world).unwrap_or_default();
         let head = format!("Stats  {}", (0..6).map(|i| format!("{} {}", STATS[i], stats[i])).collect::<Vec<_>>().join(" · "));
-        if kit::expander(ui, &head, "EVs and IVs", open).clicked() {
+        let plain = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new(("foe-stats-plain", key))).unwrap_or(false));
+        if plain {
+            open = true;
+            ui.label(caps("STATS"));
+        } else if kit::expander(ui, &head, "EVs and IVs", open).clicked() {
             open = !open;
             ui.ctx().data_mut(|d| d.insert_temp(open_id, open));
         }
@@ -640,7 +670,12 @@ impl App {
                 }
             });
         }
-        // Smogon's sets for it
+    }
+
+    /// Smogon's sets for it, one click each.
+    pub(super) fn foe_sets(&mut self, ui: &mut egui::Ui, m: &mut Member, world: World, col: Color32) {
+        let d = battle::data();
+        let Some(sp) = d.species(&m.species) else { return };
         let sets = d.sets_for(&m.species);
         if !sets.is_empty() {
             ui.add_space(8.0);
@@ -669,76 +704,11 @@ impl App {
         let s = self.setup.sim.setup.clone();
         let trainers: Vec<Trainer> = self.setup.sim.file().trainers.clone();
         let teams: Vec<crate::teams::Team> = self.setup.team.teams().teams.clone();
-        let mut pick: Option<u64> = None;
-        let mut from_team: Option<u64> = None;
-        let mut new_blank = false;
-        let mut edit: Option<Trainer> = None;
-        let mut delete: Option<u64> = None;
-        let mut copy: Option<u64> = None;
+        let mut act = TrAct::default();
         let mut v = self.setup.sim.foe.clone();
         side_card(ui, RED, "THEIR SIDE · A TRAINER", |ui| {
-            if trainers.is_empty() {
-                ui.label(RichText::new("No trainers yet").font(crate::fonts::sans_bold_font(16.0)).color(TEXT()));
-                ui.label(small("Build a trainer from scratch, or turn one of your Team Planner teams into one (a mirror match, or a friend's team you pasted in)."));
-                ui.add_space(8.0);
-            }
-            for t in &trainers {
-                let on = s.trainer == Some(t.id);
-                let (r, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 60.0), Sense::click());
-                let ht = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered(), kit::QUICK);
-                let p = ui.painter().clone();
-                p.rect_filled(r, 12.0, if on { theme::blend(CARD(), RED, 0.14) } else { theme::blend(kit::sunken(), CARD_HOVER(), ht) });
-                if on {
-                    p.rect_stroke(r, 12.0, Stroke::new(1.5f32, RED));
-                }
-                let f1 = crate::fonts::sans_bold_font(14.0);
-                p.text(egui::pos2(r.min.x + 14.0, r.min.y + 19.0), Align2::LEFT_CENTER, super::charts::clip(ui, &t.name, &f1, 200.0), f1, TEXT());
-                let ai = match t.ai {
-                    Ai::Random => "random moves",
-                    Ai::Smart => "smart",
-                    Ai::Expert => "expert",
-                };
-                p.text(egui::pos2(r.min.x + 14.0, r.min.y + 40.0), Align2::LEFT_CENTER, format!("{}  ·  {} Pokémon  ·  {ai}", if t.class.is_empty() { "Trainer" } else { t.class.as_str() }, t.members.len()), crate::fonts::sans_font(11.5), MUTED());
-                let slot = 36.0;
-                let n = t.members.len().min(6);
-                for (i, m) in t.members.iter().take(6).enumerate() {
-                    let c = egui::pos2(r.max.x - 12.0 - slot * (n - i) as f32 + slot / 2.0, r.center().y);
-                    if !self.team_sprite(&p, &m.species, m.shiny, c, egui::vec2(slot, slot)) {
-                        p.circle_filled(c, 14.0, theme::blend(CARD(), RED, 0.12));
-                        p.text(c, Align2::CENTER_CENTER, m.species.chars().take(2).collect::<String>(), crate::fonts::sans_bold_font(10.0), MUTED());
-                    }
-                }
-                let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
-                if resp.clicked() {
-                    pick = Some(t.id);
-                }
-                resp.context_menu(|ui| {
-                    if ui.button("Duplicate").clicked() {
-                        copy = Some(t.id);
-                        ui.close_menu();
-                    }
-                    if ui.button("Delete").clicked() {
-                        delete = Some(t.id);
-                        ui.close_menu();
-                    }
-                });
-                ui.add_space(6.0);
-            }
-            ui.horizontal(|ui| {
-                new_blank = soft(ui, "+  New trainer").clicked();
-                ui.menu_button(RichText::new("From a team").size(13.0), |ui| {
-                    ui.set_min_width(220.0);
-                    if teams.iter().all(|t| t.members.is_empty()) {
-                        ui.label("Make a team in the Team Planner first");
-                    }
-                    for t in teams.iter().filter(|t| !t.members.is_empty()).take(15) {
-                        if ui.button(format!("{}  ({})", t.name, t.members.len())).clicked() {
-                            from_team = Some(t.id);
-                            ui.close_menu();
-                        }
-                    }
-                });
-            });
+            self.trainer_list(ui, &trainers, s.trainer, &mut act, 60.0);
+            self.trainer_add_buttons(ui, &teams, &mut act);
             if !trainers.is_empty() {
                 ui.label(small("Right-click a trainer to duplicate or delete it."));
             }
@@ -753,17 +723,98 @@ impl App {
                 self.trainer_editor(ui, &mut t2, &mut v, &teams);
                 if t2 != *t {
                     t2.updated = now_secs();
-                    edit = Some(t2);
+                    act.edit = Some(t2);
                 }
             }
         });
         self.setup.sim.foe = v;
+        self.trainer_apply(act, &teams);
+    }
+
+    /// The trainers as rows (`h` points tall) with their team's sprites:
+    /// click to pick, right-click to duplicate or delete.
+    pub(super) fn trainer_list(&mut self, ui: &mut egui::Ui, trainers: &[Trainer], sel: Option<u64>, act: &mut TrAct, h: f32) {
+        if trainers.is_empty() {
+            ui.label(RichText::new("No trainers yet").font(crate::fonts::sans_bold_font(16.0)).color(TEXT()));
+            ui.label(small("Build a trainer from scratch, or turn one of your Team Planner teams into one (a mirror match, or a friend's team you pasted in)."));
+            ui.add_space(8.0);
+        }
+        for t in trainers {
+            let on = sel == Some(t.id);
+            let (r, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), h), Sense::click());
+            let ht = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered(), kit::QUICK);
+            let p = ui.painter().clone();
+            p.rect_filled(r, 12.0, if on { theme::blend(CARD(), RED, 0.14) } else { theme::blend(kit::sunken(), CARD_HOVER(), ht) });
+            if on {
+                p.rect_stroke(r, 12.0, Stroke::new(1.5f32, RED));
+            }
+            let slot = (h * 0.6).min(36.0);
+            let n = t.members.len().min(6);
+            let sprites_w = if r.width() > 380.0 { slot * n as f32 + 12.0 } else { 0.0 };
+            let f1 = crate::fonts::sans_bold_font(14.0);
+            let tw = r.width() - 28.0 - sprites_w;
+            p.text(egui::pos2(r.min.x + 14.0, r.min.y + h * 0.32), Align2::LEFT_CENTER, super::charts::clip(ui, &t.name, &f1, tw), f1, TEXT());
+            let ai = match t.ai {
+                Ai::Random => "random moves",
+                Ai::Smart => "smart",
+                Ai::Expert => "expert",
+            };
+            let f2 = crate::fonts::sans_font(11.5);
+            let sub = format!("{}  ·  {} Pokémon  ·  {ai}", if t.class.is_empty() { "Trainer" } else { t.class.as_str() }, t.members.len());
+            p.text(egui::pos2(r.min.x + 14.0, r.min.y + h * 0.68), Align2::LEFT_CENTER, super::charts::clip(ui, &sub, &f2, tw), f2, MUTED());
+            if sprites_w > 0.0 {
+                for (i, m) in t.members.iter().take(6).enumerate() {
+                    let c = egui::pos2(r.max.x - 12.0 - slot * (n - i) as f32 + slot / 2.0, r.center().y);
+                    if !self.team_sprite(&p, &m.species, m.shiny, c, egui::vec2(slot, slot)) {
+                        p.circle_filled(c, slot * 0.4, theme::blend(CARD(), RED, 0.12));
+                    }
+                }
+            }
+            let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+            if resp.clicked() {
+                act.pick = Some(t.id);
+            }
+            resp.context_menu(|ui| {
+                if ui.button("Duplicate").clicked() {
+                    act.copy = Some(t.id);
+                    ui.close_menu();
+                }
+                if ui.button("Delete").clicked() {
+                    act.delete = Some(t.id);
+                    ui.close_menu();
+                }
+            });
+            ui.add_space(6.0);
+        }
+    }
+
+    /// "New trainer" and "From a team".
+    pub(super) fn trainer_add_buttons(&mut self, ui: &mut egui::Ui, teams: &[crate::teams::Team], act: &mut TrAct) {
+        ui.horizontal(|ui| {
+            act.new_blank |= soft(ui, "+  New trainer").clicked();
+            kit::menu(ui, RichText::new("From a team").size(13.0), |ui| {
+                ui.set_min_width(220.0);
+                if teams.iter().all(|t| t.members.is_empty()) {
+                    ui.label("Make a team in the Team Planner first");
+                }
+                for t in teams.iter().filter(|t| !t.members.is_empty()).take(15) {
+                    if ui.button(format!("{}  ({})", t.name, t.members.len())).clicked() {
+                        act.from_team = Some(t.id);
+                        ui.close_menu();
+                    }
+                }
+            });
+        });
+    }
+
+    /// Do what the trainer list and editor asked for.
+    pub(super) fn trainer_apply(&mut self, act: TrAct, teams: &[crate::teams::Team]) {
         let world = self.sim_world();
-        if let Some(id) = pick {
+        if let Some(id) = act.pick {
             self.setup.sim.setup.trainer = Some(id);
             self.setup.sim.foe.sel = 0;
         }
-        if new_blank {
+        if act.new_blank {
             let id = self.setup.sim.new_id();
             let n = self.setup.sim.file().trainers.len() + 1;
             let mut first = Member { level: 30, ..Member::new("Staravia", world) };
@@ -776,7 +827,7 @@ impl App {
             self.setup.sim.foe.sel = 0;
             self.setup.sim.touch();
         }
-        if let Some(tid) = from_team {
+        if let Some(tid) = act.from_team {
             if let Some(t) = teams.iter().find(|t| t.id == tid) {
                 let id = self.setup.sim.new_id();
                 let tr = Trainer {
@@ -794,13 +845,13 @@ impl App {
                 self.setup.sim.touch();
             }
         }
-        if let Some(t) = edit {
+        if let Some(t) = act.edit {
             if let Some(x) = self.setup.sim.file().trainers.iter_mut().find(|x| x.id == t.id) {
                 *x = t;
             }
             self.setup.sim.touch();
         }
-        if let Some(id) = copy {
+        if let Some(id) = act.copy {
             let nid = self.setup.sim.new_id();
             let f = self.setup.sim.file();
             if let Some(i) = f.trainers.iter().position(|t| t.id == id) {
@@ -811,7 +862,7 @@ impl App {
             }
             self.setup.sim.touch();
         }
-        if let Some(id) = delete {
+        if let Some(id) = act.delete {
             self.setup.sim.file().trainers.retain(|t| t.id != id);
             if self.setup.sim.setup.trainer == Some(id) {
                 self.setup.sim.setup.trainer = None;
@@ -822,17 +873,36 @@ impl App {
 
     /// Name, class, how it battles, items, and its team.
     fn trainer_editor(&mut self, ui: &mut egui::Ui, t: &mut Trainer, v: &mut FoeView, teams: &[crate::teams::Team]) {
-        egui::Grid::new("trainer-ed").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
+        self.trainer_settings(ui, t);
+        ui.add_space(10.0);
+        self.trainer_team(ui, t, v, teams, 76.0);
+        self.trainer_member(ui, t, v);
+    }
+
+    /// Name, class, how it battles, its world and items.
+    pub(super) fn trainer_settings(&mut self, ui: &mut egui::Ui, t: &mut Trainer) {
+        self.trainer_rows(ui, t, 0..5, "trainer-ed");
+    }
+
+    /// Some of the trainer's settings rows (0 name, 1 class, 2 battles,
+    /// 3 world, 4 items) as one grid.
+    pub(super) fn trainer_rows(&mut self, ui: &mut egui::Ui, t: &mut Trainer, rows: std::ops::Range<u8>, id: &str) {
+        egui::Grid::new(id).num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
+            if rows.contains(&0) {
             ui.label(caps("NAME"));
             ui.add(egui::TextEdit::singleline(&mut t.name).desired_width(200.0).char_limit(24));
             ui.end_row();
+            }
+            if rows.contains(&1) {
             ui.label(caps("CLASS"));
-            egui::ComboBox::from_id_salt("trainer-class").selected_text(if t.class.is_empty() { "Trainer" } else { t.class.as_str() }).width(200.0).show_ui(ui, |ui| {
+            kit::Dropdown::from_id_salt("trainer-class").selected_text(if t.class.is_empty() { "Trainer" } else { t.class.as_str() }).width(200.0).show_ui(ui, |ui| {
                 for c in CLASSES {
                     ui.selectable_value(&mut t.class, c.to_string(), c);
                 }
             });
             ui.end_row();
+            }
+            if rows.contains(&2) {
             ui.label(caps("BATTLES"));
             ui.horizontal(|ui| {
                 for (a, l, tip) in [
@@ -846,6 +916,8 @@ impl App {
                 }
             });
             ui.end_row();
+            }
+            if rows.contains(&3) {
             ui.label(caps("WORLD"));
             ui.horizontal(|ui| {
                 for (w, l) in [(World::Platinum, "Platinum"), (World::Modern, "MODERN")] {
@@ -855,6 +927,8 @@ impl App {
                 }
             });
             ui.end_row();
+            }
+            if rows.contains(&4) {
             ui.label(caps("ITEMS"));
             ui.vertical(|ui| {
                 let mut remove: Option<usize> = None;
@@ -871,7 +945,7 @@ impl App {
                     t.items.remove(i);
                 }
                 if t.items.len() < 4 {
-                    ui.menu_button(RichText::new("+  Item it can use").size(12.0), |ui| {
+                    kit::menu(ui, RichText::new("+  Item it can use").size(12.0), |ui| {
                         for it in TRAINER_ITEMS {
                             if ui.button(it).clicked() {
                                 match t.items.iter_mut().find(|x| x.0 == it) {
@@ -885,9 +959,13 @@ impl App {
                 }
             });
             ui.end_row();
+            }
         });
-        // its team: six small slots
-        ui.add_space(10.0);
+    }
+
+    /// Its team as six slots (`size` points at most): pick one to edit,
+    /// add one, right-click to remove.
+    pub(super) fn trainer_team(&mut self, ui: &mut egui::Ui, t: &mut Trainer, v: &mut FoeView, teams: &[crate::teams::Team], size: f32) {
         ui.horizontal(|ui| {
             ui.label(caps("ITS TEAM"));
             ui.label(small(format!("{} of 6", t.members.len())));
@@ -897,7 +975,7 @@ impl App {
         let mut remove: Option<usize> = None;
         let mut add_from: Option<Member> = None;
         let full = ui.available_width();
-        let w = ((full - 6.0 * 5.0) / 6.0).floor().min(76.0);
+        let w = ((full - 6.0 * 5.0) / 6.0).floor().min(size);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             for (i, m) in t.members.iter().enumerate() {
@@ -943,17 +1021,17 @@ impl App {
         });
         if t.members.len() < 6 {
             ui.horizontal(|ui| {
-                ui.menu_button(RichText::new("Add one from a team").size(12.0), |ui| {
+                kit::menu(ui, RichText::new("Add one from a team").size(12.0), |ui| {
                     ui.set_min_width(240.0);
+                    // each team's Pokémon under its name (one list, no menus inside menus)
                     for tm in teams.iter().filter(|x| !x.members.is_empty()).take(10) {
-                        ui.menu_button(tm.name.clone(), |ui| {
-                            for m in &tm.members {
-                                if ui.button(m.display_name()).clicked() {
-                                    add_from = Some(m.clone());
-                                    ui.close_menu();
-                                }
+                        ui.add_space(4.0);
+                        ui.label(caps(&tm.name.to_uppercase()));
+                        for m in &tm.members {
+                            if ui.button(m.display_name()).clicked() {
+                                add_from = Some(m.clone());
                             }
-                        });
+                        }
                     }
                 });
                 if !t.members.is_empty() {
@@ -978,6 +1056,10 @@ impl App {
                 v.sel = t.members.len() - 1;
             }
         }
+    }
+
+    /// The selected member: sprite and the full editor.
+    pub(super) fn trainer_member(&mut self, ui: &mut egui::Ui, t: &mut Trainer, v: &mut FoeView) {
         if let Some(m) = t.members.get_mut(v.sel) {
             ui.add_space(10.0);
             let world = t.world;

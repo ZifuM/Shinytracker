@@ -105,6 +105,11 @@ impl Skin for Terminal {
         }
         pen.text("-rw-r--r--  1 zifu  shinies", x + 14.0, y + 12.0, 13.0, FAINT, Face::Mono, Align::Left, false);
     }
+    fn chip_w(&self, pen: &Pen, text: &str) -> f32 {
+        let t = format!("[{}]", text.to_lowercase());
+        let w = pen.width(&t, 20.0, Face::Mono);
+        w
+    }
     fn chip(&self, pen: &mut Pen, _o: &CardOptions, text: &str, x: f32, y: f32, fill: Option<Col>, align: Align) -> f32 {
         let t = format!("[{}]", text.to_lowercase());
         let w = pen.width(&t, 20.0, Face::Mono);
@@ -114,7 +119,7 @@ impl Skin for Terminal {
             Some(_) => AMBER,
             None => DIM,
         };
-        pen.text(&t, x0, y + 5.0, 20.0, col, Face::Mono, Align::Left, false)
+        pen.text(&t, x0, y + 17.0 - pen.mid(20.0, Face::Mono), 20.0, col, Face::Mono, Align::Left, false)
     }
     fn title(&self, pen: &mut Pen, _o: &CardOptions, text: &str, x: f32, y: f32, size: f32, align: Align) {
         let t = format!("# {}", text.to_lowercase());
@@ -164,12 +169,16 @@ impl Skin for Terminal {
         } else if !left.is_empty() {
             t.push_str(&left.to_lowercase());
         }
-        let tw = pen.text(&t, x0, cy - 11.0, 20.0, FG, Face::Mono, Align::Left, false);
+        let x0 = if name.is_empty() { x0 } else { x0 + pen.avatar(x0, cy, 28.0, FG) };
+        let pw = pen.width(&t, 20.0, Face::Mono);
+        let ty = cy - pen.mid(20.0, Face::Mono);
+        let x0 = if name.is_empty() { x0 } else { x0 + pen.plate_under(x0, ty, pw, 20.0, Face::Mono) };
+        let tw = pen.text(&t, x0, ty, 20.0, FG, Face::Mono, Align::Left, false);
         let on = pen.phase.map_or(true, |p| (p * 3.0).fract() < 0.5);
         if on {
             pen.rrect(x0 + tw + 6.0, cy - 11.0, 11.0, 22.0, 0.0, FG);
         }
-        let bw = pen.text(&BRAND.to_lowercase(), x1, cy - 9.0, 16.0, DIM, Face::Mono, Align::Right, false);
+        let bw = pen.text(&BRAND.to_lowercase(), x1, cy - pen.mid(16.0, Face::Mono), 16.0, DIM, Face::Mono, Align::Right, false);
         if let Some(icon) = icon {
             pen.blit_smooth(icon, x1 - bw - 36.0, cy - 13.0, 26.0, 26.0);
         }

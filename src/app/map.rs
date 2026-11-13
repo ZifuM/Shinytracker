@@ -1411,7 +1411,7 @@ impl App {
                                 .inner_margin(egui::Margin::symmetric(8.0, 2.0))
                                 .shadow(float_shadow())
                                 .show(ui, |ui| {
-                                    egui::ComboBox::from_id_salt("map-floor").selected_text(floor_now.as_str()).width(190.0).show_ui(ui, |ui| {
+                                    kit::Dropdown::from_id_salt("map-floor").selected_text(floor_now.as_str()).width(190.0).show_ui(ui, |ui| {
                                         for (f, label) in &floors {
                                             if ui.selectable_label(*f == z, label.as_str()).clicked() {
                                                 go_zone = Some(*f);

@@ -606,7 +606,7 @@ impl App {
         resp.on_hover_text("All of Sinnoh: click or drag to move there").on_hover_cursor(egui::CursorIcon::Crosshair);
     }
 
-    /// Bottom-left line: where you are, the Experimental tag and help.
+    /// Bottom-left line: where you are and help.
     pub(super) fn map_status(&mut self, ui: &mut egui::Ui, map: &GameMap, area: Area, layer: Layer) {
         let wher = match area {
             Area::World => match layer {
@@ -627,12 +627,6 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
                     ui.label(RichText::new(wher).font(ch::bold(12.0)).color(TEXT()));
-                    let (d, _) = ui.allocate_exact_size(vec2(4.0, 4.0), Sense::hover());
-                    ui.painter().circle_filled(d.center(), 2.0, MUTED());
-                    let (r, resp) = ui.allocate_exact_size(vec2(96.0, 20.0), Sense::hover());
-                    ui.painter().circle_filled(pos2(r.min.x + 5.0, r.center().y), 3.5, Color32::from_rgb(255, 122, 61));
-                    ui.painter().text(pos2(r.min.x + 14.0, r.center().y), Align2::LEFT_CENTER, "Experimental", ch::reg(11.5), MUTED());
-                    resp.on_hover_text("The Map is still being built: some things may be missing or wrong. Tell the dev if you spot something.");
                     let (q, qresp) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::hover());
                     ui.painter().circle_stroke(q.center(), 8.0, Stroke::new(1.2f32, MUTED()));
                     ui.painter().text(q.center(), Align2::CENTER_CENTER, "?", ch::bold(11.0), MUTED());

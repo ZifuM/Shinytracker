@@ -266,7 +266,7 @@ impl App {
                         }
                     }
                     ui.separator();
-                    egui::ComboBox::from_id_salt("poster-look")
+                    kit::Dropdown::from_id_salt("poster-look")
                         .selected_text(RichText::new(format!("{} {}", look.icon(), look.name())).size(kit::fs(12.5)))
                         .show_ui(ui, |ui| {
                             for c in crate::card::CardStyle::ALL {

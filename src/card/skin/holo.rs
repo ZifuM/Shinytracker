@@ -194,6 +194,11 @@ impl Skin for Holo {
         let ch = (cw * 7.0 / 5.0).min(h);
         self.card(pen, d, o, x + (w - cw) / 2.0, y + (h - ch) / 2.0, cw, ch);
     }
+    fn chip_w(&self, pen: &Pen, text: &str) -> f32 {
+        let t = text.to_uppercase();
+        let w = pen.width(&t, 15.0, Face::Bold) + 30.0;
+        w
+    }
     fn chip(&self, pen: &mut Pen, _o: &CardOptions, text: &str, x: f32, y: f32, fill: Option<Col>, align: Align) -> f32 {
         let t = text.to_uppercase();
         let w = pen.width(&t, 15.0, Face::Bold) + 30.0;
@@ -208,7 +213,7 @@ impl Skin for Holo {
             }
         }
         let ink = if fill.is_some_and(|c| c != GOLD) { WHITE } else { CARD_INK };
-        pen.text(&t, x0 + 15.0, y + 8.5, 15.0, ink, Face::Bold, Align::Left, false);
+        pen.text(&t, x0 + 15.0, y + 17.0 - pen.mid(15.0, Face::Bold), 15.0, ink, Face::Bold, Align::Left, false);
         w
     }
     fn title(&self, pen: &mut Pen, _o: &CardOptions, text: &str, x: f32, y: f32, size: f32, align: Align) {
@@ -267,15 +272,21 @@ impl Skin for Holo {
         hgrad(pen, x0, y + 2.0, x1 - x0, 2.0, 1.0, GOLD_LO.alpha(0.2), GOLD);
         let mut x = x0;
         if !left.is_empty() {
-            x += pen.text(&left.to_uppercase(), x, cy - 7.0, 13.0, GOLD, Face::Bold, Align::Left, false) + 12.0;
+            x += pen.text(&left.to_uppercase(), x, cy - pen.mid(13.0, Face::Bold), 13.0, GOLD, Face::Bold, Align::Left, false) + 12.0;
         }
         if !name.is_empty() {
-            x += pen.text(name, x, cy - 12.0, 21.0, WHITE, Face::Bold, Align::Left, false) + 14.0;
+            x += pen.avatar(x, cy, 32.0, GOLD);
+            let pw = pen.width(name, 21.0, Face::Bold);
+            let ny = cy - pen.mid(21.0, Face::Bold);
+            let off = pen.plate_under(x, ny, pw, 21.0, Face::Bold);
+            x += off;
+            x += pen.text(name, x, ny, 21.0, WHITE, Face::Bold, Align::Left, false) + 14.0;
+            x += off;
         }
         if let Some(lv) = level {
-            self.chip(pen, o, &format!("LV {lv}"), x, cy - 15.0, None, Align::Left);
+            self.chip(pen, o, &format!("LV {lv}"), x, cy - 17.0, None, Align::Left);
         }
-        let bw = pen.text(&BRAND.to_uppercase(), x1, cy - 7.0, 13.0, SOFT, Face::Bold, Align::Right, false);
+        let bw = pen.text(&BRAND.to_uppercase(), x1, cy - pen.mid(13.0, Face::Bold), 13.0, SOFT, Face::Bold, Align::Right, false);
         if let Some(icon) = icon {
             pen.blit_smooth(icon, x1 - bw - 38.0, cy - 14.0, 28.0, 28.0);
         }

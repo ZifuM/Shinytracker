@@ -243,7 +243,7 @@ impl App {
             }
             let cur = t.ability.as_ref().and_then(|a| abilities.iter().find(|x| x.1 == *a).map(|x| x.0.clone())).unwrap_or_else(|| "Any".into());
             row(ui, "Ability", &mut |ui| {
-                egui::ComboBox::from_id_salt("plan-ability").selected_text(&cur).width(cw).show_ui(ui, |ui| {
+                kit::Dropdown::from_id_salt("plan-ability").selected_text(&cur).width(cw).show_ui(ui, |ui| {
                     if ui.selectable_label(t.ability.is_none(), "Any").clicked() {
                         t.ability = None;
                     }

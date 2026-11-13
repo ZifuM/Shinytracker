@@ -613,7 +613,7 @@ impl App {
             ui.add_space((ui.available_width() - rest_w - 2.0).max(8.0));
             let start = ui.cursor().min.x;
             kit::segmented(ui, &mut st.shiny, &[(false, "Normal"), (true, "✨ Shiny Dex")]);
-            egui::ComboBox::from_id_salt("pdx-sort")
+            kit::Dropdown::from_id_salt("pdx-sort")
                 .selected_text(["Number", "Name", "Most met"][st.sort.min(2) as usize])
                 .width(110.0)
                 .show_ui(ui, |ui| {
@@ -648,7 +648,7 @@ impl App {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
             kit::segmented(ui, &mut st.caught, &[(CaughtFilter::All, "All"), (CaughtFilter::Caught, "Shiny caught"), (CaughtFilter::NotYet, "Not caught")]);
-            egui::ComboBox::from_id_salt("pdx-how").selected_text(st.how.label()).width(170.0).show_ui(ui, |ui| {
+            kit::Dropdown::from_id_salt("pdx-how").selected_text(st.how.label()).width(170.0).show_ui(ui, |ui| {
                 for h in HowFilter::ALL {
                     ui.selectable_value(&mut st.how, h, h.label());
                 }
@@ -673,7 +673,7 @@ impl App {
 
 /// The toolbar's "wild by" stage picker, era switch and clear link.
 fn dex_when_era(ui: &mut egui::Ui, st: &mut DexState, stages: &[String], active: bool, clear: &mut bool) {
-    egui::ComboBox::from_id_salt("pdx-stage")
+    kit::Dropdown::from_id_salt("pdx-stage")
         .selected_text(match st.stage.and_then(|i| stages.get(i)) {
             Some(s) => format!("Wild by: {s}"),
             None => "Any point in the game".to_string(),

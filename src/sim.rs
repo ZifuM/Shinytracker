@@ -550,6 +550,30 @@ pub struct Setup {
     pub last_sim: Option<(u32, u32)>,
 }
 
+/// A battle you played, with what happened in it.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct BattleRecord {
+    pub id: u64,
+    /// When it was last played (unix seconds).
+    pub when: u64,
+    /// "vs Gym Leader Roark", "Wild Bidoof"…, and the line under it.
+    pub title: String,
+    pub sub: String,
+    /// Your team's name.
+    pub team: String,
+    /// Won, Lost, Caught, Ran, Fled or Draw; empty if left before the end.
+    pub result: String,
+    pub turns: u32,
+    /// Both sides' Pokémon: (species, shiny).
+    pub ours: Vec<(String, bool)>,
+    pub theirs: Vec<(String, bool)>,
+    /// The setup, to play it again.
+    pub setup: Setup,
+    /// The battle in words: (turn, line); an empty line starts a turn.
+    pub lines: Vec<(u32, String)>,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SimFile {
@@ -558,11 +582,13 @@ pub struct SimFile {
     pub foes: Vec<SavedFoe>,
     /// The last few setups, newest first.
     pub recent: Vec<Setup>,
+    /// The battles you've played, newest first.
+    pub history: Vec<BattleRecord>,
 }
 
 impl SimFile {
     fn has_data(&self) -> bool {
-        !self.trainers.is_empty() || !self.foes.is_empty() || !self.recent.is_empty()
+        !self.trainers.is_empty() || !self.foes.is_empty() || !self.recent.is_empty() || !self.history.is_empty()
     }
 
     /// Remember a setup (newest first, the same one only once, 12 at most).
@@ -570,6 +596,13 @@ impl SimFile {
         self.recent.retain(|r| !(r.mode == s.mode && r.format == s.format && r.team == s.team && r.picks == s.picks && r.foes == s.foes && r.trainer == s.trainer));
         self.recent.insert(0, s);
         self.recent.truncate(12);
+    }
+
+    /// Keep a battle (replacing it if it's already kept), newest first, 50 at most.
+    pub fn record(&mut self, r: BattleRecord) {
+        self.history.retain(|x| x.id != r.id);
+        self.history.insert(0, r);
+        self.history.truncate(50);
     }
 }
 

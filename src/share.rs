@@ -97,6 +97,15 @@ impl TextDraw for AbText {
         w
     }
 
+    fn cap_mid(&self, size: f32, face: Face) -> f32 {
+        let Some(f) = self.font(face) else { return size * 0.5 };
+        let sf = f.as_scaled(PxScale::from(size));
+        // the real height of a capital H in this face
+        let g = sf.glyph_id('H').with_scale_and_position(PxScale::from(size), point(0.0, 0.0));
+        let cap = f.outline_glyph(g).map(|og| -og.px_bounds().min.y).unwrap_or(size * 0.7);
+        sf.ascent() - cap / 2.0
+    }
+
     fn draw(&self, c: &mut Canvas, s: &str, x: f32, y: f32, size: f32, col: Col, face: Face) {
         let Some(f) = self.font(face) else { return };
         let scale = PxScale::from(size);
@@ -265,8 +274,7 @@ pub fn start_gif(data: CardData, opts: CardOptions, slug: Option<String>, ctx: e
                         t_cs = end_cs;
                         let mut frame = match &prev {
                             None => {
-                                let mut px = c.px.clone();
-                                gif::Frame::from_rgba_speed(w as u16, h as u16, &mut px, 10)
+                                dithered_frame(&c.px, w as u16, h as u16, false)
                             }
                             Some(p) => diff_frame(p, &c.px, w, h),
                         };
@@ -324,10 +332,122 @@ fn diff_frame(prev: &[u8], cur: &[u8], w: u32, h: u32) -> gif::Frame<'static> {
             }
         }
     }
-    let mut f = gif::Frame::from_rgba_speed(fw as u16, fh as u16, &mut px, 10);
+    let mut f = dithered_frame_at(&px, fw as u16, fh as u16, true, x0, y0);
     f.left = x0 as u16;
     f.top = y0 as u16;
     f
+}
+
+/// 4×4 ordered dither pattern (Bayer), 0..15.
+const BAYER4: [[u8; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
+
+/// 8×8 ordered dither pattern (Bayer), 0..63.
+const BAYER8: [[u8; 8]; 8] = [
+    [0, 32, 8, 40, 2, 34, 10, 42],
+    [48, 16, 56, 24, 50, 18, 58, 26],
+    [12, 44, 4, 36, 14, 46, 6, 38],
+    [60, 28, 52, 20, 62, 30, 54, 22],
+    [3, 35, 11, 43, 1, 33, 9, 41],
+    [51, 19, 59, 27, 49, 17, 57, 25],
+    [15, 47, 7, 39, 13, 45, 5, 37],
+    [63, 31, 55, 23, 61, 29, 53, 21],
+];
+
+/// How far (in 0-255 levels) the dither nudges a pixel either way. About one
+/// step between neighbouring palette colours: enough to break gradients up
+/// into fine grain instead of stripes, not so much that it looks noisy.
+const DITHER: f32 = 14.0;
+
+/// Neighbouring pixels further apart than this (in any channel) are an edge or
+/// detail, not a gradient, and aren't dithered.
+const SMOOTH: u32 = 6;
+
+#[cfg(test)]
+fn dither_amp() -> f32 {
+    std::env::var("DITHER_AMP").ok().and_then(|v| v.parse().ok()).unwrap_or(DITHER)
+}
+#[cfg(not(test))]
+fn dither_amp() -> f32 {
+    DITHER
+}
+
+#[cfg(test)]
+fn bayer_n() -> u32 {
+    std::env::var("BAYER_N").ok().and_then(|v| v.parse().ok()).unwrap_or(BAYER_N)
+}
+#[cfg(not(test))]
+fn bayer_n() -> u32 {
+    BAYER_N
+}
+/// 2×2: smooths gradients nearly as well as bigger patterns but repeats so
+/// often that the GIF only grows by about a third (8×8 doubled it).
+const BAYER_N: u32 = 2;
+
+/// The dither offset for pixel (x, y): -0.5..0.5.
+fn bayer(x: u32, y: u32) -> f32 {
+    match bayer_n() {
+        8 => (BAYER8[(y % 8) as usize][(x % 8) as usize] as f32 + 0.5) / 64.0 - 0.5,
+        2 => ([[0u8, 2], [3, 1]][(y % 2) as usize][(x % 2) as usize] as f32 + 0.5) / 4.0 - 0.5,
+        _ => (BAYER4[(y % 4) as usize][(x % 4) as usize] as f32 + 0.5) / 16.0 - 0.5,
+    }
+}
+
+/// A whole frame reduced to 256 colours with ordered dithering.
+fn dithered_frame(px: &[u8], w: u16, h: u16, transparent: bool) -> gif::Frame<'static> {
+    dithered_frame_at(px, w, h, transparent, 0, 0)
+}
+
+/// Reduce RGBA to a 256-colour GIF frame. GIF can only hold 256 colours per
+/// frame, so smooth gradients would come out as visible bands; an ordered
+/// (fixed pattern) dither hides them. The pattern is tied to the position on
+/// the whole image (`ox`, `oy` = where this piece sits), so a pixel that
+/// doesn't change dithers the same way every frame: no shimmering.
+/// With `transparent`, pixels with alpha 0 become see-through (index 255).
+fn dithered_frame_at(px: &[u8], w: u16, h: u16, transparent: bool, ox: u32, oy: u32) -> gif::Frame<'static> {
+    let opaque: Vec<u8> = px.chunks_exact(4).filter(|p| p[3] >= 128).flatten().copied().collect();
+    if opaque.is_empty() {
+        let mut one = vec![0u8; 4];
+        return gif::Frame::from_rgba_speed(1, 1, &mut one, 10);
+    }
+    let colors = if transparent { 255 } else { 256 };
+    let nq = color_quant::NeuQuant::new(10, colors, &opaque);
+    let mut palette = nq.color_map_rgb();
+    palette.resize(256 * 3, 0);
+    let w32 = w as u32;
+    let amp = dither_amp();
+    let mut idx = Vec::with_capacity(w as usize * h as usize);
+    for (i, p) in px.chunks_exact(4).enumerate() {
+        if p[3] < 128 {
+            idx.push(255);
+            continue;
+        }
+        let (lx, ly) = (i as u32 % w32, i as u32 / w32);
+        let (x, y) = (lx + ox, ly + oy);
+        // Only smooth areas band, so only they are dithered: edges, text and
+        // sprites stay crisp, and the file stays close to its old size.
+        let step = |j: usize| -> u32 {
+            let q = &px[j * 4..j * 4 + 4];
+            if q[3] < 128 {
+                return 0;
+            }
+            (0..3).map(|c| (q[c] as i32 - p[c] as i32).unsigned_abs()).max().unwrap_or(0)
+        };
+        let mut busy = 0;
+        if lx + 1 < w32 {
+            busy = busy.max(step(i + 1));
+        }
+        if ly + 1 < h as u32 {
+            busy = busy.max(step(i + w as usize));
+        }
+        let k = if busy > SMOOTH {
+            0.0
+        } else {
+            bayer(x, y) * amp
+        };
+        let ch = |v: u8| (v as f32 + k).round().clamp(0.0, 255.0) as u8;
+        idx.push(nq.index_of(&[ch(p[0]), ch(p[1]), ch(p[2]), 255]) as u8);
+    }
+    gif::Frame::from_palette_pixels(w, h, idx, palette, if transparent { Some(255) } else { None })
 }
 
 pub fn icon() -> Img {
@@ -680,5 +800,51 @@ mod imp {
     }
     pub fn copy(_c: &crate::canvas::Canvas, _png: &[u8]) -> Result<(), String> {
         Err("copying images is only supported on Windows".into())
+    }
+}
+
+#[cfg(test)]
+fn plain_diff(prev: &[u8], cur: &[u8], w: u32, h: u32) -> gif::Frame<'static> {
+    let mut px = Vec::with_capacity(cur.len());
+    for (a, b) in prev.chunks_exact(4).zip(cur.chunks_exact(4)) {
+        if a == b { px.extend_from_slice(&[0, 0, 0, 0]) } else { px.extend_from_slice(&[b[0], b[1], b[2], 255]) }
+    }
+    gif::Frame::from_rgba_speed(w as u16, h as u16, &mut px, 10)
+}
+
+#[cfg(test)]
+mod gif_dump {
+    /// GIF_DUMP=dir: frames from CARD_DUMP pngs (AuroraLive_Wide_*) encoded the
+    /// way share GIFs are, for checking banding.
+    #[test]
+    fn dither_dump() {
+        let (Ok(dir), Ok(src)) = (std::env::var("GIF_DUMP"), std::env::var("GIF_SRC")) else { return };
+        let mut files: Vec<_> = std::fs::read_dir(&src).unwrap().flatten().map(|e| e.path()).filter(|p| p.to_string_lossy().contains(&std::env::var("GIF_WHICH").unwrap_or("AuroraLive_Wide_".into()))).collect();
+        files.sort();
+        let imgs: Vec<image::RgbaImage> = files.iter().take(8).map(|p| image::open(p).unwrap().to_rgba8()).collect();
+        let (w, h) = imgs[0].dimensions();
+        for (name, dither) in [("dithered", true), ("plain", false)] {
+            let mut bytes = Vec::new();
+            {
+                let mut enc = gif::Encoder::new(&mut bytes, w as u16, h as u16, &[]).unwrap();
+                enc.set_repeat(gif::Repeat::Infinite).unwrap();
+                let mut prev: Option<Vec<u8>> = None;
+                for im in &imgs {
+                    let px = im.as_raw().clone();
+                    let mut f = match (&prev, dither) {
+                        (None, true) => super::dithered_frame(&px, w as u16, h as u16, false),
+                        (None, false) => gif::Frame::from_rgba_speed(w as u16, h as u16, &mut px.clone(), 10),
+                        (Some(p), true) => super::diff_frame(p, &px, w, h),
+                        (Some(p), false) => super::plain_diff(p, &px, w, h),
+                    };
+                    f.delay = 12;
+                    f.dispose = gif::DisposalMethod::Keep;
+                    enc.write_frame(&f).unwrap();
+                    prev = Some(px);
+                }
+            }
+            std::fs::write(format!("{dir}/{name}.gif"), &bytes).unwrap();
+            println!("{name}: {} bytes", bytes.len());
+        }
     }
 }

@@ -57,8 +57,9 @@ impl App {
         ui.add_space(18.0);
 
         let unlocked = self.cfg.achievements.iter().filter(|u| progress::find(&u.id).is_some()).count();
-        let (gd, ga) = self.goals_done_count();
-        let goals = format!("Goals  {gd}/{ga}");
+        let tier = crate::pass::tier(self.pass_xp());
+        let today = crate::stats::local_day(crate::stats::now_unix());
+        let goals = if crate::pass::current(today).active(today) { format!("Battle Pass  ·  Tier {tier}") } else { "Battle Pass".to_string() };
         let achs = format!("Achievements  {unlocked}/{}", ACHIEVEMENTS.len());
         let mut sec = self.setup.profile_section;
         if kit::tab_bar(ui, &mut sec, &[(ProfileSection::Overview, "Overview"), (ProfileSection::Goals, &goals), (ProfileSection::Achievements, &achs)]) {
@@ -67,7 +68,7 @@ impl App {
         ui.add_space(16.0);
         match self.setup.profile_section {
             ProfileSection::Overview => self.profile_overview(ui, &l),
-            ProfileSection::Goals => self.goals_section(ui),
+            ProfileSection::Goals => self.pass_section(ui),
             ProfileSection::Achievements => self.profile_achievements(ui, &l),
         }
         ui.add_space(30.0);
@@ -125,30 +126,63 @@ impl App {
         let stats_w = if wide { 300.0 } else { 0.0 };
         let room = rect.max.x - 28.0 - stats_w - x;
         // name, editable in place
-        let nr = Rect::from_min_size(pos2(x - 8.0, rect.min.y + 22.0), vec2(room.min(380.0), 40.0));
+        // the name plate from the battle pass sits behind the name
+        let shown = if self.cfg.trainer_name.is_empty() { "Your trainer name".to_string() } else { self.cfg.trainer_name.clone() };
+        let plate = self.cfg.plate.clone();
+        // on a plate the name is set smaller, so the plate frames it
+        let name_font = ch::heavy(if plate.is_empty() { 26.0 } else { 19.0 });
+        let plate_h = 38.0;
+        // the text starts on the column (x); on a plate it moves in by the
+        // plate's padding so the plate's left edge is on the column instead
+        let text_x = if plate.is_empty() { x } else { x + plate_h * crate::cosmetics::PLATE_PAD };
+        let nr = Rect::from_min_size(pos2(text_x, rect.min.y + 22.0), vec2(room.min(380.0) - (text_x - x), 40.0));
+        let _ = shown;
+        let ink = (!plate.is_empty()).then(|| super::pass_page::plate_ink(&plate));
+        // the plate goes under the name, but where depends on where the text box
+        // puts the text: keep its place in the paint order and fill it in after
+        let plate_slot = p.add(egui::Shape::Noop);
         let mut c = ui.new_child(egui::UiBuilder::new().max_rect(nr).layout(egui::Layout::left_to_right(egui::Align::Center)));
-        let resp = c.add(
-            egui::TextEdit::singleline(&mut self.cfg.trainer_name)
-                .hint_text(RichText::new("Your trainer name").color(MUTED().gamma_multiply(0.8)))
-                .font(ch::heavy(26.0))
-                .frame(false)
-                .char_limit(16)
-                .desired_width(nr.width() - 30.0),
-        );
+        let mut te = egui::TextEdit::singleline(&mut self.cfg.trainer_name)
+            .hint_text(RichText::new("Your trainer name").color(MUTED().gamma_multiply(0.8)))
+            .font(name_font.clone())
+            .frame(false)
+            .margin(egui::Margin::ZERO)
+            .char_limit(16)
+            .desired_width(nr.width() - 30.0);
+        if let Some(ink) = ink {
+            te = te.text_color(ink);
+        }
+        let out = te.show(&mut c);
+        let resp = out.response.clone();
+        if ink.is_some() {
+            // centre the plate on the name's capitals
+            let size = name_font.size;
+            let base = out.galley.rows.first().and_then(|r| r.glyphs.first()).map(|g| g.pos.y).unwrap_or(size);
+            let cy = out.galley_pos.y + base - size * 0.36;
+            let tw = out.galley.size().x.max(48.0);
+            let ctx = ui.ctx().clone();
+            let shape = self.plate_shape(&ctx, &plate, App::plate_rect(out.galley_pos.x, cy, tw, plate_h));
+            p.set(plate_slot, shape);
+        }
         let hov = resp.hovered() || resp.has_focus();
         if hov {
             p.rect_stroke(resp.rect.expand2(vec2(6.0, 2.0)), 10.0, Stroke::new(1.0f32, if resp.has_focus() { kit::primary() } else { kit::LINE() }));
         }
         if !resp.has_focus() {
-            let tw = p.layout_no_wrap(if self.cfg.trainer_name.is_empty() { "Your trainer name".into() } else { self.cfg.trainer_name.clone() }, ch::heavy(26.0), TEXT()).size().x;
+            let tw = p.layout_no_wrap(if self.cfg.trainer_name.is_empty() { "Your trainer name".into() } else { self.cfg.trainer_name.clone() }, name_font.clone(), TEXT()).size().x;
+            let tw = if ink.is_some() { tw.max(48.0) + plate_h * crate::cosmetics::PLATE_PAD } else { tw };
             p.text(pos2(resp.rect.min.x + tw + 12.0, resp.rect.center().y), Align2::LEFT_CENTER, "✏", egui::FontId::proportional(14.0), if hov { TEXT() } else { MUTED() });
         }
         if resp.on_hover_text("Click to change your trainer name").changed() {
             self.dirty = true;
         }
         // title and level
-        let tr = p.text(pos2(x, rect.min.y + 70.0), Align2::LEFT_TOP, progress::title(level), ch::bold(15.0), ch::ink(lc));
-        p.text(pos2(tr.max.x + 10.0, tr.center().y), Align2::LEFT_CENTER, format!("Level {level}"), ch::reg(14.0), MUTED());
+        // the title: pick any you've earned
+        let tr = Rect::from_min_size(pos2(x - 2.0, rect.min.y + 64.0), vec2(room.min(560.0), 28.0));
+        let mut tc = ui.new_child(egui::UiBuilder::new().max_rect(tr).layout(egui::Layout::left_to_right(egui::Align::Center)));
+        tc.spacing_mut().item_spacing.x = 10.0;
+        self.title_picker(&mut tc, level, lc);
+        tc.label(RichText::new(format!("Level {level}")).font(ch::reg(14.0)).color(MUTED()));
         // XP bar
         let frac = if level >= progress::MAX_LEVEL { 1.0 } else { into as f32 / need.max(1) as f32 };
         let bar = Rect::from_min_size(pos2(x, rect.min.y + 104.0), vec2(room.min(560.0), 14.0));
@@ -549,7 +583,7 @@ impl App {
             ui.add_space((ui.available_width() - rest_w).max(8.0));
             let start = ui.cursor().min.x;
             kit::segmented(ui, &mut filter, &[(AchFilter::All, "All"), (AchFilter::Unlocked, "Unlocked"), (AchFilter::Locked, "Locked")]);
-            egui::ComboBox::from_id_salt("ach-sort").selected_text(SORTS[sort as usize]).width(150.0).show_ui(ui, |ui| {
+            kit::Dropdown::from_id_salt("ach-sort").selected_text(SORTS[sort as usize]).width(150.0).show_ui(ui, |ui| {
                 for (i, s) in SORTS.iter().enumerate() {
                     ui.selectable_value(&mut sort, i as u8, *s);
                 }
@@ -662,6 +696,17 @@ impl App {
             let i = series.iter().position(|s| s.id == a.id).unwrap_or(0);
             p.text(pos2(cr.max.x + 8.0, cr.center().y), Align2::LEFT_CENTER, format!("step {} of {}", i + 1, series.len()), ch::reg(10.5), MUTED());
         }
+        // the title it earns
+        if let Some((_, t)) = progress::ACH_TITLES.iter().find(|(id, _)| *id == a.id) {
+            if !hidden {
+                let label = format!("Title: {t}");
+                let f = ch::bold(10.5);
+                let g = p.layout_no_wrap(label, f, ch::ink(GOLD));
+                let tr = Rect::from_min_size(pos2(r.max.x - 14.0 - g.size().x - 12.0, cr.min.y), vec2(g.size().x + 12.0, 17.0));
+                p.rect_filled(tr, 8.5, ch::faint(GOLD, if done { 0.25 } else { 0.1 }));
+                p.galley(pos2(tr.min.x + 6.0, tr.center().y - g.size().y / 2.0), g, ch::ink(GOLD));
+            }
+        }
         let desc = if hidden { "A secret. Keep hunting!" } else { a.desc };
         let job = egui::text::LayoutJob {
             wrap: egui::text::TextWrapping { max_width: room, max_rows: 2, break_anywhere: false, overflow_character: Some('…') },
@@ -759,4 +804,69 @@ fn cat_chip(ui: &mut egui::Ui, icon: &str, label: &str, n: usize, all: usize, on
     p.rect_filled(cr, 9.0, cf);
     p.text(cr.center(), Align2::CENTER_CENTER, count, ch::bold(10.5), ci);
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+impl App {
+    /// The title shown with your name: the one you picked, or your level's.
+    pub(super) fn player_title(&self, level: u32) -> String {
+        let ids: Vec<String> = self.cfg.achievements.iter().map(|u| u.id.clone()).collect();
+        progress::shown_title(&self.cfg.title_choice, level, &ids, &self.pass_titles())
+    }
+
+    /// The title as a drop-down of every title you've earned.
+    fn title_picker(&mut self, ui: &mut egui::Ui, level: u32, col: Color32) {
+        let ids: Vec<String> = self.cfg.achievements.iter().map(|u| u.id.clone()).collect();
+        let earned = progress::earned_titles(level, &ids, &self.pass_titles());
+        let shown = self.player_title(level);
+        let total = progress::LEVEL_TITLES.len() + progress::ACH_TITLES.len() + crate::pass::all_rewards().filter(|r| r.kind == crate::pass::Kind2::Title).count();
+        let mut pick: Option<String> = None;
+        kit::Dropdown::from_id_salt("profile-title")
+            .selected_text(RichText::new(&shown).font(ch::bold(15.0)).color(super::pass_page::title_col(&shown, ch::ink(col))))
+            .height(420.0)
+            .width(0.0)
+            .show_ui(ui, |ui| {
+                ui.set_min_width(340.0);
+                let auto = self.cfg.title_choice.is_empty();
+                ui.horizontal(|ui| {
+                    if ui.selectable_label(auto, RichText::new("Follow my level").strong()).on_hover_text("Changes by itself as you level up").clicked() {
+                        pick = Some(String::new());
+                    }
+                    ui.label(RichText::new(progress::title(level)).size(11.5).color(MUTED()));
+                });
+                ui.separator();
+                let mut last_level = true;
+                let mut shown_pass = false;
+                for (t, how) in &earned {
+                    let is_level = how.starts_with("Level ");
+                    if last_level && !is_level {
+                        ui.separator();
+                        ui.label(RichText::new("FROM ACHIEVEMENTS").size(10.5).strong().color(MUTED()));
+                    }
+                    if how == "Battle pass" && !shown_pass {
+                        shown_pass = true;
+                        ui.separator();
+                        ui.label(RichText::new("FROM THE BATTLE PASS").size(10.5).strong().color(MUTED()));
+                    }
+                    last_level = is_level;
+                    ui.horizontal(|ui| {
+                        let label = match crate::pass::title_theme(t) {
+                            Some(_) => RichText::new(*t).strong().color(super::pass_page::title_col(t, TEXT())),
+                            None => RichText::new(*t),
+                        };
+                        if ui.selectable_label(!auto && shown == *t, label).clicked() {
+                            pick = Some(t.to_string());
+                        }
+                        ui.label(RichText::new(how).size(11.5).color(MUTED()));
+                    });
+                }
+                ui.separator();
+                ui.label(RichText::new(format!("{} of {total} titles earned · unlock achievements for more", earned.len())).size(11.5).color(MUTED()));
+            })
+            .response
+            .on_hover_text("Pick the title shown with your name");
+        if let Some(t) = pick {
+            self.cfg.title_choice = t;
+            self.dirty = true;
+        }
+    }
 }

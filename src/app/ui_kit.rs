@@ -2246,3 +2246,168 @@ pub fn slider_f32(ui: &mut Ui, v: &mut f32, range: std::ops::RangeInclusive<f32>
 
 /// Width of a slider's value pill.
 pub const SLIDER_VALUE_W: f32 = 72.0;
+
+// ───────────────────────── Cirrus dropdown ─────────────────────────
+// Cirrus has no dropdown of its own, so this one is built from its rules:
+// the closed box is an input (a Cloud pill, Edge hairline, Ink text, a Mist
+// chevron); hovering washes it to Sunken; open, it gets the Signal focus
+// ring and the chevron turns up. The list is a popover: a Cloud surface with
+// a hairline, tier-2 shadow and a 14px radius, 6px in from its edge. Rows are
+// full-width pills that wash to Sunken on hover; the picked one sits on a
+// slightly deeper Sunken pill in Ink. Signal blue is kept for the focus ring
+// only.
+
+/// A Cirrus dropdown, used like `egui::ComboBox`:
+/// `kit::Dropdown::from_id_salt("x").selected_text(..).width(..).show_ui(ui, |ui| ..)`.
+/// Inside, `selectable_value` / `selectable_label` / `button` come out as
+/// Cirrus rows; the list closes when one is clicked (or with `keep_open`, only
+/// when `close_dropdown` is called, for lists with a search box).
+pub struct Dropdown {
+    id: egui::Id,
+    text: egui::WidgetText,
+    width: f32,
+    height: f32,
+    keep_open: bool,
+    menu: bool,
+}
+
+impl Dropdown {
+    pub fn from_id_salt(salt: impl std::hash::Hash) -> Self {
+        Dropdown { id: egui::Id::new(("cirrus-dd", egui::Id::new(salt))), text: "".into(), width: 0.0, height: 320.0, keep_open: false, menu: false }
+    }
+    pub fn selected_text(mut self, t: impl Into<egui::WidgetText>) -> Self {
+        self.text = t.into();
+        self
+    }
+    /// The closed box's width (0 = fit the text).
+    pub fn width(mut self, w: f32) -> Self {
+        self.width = w;
+        self
+    }
+    /// The list's most height before it scrolls.
+    pub fn height(mut self, h: f32) -> Self {
+        self.height = h;
+        self
+    }
+    /// Stay open on clicks inside (a list with a search box).
+    pub fn keep_open(mut self) -> Self {
+        self.keep_open = true;
+        self
+    }
+
+    pub fn show_ui<R>(self, ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<Option<R>> {
+        let popup = self.id.with("list");
+        let open = ui.memory(|m| m.is_popup_open(popup));
+        // the closed box
+        let font = egui::TextStyle::Button.resolve(ui.style());
+        let galley = self.text.clone().into_galley(ui, Some(egui::TextWrapMode::Truncate), (self.width - 40.0).max(0.0).max(if self.width > 0.0 { 0.0 } else { f32::INFINITY }), font);
+        let h = CONTROL_H.max(galley.size().y + 10.0);
+        let w = if self.width > 0.0 { self.width } else { galley.size().x + 44.0 };
+        let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, h), Sense::click());
+        let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+        if ui.is_rect_visible(rect) {
+            let p = ui.painter();
+            let t = anim(ui.ctx(), self.id.with("hov"), resp.hovered() || open, QUICK);
+            let r = h / 2.0;
+            p.rect_filled(rect, r, theme::blend(CARD(), sunken(), t));
+            p.rect_stroke(rect, r, Stroke::new(1.0f32, LINE()));
+            if open || resp.has_focus() {
+                focus_ring(p, rect, r);
+            }
+            let tc = if ui.is_enabled() { TEXT() } else { MUTED() };
+            p.galley(egui::pos2(rect.min.x + 14.0, rect.center().y - galley.size().y / 2.0), galley, tc);
+            chevron(p, egui::pos2(rect.max.x - 17.0, rect.center().y), open, if self.menu { TEXT() } else { MUTED() });
+        }
+        if resp.clicked() {
+            ui.memory_mut(|m| m.toggle_popup(popup));
+        }
+        let mut inner = None;
+        if ui.memory(|m| m.is_popup_open(popup)) {
+            let list_w = rect.width().max(if self.menu { 220.0 } else { 0.0 });
+            let area = egui::Area::new(popup).kind(egui::UiKind::Popup).order(egui::Order::Foreground).fixed_pos(rect.left_bottom() + egui::vec2(0.0, 6.0)).constrain(true);
+            let shown = area.show(ui.ctx(), |ui| {
+                egui::Frame::none()
+                    .fill(CARD())
+                    .stroke(Stroke::new(1.0f32, LINE()))
+                    .rounding(14.0)
+                    .shadow(shadow_tier(2))
+                    .inner_margin(egui::Margin::same(6.0))
+                    .show(ui, |ui| {
+                        ui.set_min_width(list_w - 12.0);
+                        list_style(ui);
+                        egui::ScrollArea::vertical().max_height(self.height).show(ui, |ui| {
+                            ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| add(ui)).inner
+                        })
+                        .inner
+                    })
+                    .inner
+            });
+            inner = Some(shown.inner);
+            let area_rect = shown.response.rect;
+            let (pressed_at, clicked_at, esc) = ui.input(|i| {
+                (
+                    if i.pointer.any_pressed() { i.pointer.interact_pos() } else { None },
+                    if i.pointer.primary_clicked() { i.pointer.interact_pos() } else { None },
+                    i.key_pressed(egui::Key::Escape),
+                )
+            });
+            let outside = pressed_at.is_some_and(|p| !area_rect.contains(p) && !rect.contains(p));
+            // a click (not a scroll-bar drag) on a row picks it and closes the list
+            let picked = !self.keep_open && clicked_at.is_some_and(|p| area_rect.contains(p));
+            if outside || esc || picked {
+                ui.memory_mut(|m| m.close_popup());
+            }
+        }
+        egui::InnerResponse::new(inner, resp)
+    }
+}
+
+/// A Cirrus menu: a pill button (label and chevron) that opens a popover of
+/// actions. Rows close it when clicked.
+pub fn menu<R>(ui: &mut Ui, label: impl Into<egui::WidgetText>, add: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<Option<R>> {
+    let label = label.into();
+    let id = ui.id().with(("cirrus-menu", label.text().to_string()));
+    let mut d = Dropdown::from_id_salt(id).selected_text(label).height(420.0);
+    d.menu = true;
+    d.show_ui(ui, add)
+}
+
+/// Close the open dropdown (for a `keep_open` list, after a pick).
+pub fn close_dropdown(ui: &Ui) {
+    ui.memory_mut(|m| m.close_popup());
+}
+
+/// The Lucide chevron: down when closed, up when open.
+fn chevron(p: &egui::Painter, c: egui::Pos2, up: bool, col: Color32) {
+    let (w, h) = (4.5, 2.6);
+    let d = if up { -1.0 } else { 1.0 };
+    p.add(egui::Shape::line(vec![c + egui::vec2(-w, -h * d), c + egui::vec2(0.0, h * d), c + egui::vec2(w, -h * d)], Stroke::new(1.6f32, col)));
+}
+
+/// Rows in a dropdown list: full-width pills, Sunken on hover, the picked one
+/// on a deeper Sunken pill in bold Ink.
+fn list_style(ui: &mut Ui) {
+    let sunk = sunken();
+    let st = ui.style_mut();
+    st.spacing.button_padding = egui::vec2(12.0, 7.0);
+    st.spacing.item_spacing = egui::vec2(6.0, 2.0);
+    st.spacing.interact_size.y = 30.0;
+    let v = &mut st.visuals;
+    v.selection.bg_fill = theme::blend(sunk, TEXT(), 0.08);
+    v.selection.stroke = Stroke::new(1.0f32, TEXT());
+    let w = &mut v.widgets;
+    w.inactive.weak_bg_fill = Color32::TRANSPARENT;
+    w.inactive.bg_stroke = Stroke::NONE;
+    w.inactive.fg_stroke = Stroke::new(1.0f32, TEXT());
+    w.hovered.weak_bg_fill = sunk;
+    w.hovered.bg_stroke = Stroke::NONE;
+    w.hovered.fg_stroke = Stroke::new(1.0f32, TEXT());
+    w.active.weak_bg_fill = theme::blend(sunk, TEXT(), 0.08);
+    w.active.bg_stroke = Stroke::NONE;
+    w.open.weak_bg_fill = sunk;
+    w.open.bg_stroke = Stroke::NONE;
+    for x in [&mut w.inactive, &mut w.hovered, &mut w.active, &mut w.open, &mut w.noninteractive] {
+        x.rounding = egui::Rounding::same(10.0);
+        x.expansion = 0.0;
+    }
+}

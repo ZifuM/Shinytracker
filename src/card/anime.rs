@@ -143,7 +143,8 @@ impl Pen<'_> {
         self.rrect(x + 3.0, y + 4.0, w, h, h / 2.0, ink);
         self.rrect(x - 2.5, y - 2.5, w + 5.0, h + 5.0, h / 2.0 + 2.5, ink);
         self.rrect(x, y, w, h, h / 2.0, fill);
-        self.text(text, x + pad, y + (h - size * 1.2) / 2.0, size, on(fill), Face::Bold, Align::Left, false);
+        let ty = y + h / 2.0 - self.mid(size, Face::Bold);
+        self.text(text, x + pad, ty, size, on(fill), Face::Bold, Align::Left, false);
         w
     }
 
@@ -588,14 +589,20 @@ fn footer_band(pen: &mut Pen, k: Ink, label: &str, trainer: &str, level: Option<
     let cy = y + 6.0 + (h - 6.0) / 2.0;
     let mut x = m;
     if !trainer.trim().is_empty() {
-        pen.text(label, x, cy - 9.0, 15.0, k.main.mix(WHITE, 0.4), Face::Bold, Align::Left, false);
+        pen.text(label, x, cy - pen.mid(15.0, Face::Bold), 15.0, k.main.mix(WHITE, 0.4), Face::Bold, Align::Left, false);
         x += pen.width(label, 15.0, Face::Bold) + 12.0;
-        x += pen.text(&trainer.trim().to_uppercase(), x, cy - 15.0, 24.0, WHITE, Face::Display, Align::Left, false) + 12.0;
+        x += pen.avatar(x, cy, 36.0, WHITE);
+        let t = trainer.trim().to_uppercase();
+        let nw = pen.width(&t, 24.0, Face::Display);
+        let ny = cy - pen.mid(24.0, Face::Display);
+        let off = pen.plate_under(x, ny, nw, 24.0, Face::Display);
+        x += pen.text(&t, x + off, ny, 24.0, WHITE, Face::Display, Align::Left, false) + 12.0 + off * 2.0;
         if let Some(lv) = level {
-            pen.tag(&format!("LV {lv}"), x, cy - 12.0, 13.0, YELLOW, k.ink, Align::Left);
+            // a tag is 1.75 × its text size tall
+            pen.tag(&format!("LV {lv}"), x, cy - 13.0 * 0.875, 13.0, YELLOW, k.ink, Align::Left);
         }
     }
-    let bw = pen.text(right, w - m, cy - 9.0, 15.0, WHITE, Face::Bold, Align::Right, false);
+    let bw = pen.text(right, w - m, cy - pen.mid(15.0, Face::Bold), 15.0, WHITE, Face::Bold, Align::Right, false);
     if let Some(icon) = icon {
         pen.blit_smooth(icon, w - m - bw - 38.0, cy - 15.0, 30.0, 30.0);
     }
@@ -603,7 +610,7 @@ fn footer_band(pen: &mut Pen, k: Ink, label: &str, trainer: &str, level: Option<
 
 fn hunt_wide(pen: &mut Pen, d: &CardData, o: &CardOptions, k: Ink) {
     let (w, h) = (pen.w, pen.h);
-    let band = 58.0;
+    let band = 74.0;
     let bottom = h - band;
     // Colour block on the left with a slanted edge; speed lines from the sprite.
     let (cx, cy) = (262.0, 300.0);
@@ -648,12 +655,14 @@ fn hunt_wide(pen: &mut Pen, d: &CardData, o: &CardOptions, k: Ink) {
     if sy + th <= bottom - 16.0 {
         stickers(pen, &t, k, x0, sy, cw, 3, th);
     }
-    footer_band(pen, k, "TRAINER", &o.trainer, d.trainer_level, "POKE TOGETHER COMPANION", d.icon.as_ref(), bottom, band);
+    // bigger than the trainer card's: the hunt image's footer has room to spare
+    let fk = 1.3;
+    pen.scaled(fk, |pen| footer_band(pen, k, "TRAINER", &o.trainer, d.trainer_level, "POKE TOGETHER COMPANION", d.icon.as_ref(), bottom / fk, band / fk));
 }
 
 fn hunt_square(pen: &mut Pen, d: &CardData, o: &CardOptions, k: Ink) {
     let (w, h) = (pen.w, pen.h);
-    let band = 62.0;
+    let band = 78.0;
     let bottom = h - band;
     // Colour block across the top with a slanted bottom edge.
     let (cx, cy) = (w / 2.0, 222.0);
@@ -704,7 +713,9 @@ fn hunt_square(pen: &mut Pen, d: &CardData, o: &CardOptions, k: Ink) {
         gauge(pen, d, k, m, gauge_y, cw);
     }
     stickers(pen, &t_list, k, m, stick_y, cw, 4, th);
-    footer_band(pen, k, "TRAINER", &o.trainer, d.trainer_level, "POKE TOGETHER COMPANION", d.icon.as_ref(), bottom, band);
+    // bigger than the trainer card's: the hunt image's footer has room to spare
+    let fk = 1.3;
+    pen.scaled(fk, |pen| footer_band(pen, k, "TRAINER", &o.trainer, d.trainer_level, "POKE TOGETHER COMPANION", d.icon.as_ref(), bottom / fk, band / fk));
 }
 
 // ───────────────────────────── trainer profile ─────────────────────────────
@@ -719,6 +730,16 @@ pub(super) fn profile(pen: &mut Pen, d: &ProfileData, o: &CardOptions) {
 
 /// Flat hexagon level badge with an ink outline.
 fn flat_badge(pen: &mut Pen, d: &ProfileData, k: Ink, cx: f32, cy: f32, r: f32) {
+    // the player's picture in a sticker frame instead, when there is one
+    if pen.av.is_some() {
+        pen.burst(cx, cy, r * 1.08, r * 1.42, 16, k.pop[0], k.ink, 0.1);
+        pen.circle(cx + 8.0, cy + 10.0, r + 8.0, k.ink);
+        pen.circle(cx, cy, r + 8.0, k.ink);
+        pen.circle(cx, cy, r + 3.0, rgb(d.metal.1));
+        pen.avatar(cx - r, cy, r * 2.0, k.ink);
+        pen.twinkle(cx + r * 0.9, cy - r * 0.75, r * 0.2, WHITE, k.ink);
+        return;
+    }
     let main = rgb(d.metal.1);
     let light = rgb(d.metal.2);
     let hex = |r: f32, dx: f32, dy: f32| -> Vec<(f32, f32)> {
@@ -746,12 +767,54 @@ fn flat_badge(pen: &mut Pen, d: &ProfileData, k: Ink, cx: f32, cy: f32, r: f32) 
 #[allow(clippy::too_many_arguments)]
 fn identity_text(pen: &mut Pen, d: &ProfileData, k: Ink, x: f32, y: f32, w: f32, align: Align, on_colour: bool) -> f32 {
     let name = if d.name.trim().is_empty() { "TRAINER".to_string() } else { d.name.trim().to_uppercase() };
-    let ns = pen.fit(&name, 64.0, w, Face::Display);
     let fill = if on_colour { WHITE } else { k.paper };
-    pen.lettering(&name, x, y, ns, fill, k.ink, 5.0, Face::Display, align, Some(k.ink));
-    let mut y = y + ns * 1.3;
+    // with the player's picture in the badge's place, the level sits
+    // next to the name
+    let ns = if pen.av.is_some() {
+        let lv = format!("LV {}", d.level);
+        let ts = 20.0;
+        let tw = pen.width(&lv, ts, Face::Bold) + ts * 1.6;
+        let base = if pen.plate.is_empty() { 64.0 } else { 64.0 * PLATE_SHRINK };
+        let (ns, _, _) = pen.name_inline(&name, x, w, base, Face::Display, align, tw + pen.plate_room(base, PLATE_K_BIG));
+        let nw = pen.width(&name, ns, Face::Display);
+        // name (on its plate) and tag placed as one group at the size used
+        let (gap, edge) = (14.0, if pen.plate.is_empty() { 0.0 } else { 4.0 });
+        let room = pen.plate_room(ns, PLATE_K_BIG);
+        let all = edge + nw + room + gap + tw;
+        let start = match align {
+            Align::Center => x - all / 2.0,
+            Align::Right => x - all,
+            Align::Left => x,
+        } + edge;
+        let nx = start + pen.plate_under_k(start, y, nw, ns, Face::Display, PLATE_K_BIG);
+        let tag_x = start + nw + room + gap;
+        pen.lettering(&name, nx, y, ns, fill, k.ink, 5.0, Face::Display, Align::Left, Some(k.ink));
+        // the tag's middle on the name's middle
+        pen.tag(&lv, tag_x, y + pen.mid(ns, Face::Display) - ts * 0.875, ts, YELLOW, k.ink, Align::Left);
+        ns
+    } else {
+        let base = if pen.plate.is_empty() { 64.0 } else { 64.0 * PLATE_SHRINK };
+        let ns = pen.fit(&name, base, w - pen.plate_room(base, PLATE_K_BIG), Face::Display);
+        let nw = pen.width(&name, ns, Face::Display);
+        let all = nw + pen.plate_room(ns, PLATE_K_BIG);
+        let left = match align {
+            Align::Center => x - all / 2.0,
+            Align::Right => x - all,
+            Align::Left => x,
+        };
+        let off = pen.plate_under_k(left, y, nw, ns, Face::Display, PLATE_K_BIG);
+        pen.lettering(&name, left + off, y, ns, fill, k.ink, 5.0, Face::Display, Align::Left, Some(k.ink));
+        ns
+    };
+    // below the name (and its plate)
+    let mut y = (y + ns * 1.3).max(pen.plate_bottom(y, ns, Face::Display, PLATE_K_BIG) + 12.0);
     let title = d.title.to_uppercase();
-    pen.tag(&title, x, y, 17.0, YELLOW, k.ink, align);
+    // a battle pass title on a tag in its look's colour
+    let tfill = crate::pass::title_theme(&d.title).map_or(YELLOW, |t| {
+        let [r, g, b] = t.rgb();
+        Col(r, g, b, 255)
+    });
+    pen.tag(&title, x, y, 17.0, tfill, k.ink, align);
     y += 17.0 * 1.75 + 16.0;
     // XP bar.
     let bw = w.min(420.0);
@@ -893,7 +956,12 @@ fn profile_wide(pen: &mut Pen, d: &ProfileData, k: Ink) {
         let ah = (bottom - 22.0 - y - 40.0).clamp(90.0, 200.0);
         achievements_row(pen, d, k, x0, y, cw, ah);
     }
+    // the picture goes by the name, not the date
+    let av = pen.av.take();
+    let plate = std::mem::take(&mut pen.plate);
     footer_band(pen, k, "CARD MADE", &d.date, None, "POKE TOGETHER COMPANION", d.icon.as_ref(), bottom, band);
+    pen.av = av;
+    pen.plate = plate;
 }
 
 fn profile_square(pen: &mut Pen, d: &ProfileData, k: Ink) {
@@ -944,5 +1012,10 @@ fn profile_square(pen: &mut Pen, d: &ProfileData, k: Ink) {
         let ah = (bottom - 24.0 - y - 40.0).clamp(100.0, 240.0);
         achievements_row(pen, d, k, m, y, cw, ah);
     }
+    // the picture goes by the name, not the date
+    let av = pen.av.take();
+    let plate = std::mem::take(&mut pen.plate);
     footer_band(pen, k, "CARD MADE", &d.date, None, "POKE TOGETHER COMPANION", d.icon.as_ref(), bottom, band);
+    pen.av = av;
+    pen.plate = plate;
 }

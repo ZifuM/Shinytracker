@@ -148,6 +148,10 @@ impl Skin for Journal {
             }
         }
     }
+    fn chip_w(&self, pen: &Pen, text: &str) -> f32 {
+        let w = pen.width(text, 24.0, Face::Hand) + 30.0;
+        w
+    }
     fn chip(&self, pen: &mut Pen, _o: &CardOptions, text: &str, x: f32, y: f32, fill: Option<Col>, align: Align) -> f32 {
         let w = pen.width(text, 24.0, Face::Hand) + 30.0;
         let x0 = aligned(x, w, align);
@@ -156,7 +160,7 @@ impl Skin for Journal {
             pen.rrect(x0 + 4.0, y + 6.0, w - 8.0, 24.0, 2.0, c.alpha(0.45));
         }
         let col = if fill.is_some() { RED } else { PEN_C };
-        pen.text(text, x0 + 15.0, y + 2.0, 24.0, col, Face::Hand, Align::Left, false);
+        pen.text(text, x0 + 15.0, y + 17.0 - pen.mid(24.0, Face::Hand), 24.0, col, Face::Hand, Align::Left, false);
         scribble_oval(pen, x0 + w / 2.0, y + 17.0, w / 2.0, 19.0, 1.8, col.alpha(0.85));
         w
     }
@@ -174,6 +178,9 @@ impl Skin for Journal {
     fn label(&self, pen: &mut Pen, _o: &CardOptions, text: &str, x: f32, y: f32, size: f32, col: Col, align: Align) -> f32 {
         let t = text.to_lowercase();
         pen.text(&t, x, y - size * 0.15, size * 1.35, col, Face::Hand, align, false)
+    }
+    fn label_mid(&self, pen: &Pen, size: f32) -> f32 {
+        pen.mid(size * 1.35, Face::Hand) - size * 0.15
     }
     fn gauge_h(&self) -> f32 {
         22.0
@@ -212,12 +219,20 @@ impl Skin for Journal {
         };
         let mut x = x0;
         if !left.is_empty() && !sig.is_empty() {
-            x += pen.text(&format!("{}:", left.to_lowercase()), x, cy - 16.0, 22.0, PENCIL, Face::Hand, Align::Left, false) + 10.0;
+            x += pen.text(&format!("{}:", left.to_lowercase()), x, cy - pen.mid(22.0, Face::Hand), 22.0, PENCIL, Face::Hand, Align::Left, false) + 10.0;
         }
+        let bw = pen.width(BRAND, 21.0, Face::Hand);
         if !sig.is_empty() {
-            pen.text(&sig, x, cy - 22.0, 32.0, PEN_C, Face::Hand, Align::Left, false);
+            x += pen.avatar(x, cy, 34.0, PEN_C);
+            // a long name gets smaller rather than running into the app's name
+            let ss = pen.fit_name(&sig, 32.0, Face::Hand, x1 - bw - 60.0 - x);
+            let ty = cy - pen.mid(ss, Face::Hand);
+            let sw = pen.width(&sig, ss, Face::Hand);
+            let off = pen.plate_under_k(x, ty, sw, ss, Face::Hand, 1.5);
+            let ink = if off > 0.0 { WHITE } else { PEN_C };
+            pen.text(&sig, x + off, ty, ss, ink, Face::Hand, Align::Left, false);
         }
-        let bw = pen.text(BRAND, x1, cy - 14.0, 21.0, PENCIL, Face::Hand, Align::Right, false);
+        let bw = pen.text(BRAND, x1, cy - pen.mid(21.0, Face::Hand), 21.0, PENCIL, Face::Hand, Align::Right, false).max(bw);
         if let Some(icon) = icon {
             pen.blit_smooth(icon, x1 - bw - 36.0, cy - 13.0, 26.0, 26.0);
         }

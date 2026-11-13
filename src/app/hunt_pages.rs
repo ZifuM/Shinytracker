@@ -194,6 +194,10 @@ impl App {
         }
     }
 
+    pub(super) fn pass_card_data(&self, info: &RunInfo) -> CardData {
+        self.card_data(info)
+    }
+
     fn card_data(&self, info: &RunInfo) -> CardData {
         let st = info.stats.clone().unwrap_or_default();
         let dex = self.species_of(info.slug.as_deref()).map(|(i, _)| i as u32 + 1);
@@ -224,7 +228,14 @@ impl App {
             phases: if info.phase { Vec::new() } else { self.phases_of(info.run_id).iter().map(|&i| self.cfg.history[i].target.clone()).collect() },
             nickname: self.cfg.card_names.get(&card_key(info)).map(|n| n.0.trim().to_string()).filter(|n| !n.is_empty()),
             gender: self.cfg.card_names.get(&card_key(info)).map(|n| n.1).unwrap_or_default(),
+            avatar: super::avatar::card_avatar(),
+            plate: self.cfg.plate.clone(),
+            frame: self.cfg.frame.clone(),
         }
+    }
+
+    pub(super) fn card_fonts_pub(&mut self) -> &crate::share::AbText {
+        self.card_fonts()
     }
 
     fn card_fonts(&mut self) -> &crate::share::AbText {
@@ -900,23 +911,37 @@ impl App {
         {
             let has_sprite = info.slug.as_ref().is_some_and(|sl| crate::sprites::cached_file(sl, true).is_some());
             let o = self.card_opts();
-            let key = format!("hunt|{:?}|{:?}|{}|{}|{}|{}|{:?}|{}", o.theme, o.layout, info.name, info.count, info.caught, has_sprite, o.nickname, o.trainer);
+            let key = format!("hunt|{:?}|{:?}|{}|{}|{}|{}|{:?}|{}|{}", o.theme, o.layout, info.name, info.count, info.caught, has_sprite, o.nickname, o.trainer, o.show_avatar);
             let ctx = ui.ctx().clone();
-            self.style_thumbs(&ctx, key, |a| (ThumbOf::Hunt(a.card_data(&info)), a.card_opts()));
+            // a battle pass style you no longer have (a copied settings file) falls back
+            if !self.style_owned(self.cfg.card.style) {
+                self.cfg.card.style = crate::card::CardOptions::default().style;
+            }
+            let styles = self.style_choices(true);
+            self.style_thumbs(&ctx, key, &styles, |a| (ThumbOf::Hunt(a.card_data(&info)), a.card_opts()));
+            self.card_style_picker(ui, &styles);
         }
-        self.card_style_picker(ui);
+        // the animated battle pass styles only come as a GIF
+        let live = self.cfg.card.style.live();
+        if live {
+            self.cfg.card.animated = true;
+        }
         kit::section(ui, "Format");
         kit::card(ui, |ui| {
-            ui.horizontal(|ui| {
-                kit::segmented(
-                    ui,
-                    &mut self.cfg.card.animated,
-                    &[(false, "  Picture (PNG)  "), (true, "  ✨ Animated (GIF)  ")],
-                );
+            ui.add_enabled_ui(!live, |ui| {
+                ui.horizontal(|ui| {
+                    kit::segmented(
+                        ui,
+                        &mut self.cfg.card.animated,
+                        &[(false, "  Picture (PNG)  "), (true, "  ✨ Animated (GIF)  ")],
+                    );
+                });
             });
             ui.add_space(4.0);
             ui.label(
-                RichText::new(if self.cfg.card.animated {
+                RichText::new(if live {
+                    "This style is always animated: the whole scene moves. Loops forever. Takes a few seconds to make."
+                } else if self.cfg.card.animated {
                     "Your Pokémon moves and little stars float up. Loops forever. Takes a few seconds to make."
                 } else {
                     "A sharp still picture. Copies straight into Discord."
@@ -1058,6 +1083,8 @@ impl App {
                 kit::checkbox(ui, &mut c.sparkles, "Sparkles");
                 kit::checkbox(ui, &mut c.show_note, "Latest journal note");
                 ui.end_row();
+                kit::checkbox(ui, &mut c.show_avatar, "Profile picture by your name").on_hover_text("Shows next to the trainer name, when you've set a profile picture");
+                ui.end_row();
             });
         });
         if ui.add(egui::Button::new(RichText::new("Reset options").size(kit::fs(11.5)).color(MUTED())).frame(false)).clicked() {
@@ -1096,8 +1123,9 @@ pub(super) enum ThumbOf {
 impl App {
     /// Make sure the thumbnails for `key` are drawn (or being drawn), and
     /// pick up any that have finished.
-    pub(super) fn style_thumbs(&mut self, ctx: &egui::Context, key: String, what: impl FnOnce(&App) -> (ThumbOf, CardOptions)) {
-        use crate::card::CardStyle;
+    pub(super) fn style_thumbs(&mut self, ctx: &egui::Context, key: String, styles: &[crate::card::CardStyle], what: impl FnOnce(&App) -> (ThumbOf, CardOptions)) {
+        let key = format!("{key}|{styles:?}");
+        let styles = styles.to_vec();
         let stale = self.style_thumbs.key.as_deref() != Some(key.as_str());
         let job = stale.then(|| what(self));
         let th = &mut self.style_thumbs;
@@ -1106,14 +1134,14 @@ impl App {
             let ctx2 = ctx.clone();
             th.key = Some(key);
             th.rx = Some(rx);
-            if th.tex.len() != CardStyle::ALL.len() {
-                th.tex = vec![None; CardStyle::ALL.len()];
+            if th.tex.len() != styles.len() {
+                th.tex = vec![None; styles.len()];
             }
             std::thread::Builder::new()
                 .name("style-thumbs".into())
                 .spawn(move || {
                     let fonts = crate::share::AbText::load();
-                    for (i, style) in CardStyle::ALL.into_iter().enumerate() {
+                    for (i, style) in styles.into_iter().enumerate() {
                         let o = CardOptions { style, res: 480, animated: false, ..opts.clone() };
                         let c = match &data {
                             ThumbOf::Hunt(d) => crate::card::render(d, &o, &fonts),
@@ -1141,25 +1169,40 @@ impl App {
         }
     }
 
+    /// The share image styles you can pick: the usual ones, then the battle pass
+    /// ones you've claimed (the animated ones only where a GIF can be made).
+    pub(super) fn style_choices(&self, animated_ok: bool) -> Vec<crate::card::CardStyle> {
+        use crate::card::CardStyle;
+        let mut v = CardStyle::ALL.to_vec();
+        v.extend(CardStyle::PASS.into_iter().filter(|s| (animated_ok || !s.live()) && self.style_owned(*s)));
+        v
+    }
+
     /// The style picker with the thumbnails.
-    pub(super) fn card_style_picker(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn card_style_picker(&mut self, ui: &mut egui::Ui, styles: &[crate::card::CardStyle]) {
         let thumbs = self.style_thumbs.tex.clone();
-        card_style_picker(ui, &mut self.cfg.card.style, &thumbs);
+        card_style_picker(ui, &mut self.cfg.card.style, &thumbs, styles);
     }
 }
 
 /// Every share-image look as a tile with a picture of it.
-pub(super) fn card_style_picker(ui: &mut egui::Ui, style: &mut crate::card::CardStyle, thumbs: &[Option<egui::TextureHandle>]) {
-    use crate::card::CardStyle;
+pub(super) fn card_style_picker(ui: &mut egui::Ui, style: &mut crate::card::CardStyle, thumbs: &[Option<egui::TextureHandle>], styles: &[crate::card::CardStyle]) {
     let avail = ui.available_width();
     let gap = 10.0;
     let per = ((avail + gap) / 200.0).floor().clamp(2.0, 5.0) as usize;
     let w = ((avail - gap * (per as f32 - 1.0)) / per as f32).floor();
-    for (r, row) in CardStyle::ALL.chunks(per).enumerate() {
+    // two rows a page; more looks (claimed battle pass ones) go on more pages
+    let page_size = per * 2;
+    let pages = styles.len().div_ceil(page_size).max(1);
+    let id = ui.id().with("style-page");
+    let mut page = ui.data(|d| d.get_temp::<usize>(id)).unwrap_or_else(|| styles.iter().position(|s| s == style).unwrap_or(0) / page_size);
+    page = page.min(pages - 1);
+    let first = page * page_size;
+    for (r, row) in styles[first..(first + page_size).min(styles.len())].chunks(per).enumerate() {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = gap;
             for (k, &v) in row.iter().enumerate() {
-                let tex = thumbs.get(r * per + k).and_then(|t| t.as_ref());
+                let tex = thumbs.get(first + r * per + k).and_then(|t| t.as_ref());
                 if style_tile(ui, v, *style == v, w, tex).clicked() {
                     *style = v;
                 }
@@ -1167,6 +1210,32 @@ pub(super) fn card_style_picker(ui: &mut egui::Ui, style: &mut crate::card::Card
         });
         ui.add_space(gap);
     }
+    if pages > 1 {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            if ui.add_enabled(page > 0, egui::Button::new("‹").min_size(egui::vec2(30.0, 28.0))).clicked() {
+                page -= 1;
+            }
+            for n in 0..pages {
+                let on = n == page;
+                // the page with the look in use gets a dot
+                let has = styles.iter().skip(n * page_size).take(page_size).any(|s| s == style);
+                let label = if has && !on { format!("{} •", n + 1) } else { format!("{}", n + 1) };
+                let b = egui::Button::new(RichText::new(label).size(kit::fs(12.0)).color(if on { kit::on_primary() } else { kit::TEXT() }))
+                    .fill(if on { kit::primary() } else { kit::btn_fill() })
+                    .min_size(egui::vec2(34.0, 28.0));
+                if ui.add(b).clicked() {
+                    page = n;
+                }
+            }
+            if ui.add_enabled(page + 1 < pages, egui::Button::new("›").min_size(egui::vec2(30.0, 28.0))).clicked() {
+                page += 1;
+            }
+            ui.label(RichText::new(format!("{} looks", styles.len())).size(kit::fs(11.0)).color(MUTED()));
+        });
+        ui.add_space(gap);
+    }
+    ui.data_mut(|d| d.insert_temp(id, page));
 }
 
 /// A clickable tile: a picture of the share image in this style, its name

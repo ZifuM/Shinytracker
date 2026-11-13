@@ -106,6 +106,11 @@ impl Skin for Retro {
             pen.text("NORMAL", x + 56.0, y + 106.0, 10.0, SOFT, Face::Pixel, Align::Center, false);
         }
     }
+    fn chip_w(&self, pen: &Pen, text: &str) -> f32 {
+        let t = text.to_uppercase();
+        let w = pen.width(&t, 13.0, Face::Pixel) + 28.0;
+        w
+    }
     fn chip(&self, pen: &mut Pen, _o: &CardOptions, text: &str, x: f32, y: f32, fill: Option<Col>, align: Align) -> f32 {
         let t = text.to_uppercase();
         let w = pen.width(&t, 13.0, Face::Pixel) + 28.0;
@@ -114,7 +119,7 @@ impl Skin for Retro {
         pen.rrect(x0, y, w, 34.0, 6.0, INK);
         pen.rrect(x0 + 3.0, y + 3.0, w - 6.0, 28.0, 4.0, c);
         pen.rrect(x0 + 6.0, y + 5.0, w - 12.0, 3.0, 1.5, WHITE.alpha(0.35));
-        pen.text(&t, x0 + 14.0, y + 11.0, 13.0, WHITE, Face::Pixel, Align::Left, false);
+        pen.text(&t, x0 + 14.0, y + 17.0 - pen.mid(13.0, Face::Pixel), 13.0, WHITE, Face::Pixel, Align::Left, false);
         w
     }
     fn title(&self, pen: &mut Pen, _o: &CardOptions, text: &str, x: f32, y: f32, size: f32, align: Align) {
@@ -134,6 +139,9 @@ impl Skin for Retro {
     }
     fn label(&self, pen: &mut Pen, _o: &CardOptions, text: &str, x: f32, y: f32, size: f32, col: Col, align: Align) -> f32 {
         pen.text(&text.to_uppercase(), x, y, size * 0.8, col, Face::Pixel, align, false)
+    }
+    fn label_mid(&self, pen: &Pen, size: f32) -> f32 {
+        pen.mid(size * 0.8, Face::Pixel)
     }
     fn gauge_h(&self) -> f32 {
         22.0
@@ -164,15 +172,26 @@ impl Skin for Retro {
         let cy = y + h / 2.0 - 2.0;
         let mut x = x0 + 24.0;
         if !left.is_empty() {
-            x += pen.text(&left.to_uppercase(), x, cy - 6.0, 12.0, SOFT, Face::Pixel, Align::Left, false) + 14.0;
+            x += pen.text(&left.to_uppercase(), x, cy - pen.mid(12.0, Face::Pixel), 12.0, SOFT, Face::Pixel, Align::Left, false) + 14.0;
         }
         if !name.is_empty() {
-            x += pen.text(&name.to_uppercase(), x, cy - 8.0, 15.0, INK, Face::Pixel, Align::Left, false) + 14.0;
+            x += pen.avatar(x, cy, 26.0, INK);
+            // what has to fit after the name: the level, the app's name and icon
+            let lvw = level.map_or(0.0, |lv| pen.width(&format!("Lv{lv}"), 12.0, Face::Pixel) + 14.0);
+            let room = x1 - 54.0 - pen.width(&BRAND.to_uppercase(), 10.0, Face::Pixel) - 34.0 - 24.0 - lvw - x;
+            let ns = pen.fit_name(&name.to_uppercase(), 15.0, Face::Pixel, room);
+            let ty = cy - pen.mid(ns, Face::Pixel);
+            let pw = pen.width(&name.to_uppercase(), ns, Face::Pixel);
+            let off = pen.plate_under(x, ty, pw, ns, Face::Pixel);
+            x += off;
+            let ink = pen.plate_ink().unwrap_or(INK);
+            x += pen.text(&name.to_uppercase(), x, ty, ns, ink, Face::Pixel, Align::Left, false) + 14.0;
+            x += off;
         }
         if let Some(lv) = level {
-            pen.text(&format!("Lv{lv}"), x, cy - 6.0, 12.0, self.accent(o), Face::Pixel, Align::Left, false);
+            pen.text(&format!("Lv{lv}"), x, cy - pen.mid(12.0, Face::Pixel), 12.0, self.accent(o), Face::Pixel, Align::Left, false);
         }
-        let bw = pen.text(&BRAND.to_uppercase(), x1 - 54.0, cy - 5.0, 10.0, SOFT, Face::Pixel, Align::Right, false);
+        let bw = pen.text(&BRAND.to_uppercase(), x1 - 54.0, cy - pen.mid(10.0, Face::Pixel), 10.0, SOFT, Face::Pixel, Align::Right, false);
         if let Some(icon) = icon {
             pen.blit_smooth(icon, x1 - 54.0 - bw - 34.0, cy - 12.0, 24.0, 24.0);
         }

@@ -229,12 +229,12 @@ impl App {
             ui.label(small("Loading the game's data…"));
             return;
         };
-        let (nb, nl) = (self.setup.breed.file().breeders.len(), self.setup.breed.file().log.len());
+        let nl = self.setup.breed.file().log.len();
         let tabs = [
             (BreedView::Plan, "Plan".to_string()),
+            (BreedView::Breeders, "Breeders".to_string()),
             (BreedView::DayCare, "Day Care".to_string()),
             (BreedView::Moves, "Egg moves".to_string()),
-            (BreedView::Breeders, if nb > 0 { format!("Breeders  {nb}") } else { "Breeders".into() }),
             (BreedView::Log, if nl > 0 { format!("Hatch log  {nl}") } else { "Hatch log".into() }),
         ];
         let tabs_ref: Vec<(BreedView, &str)> = tabs.iter().map(|(v, l)| (*v, l.as_str())).collect();
@@ -513,7 +513,7 @@ impl App {
                 }
                 let cur = opts.iter().find(|o| o.0 == p.ability).map(|o| o.1.clone()).unwrap_or_default();
                 row(ui, "Ability", &mut |ui| {
-                    egui::ComboBox::from_id_salt(("breed-ability", i)).selected_text(&cur).width(cw).show_ui(ui, |ui| {
+                    kit::Dropdown::from_id_salt(("breed-ability", i)).selected_text(&cur).width(cw).show_ui(ui, |ui| {
                         for (slot, l) in &opts {
                             if ui.selectable_label(p.ability == *slot, l).clicked() {
                                 p.ability = *slot;
@@ -534,7 +534,7 @@ impl App {
             }
             let cur = held_label(&p.held);
             row(ui, "Holds", &mut |ui| {
-                egui::ComboBox::from_id_salt(("breed-held", i)).selected_text(&cur).width(cw).height(320.0).show_ui(ui, |ui| {
+                kit::Dropdown::from_id_salt(("breed-held", i)).selected_text(&cur).width(cw).height(320.0).show_ui(ui, |ui| {
                     for h in &items {
                         if ui.selectable_label(p.held == *h, held_label(h)).clicked() {
                             p.held = h.clone();
@@ -817,7 +817,7 @@ impl App {
                     let mut opts = vec!["Any".to_string()];
                     opts.extend(e.abilities.iter().map(|(n, _, _)| n.clone()));
                     let cur = g.ability.clone().unwrap_or_else(|| "Any".into());
-                    egui::ComboBox::from_id_salt("breed-goal-ability").selected_text(&cur).width(140.0).show_ui(ui, |ui| {
+                    kit::Dropdown::from_id_salt("breed-goal-ability").selected_text(&cur).width(140.0).show_ui(ui, |ui| {
                         for o in &opts {
                             if ui.selectable_label(*o == cur, o).clicked() {
                                 g.ability = if o == "Any" { None } else { Some(o.clone()) };

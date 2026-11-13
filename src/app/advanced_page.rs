@@ -12,7 +12,7 @@ use eframe::egui::{self, pos2, vec2, Color32, Rect, RichText, Sense, Stroke};
 
 /// How many daily copies to keep.
 /// How many automatic copies are kept; the newest replaces the oldest.
-pub(crate) const AUTO_KEEP: usize = 5;
+pub(crate) const AUTO_KEEP: usize = 20;
 /// How often a copy is made while the app is open (only if something changed).
 const AUTO_EVERY: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 
@@ -20,8 +20,20 @@ impl App {
     /// Automatic copies: one when the app opens and one an hour while it's
     /// open, only when something changed, never of an empty save. The last
     /// `AUTO_KEEP` are kept: the newest replaces the oldest.
+    ///
+    /// Also a copy the moment the hunt pauses: paused by hand (button, hotkey,
+    /// overlay), by the timer after no encounters for a while, or because the
+    /// game closed. Nothing is lost past the last pause.
     pub(super) fn auto_backup_tick(&mut self) {
         if !self.cfg.auto_backup {
+            return;
+        }
+        let paused = self.cfg.paused || self.game_closed() || (self.cfg.idle_pause && self.timer_idle());
+        let just_paused = paused && !self.setup.was_paused;
+        self.setup.was_paused = paused;
+        if just_paused {
+            self.setup.auto_backup_at = Some(std::time::Instant::now());
+            let _ = write_auto_backup(&self.cfg);
             return;
         }
         if self.setup.auto_backup_at.is_some_and(|t| t.elapsed() < AUTO_EVERY) {
@@ -375,7 +387,7 @@ impl App {
             kit::toggle_row(
                 ui,
                 "Automatic copies",
-                "A copy of everything when the Companion opens and every hour while it's open, only when something changed. The 5 newest are kept: each new copy replaces the oldest. An empty save is never copied, so it can't push out your good ones. They stay on this PC.",
+                "A copy of everything when the Companion opens, every hour while it's open and the moment a hunt pauses (by hand, by the idle timer or when the game closes), only when something changed. The 20 newest are kept: each new copy replaces the oldest. An empty save is never copied, so it can't push out your good ones. They stay on this PC.",
                 &mut self.cfg.auto_backup,
             );
             if self.cfg.auto_backup {

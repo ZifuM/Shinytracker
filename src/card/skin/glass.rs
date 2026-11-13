@@ -60,6 +60,11 @@ impl Skin for Glass {
         }
         tracked(pen, "SHINY", x + w - 28.0, y + 26.0, 13.0, a, Face::Bold, Align::Right, 3.0);
     }
+    fn chip_w(&self, pen: &Pen, text: &str) -> f32 {
+        let t = text.to_uppercase();
+        let w = tracked_w(pen, &t, 14.0, Face::Bold, 2.5) + 32.0;
+        w
+    }
     fn chip(&self, pen: &mut Pen, _o: &CardOptions, text: &str, x: f32, y: f32, fill: Option<Col>, align: Align) -> f32 {
         let t = text.to_uppercase();
         let w = tracked_w(pen, &t, 14.0, Face::Bold, 2.5) + 32.0;
@@ -67,11 +72,14 @@ impl Skin for Glass {
         let c = fill.unwrap_or(WHITE);
         pen.rrect(x0, y, w, 34.0, 17.0, c.alpha(0.18));
         pen.rrect_stroke(x0, y, w, 34.0, 17.0, 1.5, c.alpha(0.6));
-        tracked(pen, &t, x0 + 16.0, y + 9.0, 14.0, WHITE, Face::Bold, Align::Left, 2.5);
+        tracked(pen, &t, x0 + 16.0, y + 17.0 - pen.mid(14.0, Face::Bold), 14.0, WHITE, Face::Bold, Align::Left, 2.5);
         w
     }
     fn label(&self, pen: &mut Pen, _o: &CardOptions, text: &str, x: f32, y: f32, size: f32, col: Col, align: Align) -> f32 {
         tracked(pen, &text.to_uppercase(), x, y, size, col, Face::Bold, align, size * 0.16)
+    }
+    fn label_mid(&self, pen: &Pen, size: f32) -> f32 {
+        pen.mid(size, Face::Bold)
     }
     fn number(&self, pen: &mut Pen, _o: &CardOptions, text: &str, x: f32, y: f32, size: f32, align: Align) {
         glow_text(pen, text, x, y - size * 0.06, size, WHITE, WHITE.alpha(0.5), Face::Light, align);
@@ -116,15 +124,21 @@ impl Skin for Glass {
         pen.line(x0, y + 4.0, x1, y + 4.0, 1.0, WHITE.alpha(0.18));
         let mut x = x0;
         if !left.is_empty() {
-            x += self.label(pen, o, left, x, cy - 6.0, 12.0, SOFT, Align::Left) + 14.0;
+            x += self.label(pen, o, left, x, cy - self.label_mid(pen, 12.0), 12.0, SOFT, Align::Left) + 14.0;
         }
         if !name.is_empty() {
-            x += pen.text(name, x, cy - 12.0, 21.0, WHITE, Face::Body, Align::Left, false) + 14.0;
+            x += pen.avatar(x, cy, 32.0, WHITE);
+            let pw = pen.width(name, 21.0, Face::Body);
+            let ny = cy - pen.mid(21.0, Face::Body);
+            let off = pen.plate_under(x, ny, pw, 21.0, Face::Body);
+            x += off;
+            x += pen.text(name, x, ny, 21.0, WHITE, Face::Body, Align::Left, false) + 14.0;
+            x += off;
         }
         if let Some(lv) = level {
-            self.chip(pen, o, &format!("LV {lv}"), x, cy - 15.0, Some(self.accent(o)), Align::Left);
+            self.chip(pen, o, &format!("LV {lv}"), x, cy - 17.0, Some(self.accent(o)), Align::Left);
         }
-        let bw = self.label(pen, o, BRAND, x1, cy - 6.0, 12.0, SOFT, Align::Right);
+        let bw = self.label(pen, o, BRAND, x1, cy - self.label_mid(pen, 12.0), 12.0, SOFT, Align::Right);
         if let Some(icon) = icon {
             pen.blit_smooth(icon, x1 - bw - 38.0, cy - 14.0, 28.0, 28.0);
         }

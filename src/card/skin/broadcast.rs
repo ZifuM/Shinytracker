@@ -105,6 +105,11 @@ impl Skin for Broadcast {
         pen.circle(x + w - 104.0, y + 33.0, 6.0, if on { WHITE } else { WHITE.alpha(0.3) });
         pen.text("LIVE", x + w - 92.0, y + 19.0, 22.0, WHITE, Face::Impact, Align::Left, false);
     }
+    fn chip_w(&self, pen: &Pen, text: &str) -> f32 {
+        let t = text.to_uppercase();
+        let w = pen.width(&t, 20.0, Face::Impact) + 40.0;
+        w
+    }
     fn chip(&self, pen: &mut Pen, o: &CardOptions, text: &str, x: f32, y: f32, fill: Option<Col>, align: Align) -> f32 {
         let t = text.to_uppercase();
         let w = pen.width(&t, 20.0, Face::Impact) + 40.0;
@@ -113,7 +118,7 @@ impl Skin for Broadcast {
         slant(pen, x0, y, w, 34.0, 10.0, c);
         let ink = if fill.is_none() || c == GOOD { DARK } else { WHITE };
         let _ = o;
-        pen.text(&t, x0 + w / 2.0, y + 4.0, 20.0, ink, Face::Impact, Align::Center, false);
+        pen.text(&t, x0 + w / 2.0, y + 17.0 - pen.mid(20.0, Face::Impact), 20.0, ink, Face::Impact, Align::Center, false);
         w
     }
     fn title(&self, pen: &mut Pen, o: &CardOptions, text: &str, x: f32, y: f32, size: f32, align: Align) {
@@ -160,7 +165,9 @@ impl Skin for Broadcast {
         let tag_w = 150.0;
         slant(pen, sx0, y, tag_w + 20.0, h, 0.0, self.accent(o));
         pen.poly(&[(sx0 + tag_w, y), (sx0 + tag_w + 24.0, y), (sx0 + tag_w, y + h)], self.accent(o));
-        pen.text(&if left.is_empty() { "INFO".to_string() } else { left.to_uppercase() }, sx0 + tag_w / 2.0 + 8.0, y + h / 2.0 - 14.0, 24.0, WHITE, Face::Impact, Align::Center, false);
+        let cy = y + h / 2.0;
+        let ty = cy - pen.mid(24.0, Face::Impact);
+        pen.text(&if left.is_empty() { "INFO".to_string() } else { left.to_uppercase() }, sx0 + tag_w / 2.0 + 8.0, ty, 24.0, WHITE, Face::Impact, Align::Center, false);
         let mut text = String::new();
         if !name.is_empty() {
             text.push_str(&name.to_uppercase());
@@ -168,9 +175,23 @@ impl Skin for Broadcast {
         if let Some(lv) = level {
             text.push_str(&format!("  ·  LV {lv}"));
         }
-        let x = sx0 + tag_w + 44.0;
-        pen.text(&text, x, y + h / 2.0 - 14.0, 24.0, DARK, Face::Impact, Align::Left, false);
-        let bw = pen.text(&BRAND.to_uppercase(), x1, y + h / 2.0 - 11.0, 19.0, DARK.alpha(0.7), Face::Impact, Align::Right, false);
+        let mut x = sx0 + tag_w + 44.0;
+        if !name.is_empty() {
+            x += pen.avatar(x, y + h / 2.0, 34.0, DARK);
+        }
+        if !name.is_empty() && !pen.plate.is_empty() {
+            // the name on its battle pass plate, the level after it
+            let n = name.to_uppercase();
+            let nw = pen.width(&n, 24.0, Face::Impact);
+            let off = pen.plate_under(x, ty, nw, 24.0, Face::Impact);
+            pen.text(&n, x + off, ty, 24.0, WHITE, Face::Impact, Align::Left, false);
+            if let Some(lv) = level {
+                pen.text(&format!("LV {lv}"), x + nw + off * 2.0 + 14.0, ty, 24.0, DARK, Face::Impact, Align::Left, false);
+            }
+        } else {
+            pen.text(&text, x, ty, 24.0, DARK, Face::Impact, Align::Left, false);
+        }
+        let bw = pen.text(&BRAND.to_uppercase(), x1, cy - pen.mid(19.0, Face::Impact), 19.0, DARK.alpha(0.7), Face::Impact, Align::Right, false);
         if let Some(icon) = icon {
             pen.blit_smooth(icon, x1 - bw - 38.0, y + h / 2.0 - 14.0, 28.0, 28.0);
         }

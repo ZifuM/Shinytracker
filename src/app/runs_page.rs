@@ -135,7 +135,7 @@ impl App {
         let mut tools = |ui: &mut egui::Ui, search_w: f32| {
             let start = ui.cursor().min.x;
             kit::search_box(ui, &mut query, "Search runs", search_w);
-            egui::ComboBox::from_id_salt("runs-sort")
+            kit::Dropdown::from_id_salt("runs-sort")
                 .selected_text(SORTS[sort as usize])
                 .width(170.0)
                 .show_ui(ui, |ui| {

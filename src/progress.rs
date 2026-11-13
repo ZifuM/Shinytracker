@@ -654,20 +654,153 @@ pub fn level_progress(xp: u64) -> (u64, u64) {
     (xp - xp_for(l), xp_for(l + 1) - xp_for(l))
 }
 
+/// The titles that come with levels: (from level, title).
+pub const LEVEL_TITLES: &[(u32, &str)] = &[
+    (1, "Rookie Trainer"),
+    (5, "Shiny Seeker"),
+    (10, "Sparkle Scout"),
+    (15, "Shiny Spotter"),
+    (20, "Shiny Hunter"),
+    (30, "Veteran Hunter"),
+    (40, "Shiny Expert"),
+    (50, "Shiny Master"),
+    (65, "Shiny Ace"),
+    (80, "Shiny Legend"),
+    (100, "Shiny Champion"),
+];
+
+/// The level's own title.
 pub fn title(level: u32) -> &'static str {
-    match level {
-        0..=4 => "Rookie Trainer",
-        5..=9 => "Shiny Seeker",
-        10..=14 => "Sparkle Scout",
-        15..=19 => "Shiny Spotter",
-        20..=29 => "Shiny Hunter",
-        30..=39 => "Veteran Hunter",
-        40..=49 => "Shiny Expert",
-        50..=64 => "Shiny Master",
-        65..=79 => "Shiny Ace",
-        80..=99 => "Shiny Legend",
-        _ => "Shiny Champion",
+    LEVEL_TITLES.iter().rev().find(|(l, _)| level >= *l).map(|(_, t)| *t).unwrap_or(LEVEL_TITLES[0].1)
+}
+
+/// Titles you can wear, each earned with an achievement: (achievement id, title).
+pub const ACH_TITLES: &[(&str, &str)] = &[
+    ("enc_1k", "Wild Wanderer"),
+    ("enc_5k", "Tall-Grass Regular"),
+    ("enc_10k", "Grass Trampler"),
+    ("enc_25k", "Route Runner"),
+    ("enc_50k", "Encounter Engine"),
+    ("enc_100k", "Six-Figure Hunter"),
+    ("enc_500k", "Half-Million Hero"),
+    ("enc_1m", "The Millionaire"),
+    ("battles_500", "Scrapper"),
+    ("battles_1k", "Brawler"),
+    ("battles_5k", "Battle-Scarred"),
+    ("battles_10k", "War Veteran"),
+    ("battles_100k", "Undying Spirit"),
+    ("time_1", "Clock Watcher"),
+    ("time_10", "Part-Timer"),
+    ("time_24", "Day-Long Hunter"),
+    ("time_50", "Overtimer"),
+    ("time_100", "Centurion"),
+    ("time_250", "Shiny Lifer"),
+    ("time_500", "Timeless Hunter"),
+    ("time_1000", "Keeper of Hours"),
+    ("days_30", "Monthly Regular"),
+    ("days_100", "Hundred-Day Hunter"),
+    ("days_365", "Year-Round Hunter"),
+    ("shiny_1", "First Sparkle"),
+    ("shiny_3", "Hat-Trick Hero"),
+    ("shiny_5", "Shiny Collector"),
+    ("shiny_10", "Glitter Gatherer"),
+    ("shiny_20", "Glimmer Chaser"),
+    ("shiny_25", "Dazzler"),
+    ("shiny_50", "Shiny Hoarder"),
+    ("shiny_100", "Shine Centurion"),
+    ("dex_25", "Dex Builder"),
+    ("dex_50", "Dex Devotee"),
+    ("dex_100", "Living Dex Legend"),
+    ("dex_200", "Shiny Archivist"),
+    ("region_kanto", "Kanto Curator"),
+    ("region_johto", "Johto Curator"),
+    ("region_hoenn", "Hoenn Curator"),
+    ("region_sinnoh", "Sinnoh Curator"),
+    ("region_modern", "Modern Curator"),
+    ("phase_1", "Happy Accident"),
+    ("phase_5", "Phase Master"),
+    ("rare_1", "Rare Finder"),
+    ("rare_5", "Greenskeeper"),
+    ("rare_10", "Rare Grass Royalty"),
+    ("egg_shiny", "Egg Whisperer"),
+    ("reset_shiny", "Reset Royalty"),
+    ("radar_shiny", "Radar Ace"),
+    ("luck_half", "Ahead of Schedule"),
+    ("luck_tenth", "Fortune's Favourite"),
+    ("luck_twentieth", "Blink Catcher"),
+    ("luck_100", "Living Miracle"),
+    ("odds_1", "Odds Reacher"),
+    ("odds_3", "Triple Threat"),
+    ("odds_5", "High Fiver"),
+    ("odds_10", "Odds Defier"),
+    ("persist_3", "Never Gives Up"),
+    ("persist_5", "The Unshakeable"),
+    ("persist_10", "Against All Odds"),
+    ("quick_100", "Speedrunner"),
+    ("quick_10", "First-Try Legend"),
+    ("long_20k", "Saga Survivor"),
+    ("day_5k", "Day Destroyer"),
+    ("day_10k", "Legendary Grinder"),
+    ("day_15k", "The Impossible"),
+    ("session_500", "Marathoner"),
+    ("session_5k", "Iron Will"),
+    ("session_10k", "No Breaks Needed"),
+    ("streak_7", "Weekly Ritualist"),
+    ("streak_30", "The Devoted"),
+    ("streak_100", "Streak Keeper"),
+    ("streak_365", "Every Single Day"),
+    ("rate_500", "Lightning Hunter"),
+    ("rate_700", "Hyperspeed"),
+    ("rate_800", "Faster Than Light"),
+    ("targets_25", "Collector's Eye"),
+    ("targets_50", "Completionist"),
+    ("targets_100", "Pokédex Tourist"),
+    ("goal_1", "Goal Getter"),
+    ("goal_100", "Goal Machine"),
+    ("weekly_1", "Challenger"),
+    ("weekly_50", "Challenge Legend"),
+    ("ach_25", "Decorated"),
+    ("ach_50", "Trophy Hunter"),
+    ("ach_100", "Hall of Famer"),
+    ("ach_150", "Overachiever"),
+    ("night_owl", "Night Owl"),
+    ("early_bird", "Early Bird"),
+    ("show_off", "Show-Off"),
+    ("stylish", "Fashionista"),
+    ("comeback", "Comeback Kid"),
+    ("gif_maker", "Animator"),
+    ("caught_it", "Gotcha!"),
+    ("touch_grass", "Grass Toucher"),
+    ("weekend_warrior", "Weekend Warrior"),
+    ("researcher", "Researcher"),
+    ("trendsetter", "Trendsetter"),
+    ("double_vision", "Double Visionary"),
+    ("accountant", "Number Cruncher"),
+];
+
+/// Every title earned so far, for the picker: (title, how it was earned).
+/// Level titles first (lowest first), then those from achievements.
+pub fn earned_titles(level: u32, unlocked: &[String], pass: &[&'static str]) -> Vec<(&'static str, String)> {
+    let mut out: Vec<(&'static str, String)> = LEVEL_TITLES.iter().filter(|(l, _)| level >= *l).map(|(l, t)| (*t, format!("Level {l}"))).collect();
+    for (id, t) in ACH_TITLES {
+        if unlocked.iter().any(|u| u == id) {
+            let how = find(id).map(|a| a.name.to_string()).unwrap_or_default();
+            out.push((*t, how));
+        }
     }
+    for t in pass {
+        out.push((*t, "Battle pass".to_string()));
+    }
+    out
+}
+
+/// The title to show: the chosen one while it's still earned, else the
+/// level's own.
+pub fn shown_title(chosen: &str, level: u32, unlocked: &[String], pass: &[&'static str]) -> String {
+    if !chosen.is_empty() && earned_titles(level, unlocked, pass).iter().any(|(t, _)| *t == chosen) {
+        return chosen.to_string();
+    }
+    title(level).to_string()
 }
 
 /// Badge metal for a level: (name, main colour, light colour).
@@ -695,6 +828,26 @@ pub fn longest_streak(days: &BTreeSet<i64>) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn titles() {
+        use super::*;
+        assert_eq!(ACH_TITLES.len(), 100);
+        let mut seen = std::collections::BTreeSet::new();
+        for (id, t) in ACH_TITLES {
+            assert!(find(id).is_some(), "{id}");
+            assert!(seen.insert(*t), "{t}");
+        }
+        for (_, t) in LEVEL_TITLES {
+            assert!(seen.insert(*t), "{t}");
+        }
+        assert_eq!(title(1), "Rookie Trainer");
+        assert_eq!(title(26), "Shiny Hunter");
+        assert_eq!(title(100), "Shiny Champion");
+        let un = vec!["shiny_1".to_string()];
+        assert_eq!(shown_title("First Sparkle", 3, &un, &[]), "First Sparkle");
+        assert_eq!(shown_title("Dazzler", 3, &un, &[]), "Rookie Trainer");
+        assert_eq!(shown_title("Shiny Hunter", 3, &un, &[]), "Rookie Trainer");
+    }
     use super::*;
 
     #[test]

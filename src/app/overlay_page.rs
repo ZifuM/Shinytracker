@@ -219,7 +219,7 @@ impl App {
                         self.cfg.mini = false;
                         self.play(crate::sound::Sfx::Milestone);
                     }
-                    ui.menu_button("💬  Try a pop-up", |ui| {
+                    kit::menu(ui, "💬  Try a pop-up", |ui| {
                         ui.set_min_width(200.0);
                         ui.label(RichText::new("Toasts").size(11.5).color(MUTED()));
                         for (i, name) in ["🏅 Achievement", "⬆ Level up", "✔ Daily goal", "📅 Weekly challenge", "⭐ Milestone", "👋 Welcome"].into_iter().enumerate() {

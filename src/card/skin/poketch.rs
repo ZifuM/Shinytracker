@@ -148,12 +148,17 @@ impl Skin for Poketch {
         pen.rrect(x + 14.0, y + 14.0, 96.0, 26.0, 0.0, INK);
         pen.text("SHINY", x + 62.0, y + 21.0, 12.0, LCD, Face::Pixel, Align::Center, false);
     }
+    fn chip_w(&self, pen: &Pen, text: &str) -> f32 {
+        let t = text.to_uppercase();
+        let w = pen.width(&t, 13.0, Face::Pixel) + 26.0;
+        w
+    }
     fn chip(&self, pen: &mut Pen, _o: &CardOptions, text: &str, x: f32, y: f32, _fill: Option<Col>, align: Align) -> f32 {
         let t = text.to_uppercase();
         let w = pen.width(&t, 13.0, Face::Pixel) + 26.0;
         let x0 = aligned(x, w, align);
         pen.rrect(x0, y, w, 34.0, 0.0, INK);
-        pen.text(&t, x0 + 13.0, y + 11.0, 13.0, LCD, Face::Pixel, Align::Left, false);
+        pen.text(&t, x0 + 13.0, y + 17.0 - pen.mid(13.0, Face::Pixel), 13.0, LCD, Face::Pixel, Align::Left, false);
         w
     }
     fn title(&self, pen: &mut Pen, _o: &CardOptions, text: &str, x: f32, y: f32, size: f32, align: Align) {
@@ -207,15 +212,25 @@ impl Skin for Poketch {
         let cy = y + h / 2.0;
         let mut x = x0 + 18.0;
         if !left.is_empty() {
-            x += pen.text(&left.to_uppercase(), x, cy - 6.0, 11.0, LCD.mix(INK, 0.35), Face::Pixel, Align::Left, false) + 14.0;
+            x += pen.text(&left.to_uppercase(), x, cy - pen.mid(11.0, Face::Pixel), 11.0, LCD.mix(INK, 0.35), Face::Pixel, Align::Left, false) + 14.0;
         }
         if !name.is_empty() {
-            x += pen.text(&name.to_uppercase(), x, cy - 8.0, 15.0, LCD, Face::Pixel, Align::Left, false) + 14.0;
+            x += pen.avatar(x, cy, 26.0, LCD);
+            // what has to fit after the name: the level, the app's name and icon
+            let lvw = level.map_or(0.0, |lv| pen.width(&format!("LV{lv}"), 12.0, Face::Pixel) + 14.0);
+            let room = x1 - 18.0 - pen.width(&BRAND.to_uppercase(), 10.0, Face::Pixel) - 32.0 - 24.0 - lvw - x;
+            let ns = pen.fit_name(&name.to_uppercase(), 15.0, Face::Pixel, room);
+            let ty = cy - pen.mid(ns, Face::Pixel);
+            let pw = pen.width(&name.to_uppercase(), ns, Face::Pixel);
+            let off = pen.plate_under(x, ty, pw, ns, Face::Pixel);
+            x += off;
+            x += pen.text(&name.to_uppercase(), x, ty, ns, LCD, Face::Pixel, Align::Left, false) + 14.0;
+            x += off;
         }
         if let Some(lv) = level {
-            pen.text(&format!("LV{lv}"), x, cy - 6.0, 12.0, LCD_HI, Face::Pixel, Align::Left, false);
+            pen.text(&format!("LV{lv}"), x, cy - pen.mid(12.0, Face::Pixel), 12.0, LCD_HI, Face::Pixel, Align::Left, false);
         }
-        let bw = pen.text(&BRAND.to_uppercase(), x1 - 18.0, cy - 5.0, 10.0, LCD.mix(INK, 0.25), Face::Pixel, Align::Right, false);
+        let bw = pen.text(&BRAND.to_uppercase(), x1 - 18.0, cy - pen.mid(10.0, Face::Pixel), 10.0, LCD.mix(INK, 0.25), Face::Pixel, Align::Right, false);
         if let Some(icon) = icon {
             pen.blit_smooth(icon, x1 - 18.0 - bw - 32.0, cy - 12.0, 24.0, 24.0);
         }

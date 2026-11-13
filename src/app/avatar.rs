@@ -34,6 +34,40 @@ fn source_file() -> PathBuf {
     crate::config::data_dir().join(SOURCE)
 }
 
+/// The saved picture made round, for the share images (None without one).
+/// Kept until the file changes.
+pub fn card_avatar() -> Option<crate::canvas::Img> {
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<(Option<std::time::SystemTime>, Option<crate::canvas::Img>)>> = Mutex::new(None);
+    let path = file();
+    let stamp = std::fs::metadata(&path).ok().and_then(|m| m.modified().ok());
+    let mut c = CACHE.lock().ok()?;
+    if let Some((s, img)) = c.as_ref() {
+        if *s == stamp {
+            return img.clone();
+        }
+    }
+    let img = stamp.and_then(|_| std::fs::read(&path).ok()).and_then(|b| image::load_from_memory(&b).ok()).map(|i| {
+        let i = i.to_rgba8();
+        let side = i.width().min(i.height()).min(512);
+        let i = image::imageops::resize(&image::imageops::crop_imm(&i, (i.width() - i.width().min(i.height())) / 2, (i.height() - i.width().min(i.height())) / 2, i.width().min(i.height()), i.width().min(i.height())).to_image(), side, side, image::imageops::FilterType::Triangle);
+        let mut px = i.into_raw();
+        // round, with a soft edge
+        let r = side as f32 / 2.0;
+        for y in 0..side {
+            for x in 0..side {
+                let d = ((x as f32 + 0.5 - r).powi(2) + (y as f32 + 0.5 - r).powi(2)).sqrt();
+                let k = (r - d + 0.5).clamp(0.0, 1.0);
+                let a = &mut px[((y * side + x) * 4 + 3) as usize];
+                *a = (*a as f32 * k).round() as u8;
+            }
+        }
+        crate::canvas::Img { w: side, h: side, px }
+    });
+    *c = Some((stamp, img.clone()));
+    img
+}
+
 /// The saved picture as a texture, loaded the first time it's needed.
 #[derive(Default)]
 pub struct AvatarCache {
@@ -302,17 +336,26 @@ impl App {
     /// A picture in a ring, with the level badge on its corner when `level`
     /// is given; falls back to the plain level badge without a picture.
     pub(super) fn draw_avatar(&mut self, ctx: &egui::Context, p: &egui::Painter, c: Pos2, r: f32, level: u32, ring: Color32) -> bool {
+        // a battle pass frame, when one is worn, takes the place of the plain ring
+        let frame = self.cfg.frame.clone();
         match self.avatar_tex(ctx) {
             Some(tex) => {
                 p.circle_filled(c + vec2(0.0, r * 0.06), r * 1.06, Color32::from_black_alpha(80));
                 circle_image(p, tex, c, r, full_uv());
-                p.circle_stroke(c, r, Stroke::new((r * 0.07).max(2.0), ring));
-                p.circle_stroke(c, r + (r * 0.035).max(1.0) + 0.5, Stroke::new(1.0f32, theme::OUTLINE.gamma_multiply(0.6)));
+                if frame.is_empty() {
+                    p.circle_stroke(c, r, Stroke::new((r * 0.07).max(2.0), ring));
+                    p.circle_stroke(c, r + (r * 0.035).max(1.0) + 0.5, Stroke::new(1.0f32, theme::OUTLINE.gamma_multiply(0.6)));
+                } else {
+                    self.draw_frame_ui(ctx, p, &frame, c, r);
+                }
                 theme::level_badge(p, c + vec2(r * 0.72, r * 0.70), (r * 0.36).max(8.0), level);
                 true
             }
             None => {
                 theme::level_badge(p, c, r * 0.94, level);
+                if !frame.is_empty() {
+                    self.draw_frame_ui(ctx, p, &frame, c, r);
+                }
                 false
             }
         }

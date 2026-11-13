@@ -155,6 +155,7 @@ impl App {
                         "Pokédex",
                         "Every Pokémon in Platinum Together: evolutions, moves and where to find them.",
                         true,
+                        true,
                     ),
                     _ => app_card(
                         ui,
@@ -162,6 +163,7 @@ impl App {
                         "Map",
                         "Sinnoh from your game's own map: every area, who lives there, and today's rare grass.",
                         true,
+                        false,
                     ),
                     }
                     // Height of the content itself (not the stretched card).
@@ -585,13 +587,13 @@ impl App {
 }
 
 /// A Home card for another app (`ready` = built; otherwise "Coming soon").
-fn app_card(ui: &mut egui::Ui, icon: &str, title: &str, about: &str, ready: bool) {
+fn app_card(ui: &mut egui::Ui, icon: &str, title: &str, about: &str, ready: bool, experimental: bool) {
     ui.horizontal(|ui| {
         ui.label(RichText::new(format!("{icon} {title}")).size(kit::fs(15.0)).family(kit::strong_family(kit::fs(15.0))).strong().color(TEXT()));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ready {
+            if ready && experimental {
                 kit::pill(ui, "Experimental", PillKind::Warn).on_hover_text("Still being built: some things may be missing or wrong");
-            } else {
+            } else if !ready {
                 kit::pill(ui, "Coming soon", PillKind::Warn);
             }
         });

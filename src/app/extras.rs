@@ -739,6 +739,11 @@ impl App {
     /// What happened in a week, across every run.
     pub(super) fn week_stats(&self, week: i64) -> WeekStats {
         let (a, b) = goals::week_days(week);
+        self.range_stats(a, b)
+    }
+
+    /// What happened from day `a` to day `b`, across every run.
+    pub(super) fn range_stats(&self, a: i64, b: i64) -> WeekStats {
         let mut w = WeekStats::default();
         let mut add = |st: &RunStats, target: Option<&String>| {
             let mut active = false;
@@ -779,31 +784,82 @@ impl App {
         self.cfg.goals_done.iter().any(|g| g.key == key)
     }
 
-    /// Record today's goal and this week's challenges when they're met.
-    /// Returns (title, xp) for each one just completed.
+    /// Record the daily goal and, while the battle pass season is on, the
+    /// day's and weeks' missions when they're met. Returns (title, xp) for
+    /// each one just completed.
     pub(super) fn check_goals(&mut self) -> Vec<(String, u64)> {
         let now = now_unix();
         let today = local_day(now);
-        let week = goals::week_of(today);
-        let ws = self.week_stats(week);
         let mut out = Vec::new();
-        let today_enc = ws.days.get(&today).map_or(0, |d| d.0);
-        let dk = goals::day_key(today);
-        if self.cfg.daily_goal > 0 && today_enc >= self.cfg.daily_goal && !self.goal_done(&dk) {
-            self.cfg.goals_done.push(GoalDone { key: dk, xp: goals::DAILY_XP, unix: now });
-            out.push(("Daily goal reached!".to_string(), goals::DAILY_XP));
-        }
-        for c in goals::challenges(week) {
-            let k = goals::week_key(week, &c);
-            if goals::done(&c, &ws) && !self.goal_done(&k) {
-                self.cfg.goals_done.push(GoalDone { key: k, xp: goals::WEEKLY_XP, unix: now });
-                out.push((c.title.to_string(), goals::WEEKLY_XP));
+        let ds = self.day_stats(today);
+        let goal = self.cfg.daily_goal;
+        let season = crate::pass::current(today);
+        if season.active(today) {
+            for m in season.daily(today) {
+                let k = season.daily_key(today, &m);
+                if self.goal_done(&k) {
+                    continue;
+                }
+                let is_goal = matches!(m.ask, crate::pass::Ask::DailyGoal);
+                if is_goal && goal == 0 {
+                    continue;
+                }
+                let (c, t) = crate::pass::daily_progress(&m, &ds, goal);
+                if c >= t {
+                    let xp = if is_goal { crate::pass::GOAL_XP } else { crate::pass::DAILY_XP };
+                    self.cfg.goals_done.push(GoalDone { key: k, xp, unix: now });
+                    out.push((if is_goal { "Daily goal reached!".to_string() } else { m.title.to_string() }, xp));
+                }
+            }
+            let this = season.week_of(today).unwrap_or(0);
+            for wk in 0..=this {
+                let (a, _) = season.week_days(wk);
+                let ws = self.range_stats(a, today);
+                for m in season.weekly(wk) {
+                    let k = season.weekly_key(wk, &m);
+                    if !self.goal_done(&k) {
+                        let (c, t) = crate::pass::weekly_progress(&m, &ws);
+                        if c >= t {
+                            self.cfg.goals_done.push(GoalDone { key: k, xp: crate::pass::WEEKLY_XP, unix: now });
+                            out.push((m.title.to_string(), crate::pass::WEEKLY_XP));
+                        }
+                    }
+                }
+            }
+        } else {
+            // outside the season only the daily goal counts
+            let dk = goals::day_key(today);
+            if goal > 0 && ds.encounters >= goal && !self.goal_done(&dk) {
+                self.cfg.goals_done.push(GoalDone { key: dk, xp: goals::DAILY_XP, unix: now });
+                out.push(("Daily goal reached!".to_string(), goals::DAILY_XP));
             }
         }
         if !out.is_empty() {
             self.dirty = true;
         }
         out
+    }
+
+    /// What happened on one day, for daily missions.
+    pub(super) fn day_stats(&self, day: i64) -> crate::pass::DayStats {
+        let w = self.range_stats(day, day);
+        let (encounters, secs) = w.days.get(&day).copied().unwrap_or((0, 0));
+        crate::pass::DayStats { encounters, secs, sessions: w.sessions, targets: w.targets.len() }
+    }
+
+    /// Battle pass XP earned in the season on show now.
+    pub(super) fn pass_xp(&self) -> u64 {
+        self.pass_xp_in(crate::pass::current(local_day(now_unix())))
+    }
+
+    /// Battle pass XP earned in `season` (it stays after the season ends, so
+    /// what was reached can still be claimed).
+    pub(super) fn pass_xp_in(&self, season: &crate::pass::Season) -> u64 {
+        self.cfg.goals_done.iter().map(|g| season.xp_of(&g.key)).sum()
+    }
+
+    pub(super) fn goal_done_pub(&self, key: &str) -> bool {
+        self.goal_done(key)
     }
 
     pub(super) fn goal_xp(&self) -> u64 {
@@ -1078,7 +1134,7 @@ impl App {
                     format!("{cur} (not connected)")
                 };
                 let mut pick = cur.clone();
-                egui::ComboBox::from_id_salt("sfx-device")
+                kit::Dropdown::from_id_salt("sfx-device")
                     .selected_text(shown)
                     .width((ui.available_width() - 40.0).clamp(160.0, 360.0))
                     .show_ui(ui, |ui| {

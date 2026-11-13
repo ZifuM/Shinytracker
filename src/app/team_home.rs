@@ -116,7 +116,7 @@ impl TeamState {
         }
     }
 
-    fn open_team(&mut self, id: u64) {
+    pub(super) fn open_team(&mut self, id: u64) {
         self.open = Some(id);
         self.slot = 0;
         self.view = View::Build;
@@ -496,10 +496,16 @@ impl App {
     }
 
     /// One team in the library.
-    fn team_card(&mut self, ui: &mut egui::Ui, t: &Team, w: f32) -> egui::Response {
+    pub(super) fn team_card(&mut self, ui: &mut egui::Ui, t: &Team, w: f32) -> egui::Response {
+        self.team_card_edit(ui, t, w, false).0
+    }
+
+    /// One team's card; with `pencil`, a small edit button in its corner
+    /// (the second value: it was clicked).
+    pub(super) fn team_card_edit(&mut self, ui: &mut egui::Ui, t: &Team, w: f32, pencil: bool) -> (egui::Response, bool) {
         let (r, resp) = ui.allocate_exact_size(egui::vec2(w, 164.0), Sense::click());
         if !ui.is_rect_visible(r) {
-            return resp;
+            return (resp, false);
         }
         let ht = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered(), kit::QUICK);
         let r2 = r.translate(egui::vec2(0.0, -2.0 * ht));
@@ -509,7 +515,26 @@ impl App {
         // name and badges
         let f = crate::fonts::sans_bold_font(15.5);
         let name = if t.name.trim().is_empty() { "Untitled team" } else { t.name.as_str() };
-        let wb = world_badge(&p, egui::pos2(r2.max.x - 14.0, r2.min.y + 22.0), t.world, true);
+        // the pencil, top right; the world badge moves left of it
+        let mut edit = false;
+        let pen_w = if pencil { 34.0 } else { 0.0 };
+        if pencil {
+            let pr = Rect::from_center_size(egui::pos2(r2.max.x - 26.0, r2.min.y + 22.0), egui::vec2(26.0, 26.0));
+            let presp = ui.interact(pr, resp.id.with("pencil"), Sense::click());
+            let ph = kit::anim(ui.ctx(), presp.id.with("h"), presp.hovered(), kit::QUICK);
+            p.circle_filled(pr.center(), 13.0, theme::blend(kit::sunken(), ACCENT, 0.1 + 0.3 * ph));
+            p.circle_stroke(pr.center(), 13.0, Stroke::new(1.0f32, theme::blend(LINE(), ACCENT, 0.3 + 0.6 * ph)));
+            // a little pencil: body, then the tip
+            let c = pr.center();
+            let ink = if ph > 0.5 { TEXT() } else { MUTED() };
+            let a = c + egui::vec2(4.5, -4.5);
+            let b = c + egui::vec2(-2.5, 2.5);
+            p.line_segment([a, b], Stroke::new(3.4f32, ink));
+            p.add(egui::Shape::convex_polygon(vec![c + egui::vec2(-1.3, 3.8), c + egui::vec2(-3.8, 1.3), c + egui::vec2(-5.2, 5.2)], ink, Stroke::NONE));
+            p.line_segment([c + egui::vec2(3.2, -5.8), c + egui::vec2(5.8, -3.2)], Stroke::new(1.2f32, theme::blend(kit::sunken(), ACCENT, 0.1 + 0.3 * ph)));
+            edit = presp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Edit in the Team Planner").clicked();
+        }
+        let wb = world_badge(&p, egui::pos2(r2.max.x - 14.0 - pen_w, r2.min.y + 22.0), t.world, true) + pen_w;
         p.text(r2.min + egui::vec2(16.0, 22.0), Align2::LEFT_CENTER, super::charts::clip(ui, name, &f, w - 46.0 - wb), f, TEXT());
         let sub = format!(
             "{}{} Pokémon  ·  edited {}",
@@ -542,7 +567,7 @@ impl App {
         }
         let label = if total == 0 { "No checklist yet".to_string() } else if done == total { "Ready ✔".into() } else { format!("{done}/{total} done") };
         p.text(egui::pos2(r2.max.x - 16.0, bar.center().y), Align2::RIGHT_CENTER, label, crate::fonts::sans_font(11.5), MUTED());
-        resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+        (resp.on_hover_cursor(egui::CursorIcon::PointingHand), edit)
     }
 
     pub(super) fn team_new(&mut self, sample: Option<&str>) {
@@ -900,7 +925,7 @@ impl App {
 
 /// "+ Add to team" with a menu of teams that have room, and "New team".
 pub(super) fn add_to_team_menu(ui: &mut egui::Ui, teams: &[(u64, String, usize)], out: &mut Option<Option<u64>>) {
-    ui.menu_button(RichText::new("+  Add to team").size(13.0), |ui| {
+    kit::menu(ui, RichText::new("+  Add to team").size(13.0), |ui| {
         ui.set_min_width(200.0);
         for (id, name, n) in teams.iter().take(12) {
             let label = format!("{}  ({n}/6)", if name.trim().is_empty() { "Untitled team" } else { name });

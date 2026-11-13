@@ -1,6 +1,6 @@
 [package]
 name = "shiny-tracker"
-version = "0.6.1"
+version = "0.6.2"
 edition = "2021"
 description = "Always-on-top shiny hunting counter that reads foe name plates from the screen"
 
@@ -20,6 +20,8 @@ raw-window-handle = "0.6"
 ab_glyph = "0.2"
 # GIF writing for animated share images (already used by the image crate).
 gif = "0.13"
+# Colour reduction for GIF frames, so they can be dithered (already used by gif).
+color_quant = "1.1"
 
 # Windows' built-in OCR (no extra install needed on Windows 10/11).
 [target.'cfg(windows)'.dependencies]

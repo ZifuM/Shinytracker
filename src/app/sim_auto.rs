@@ -36,6 +36,10 @@ pub(super) struct AutoDone {
     stopped: bool,
 }
 
+/// The auto-sim is switched off while its screens are being worked out:
+/// its buttons are greyed out and its tab says it's coming.
+pub(super) const READY: bool = false;
+
 const COUNTS: [u32; 3] = [100, 1000, 5000];
 
 pub(super) fn auto_count(n: u32) -> u32 {
@@ -58,6 +62,9 @@ fn pct(x: f64) -> String {
 impl App {
     /// Start the auto-sim for the battle that's set up.
     pub(super) fn sim_auto_start(&mut self) {
+        if !READY {
+            return;
+        }
         if self.setup.sim.auto.is_some() {
             return;
         }

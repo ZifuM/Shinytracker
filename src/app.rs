@@ -30,6 +30,10 @@ mod sim_auto;
 mod battlebacks;
 mod sim_foes;
 mod sim_home;
+mod sim_layouts;
+mod sim_opponents;
+mod sim_history;
+mod pass_page;
 mod breed_home;
 mod breed_box;
 mod breed_moves;
@@ -167,6 +171,8 @@ struct Setup {
     backup_msg: Option<(bool, String)>,
     /// When the last automatic copy was checked (one an hour while open).
     auto_backup_at: Option<std::time::Instant>,
+    /// Whether the hunt was paused last frame (a copy is made the moment it pauses).
+    was_paused: bool,
     /// "Move data folder" box while it's open, and the last result.
     data_picker: Option<Receiver<Option<std::path::PathBuf>>>,
     data_msg: Option<(bool, String)>,
@@ -225,6 +231,8 @@ struct Setup {
     avatar_edit: Option<avatar::AvatarEditor>,
     /// The saved profile picture, loaded once.
     avatar: avatar::AvatarCache,
+    /// The battle pass page's pictures and choices.
+    pass: pass_page::PassCache,
     /// Profile page tab.
     profile_section: trainer::ProfileSection,
     dex: extras::DexView,
@@ -537,6 +545,8 @@ impl App {
                 restore_pending: None,
                 backup_msg: None,
                 auto_backup_at: None,
+                // (already paused when the app opens: the opening copy covers it)
+                was_paused: true,
                 data_picker: None,
                 data_msg: None,
                 welcome_step: 0,
@@ -572,6 +582,7 @@ impl App {
                 profile_card: None,
                 avatar_edit: None,
                 avatar: Default::default(),
+                pass: Default::default(),
                 profile_section: Default::default(),
                 dex: extras::DexView::default(),
                 note_draft: String::new(),
@@ -2787,6 +2798,7 @@ impl eframe::App for App {
             }
         }
         self.auto_backup_tick();
+        self.pass_tidy();
         self.team_save_tick(false);
         self.sim_save_tick(false);
         self.breed_save_tick(false);

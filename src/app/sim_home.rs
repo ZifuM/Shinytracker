@@ -3,7 +3,7 @@
 //! what kind of battle, who's on theirs, and the catch odds.
 
 use super::team_home::{chip, now_secs, small, world_badge, x_button};
-use super::ui_kit::{self as kit, CARD, CARD_HOVER, LINE, MUTED, TEXT};
+use super::ui_kit::{self as kit, CARD, LINE, TEXT};
 use super::{App, Tab};
 use crate::battle::World;
 use crate::sim::{self, Format, Mode, Setup, SimFile};
@@ -15,8 +15,18 @@ use std::time::{Duration, Instant};
 pub(super) const RED: Color32 = Color32::from_rgb(236, 92, 92);
 pub(super) const OURS: Color32 = super::team_home::ACCENT;
 
+/// The Battle Sim's views.
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+pub(super) enum SimView {
+    #[default]
+    Battle,
+    Catch,
+}
+
 #[derive(Default)]
 pub(super) struct SimState {
+    /// Which view is open.
+    pub view: SimView,
     pub file: Option<SimFile>,
     pub load_error: Option<String>,
     pub dirty: Option<Instant>,
@@ -42,6 +52,13 @@ pub(super) struct SimState {
     pub auto_ai: Option<crate::sim::Ai>,
     /// No damage odds on the move buttons.
     pub hide_odds: bool,
+    /// The next battle opens on the bag's Poké Balls (a catch test).
+    pub catch_first: bool,
+    /// The versus page's open drawer tab.
+    pub drawer: u8,
+    /// Which trainer / wild setup design is showing (while choosing).
+    pub trainer_design: u8,
+    pub wildset_design: u8,
 }
 
 impl SimState {
@@ -135,194 +152,80 @@ impl App {
                 }
             }
         }
-        self.sim_modes(ui);
-        ui.add_space(14.0);
-        let mode = self.setup.sim.setup.mode;
-        // the auto-sim's results sit above the board: they're what you came for
-        if mode != Mode::Catch && (self.setup.sim.auto.is_some() || self.setup.sim.auto_done.is_some()) {
-            self.sim_auto_card(ui);
-            ui.add_space(14.0);
+        // catch tests live in the Catch Lab view now
+        if self.setup.sim.setup.mode == Mode::Catch {
+            self.setup.sim.setup.mode = Mode::Wild;
+            self.setup.sim.view = SimView::Catch;
         }
-        self.sim_board(ui);
-        ui.add_space(14.0);
-        if mode != Mode::Trainer {
-            self.sim_catch(ui);
-        }
-        self.sim_recent(ui);
-    }
-
-    /// The three kinds of battle, as big tiles.
-    fn sim_modes(&mut self, ui: &mut egui::Ui) {
-        let cur = self.setup.sim.setup.mode;
-        let gap = 14.0;
-        let avail = ui.available_width();
-        let w = ((avail - gap * 2.0) / 3.0).floor();
-        let mut pick = None;
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = gap;
-            for m in [Mode::Wild, Mode::Trainer, Mode::Catch] {
-                let (icon, title, sub, col) = mode_meta(m);
-                let (r, resp) = ui.allocate_exact_size(egui::vec2(w, 74.0), Sense::click());
-                let on = cur == m;
-                let ht = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered(), kit::QUICK);
-                let p = ui.painter();
-                p.add(kit::card_shadow().as_shape(r, 14.0));
-                p.rect_filled(r, 14.0, if on { theme::blend(CARD(), col, 0.16) } else { theme::blend(CARD(), CARD_HOVER(), ht) });
-                p.rect_stroke(r, 14.0, Stroke::new(if on { 2.0f32 } else { 1.0 }, if on { theme::blend(LINE(), col, 0.8) } else { theme::blend(LINE(), col, 0.3 * ht) }));
-                kit::icon_chip(p, Rect::from_min_size(r.min + egui::vec2(16.0, 21.0), egui::vec2(32.0, 32.0)), icon, col, on);
-                p.text(r.min + egui::vec2(60.0, 27.0), Align2::LEFT_CENTER, title, crate::fonts::sans_bold_font(15.0), TEXT());
-                let f = crate::fonts::sans_font(12.0);
-                p.text(r.min + egui::vec2(60.0, 48.0), Align2::LEFT_CENTER, super::charts::clip(ui, sub, &f, w - 72.0), f, MUTED());
-                if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                    pick = Some(m);
-                }
-            }
-        });
-        if let Some(m) = pick {
-            let s = &mut self.setup.sim.setup;
-            s.mode = m;
-            if m == Mode::Catch {
-                s.format = Format::Singles;
-            }
-            self.setup.sim.note = None;
+        self.sim_activity_cards(ui);
+        ui.add_space(16.0);
+        match self.sim_activity() {
+            super::sim_layouts::Activity::Catch => self.catch_shelf(ui),
+            _ => self.sim_versus(ui),
         }
     }
 
-    /// Your side · VS · their side.
-    fn sim_board(&mut self, ui: &mut egui::Ui) {
-        let avail = ui.available_width();
-        let wide = avail >= 1000.0;
-        let gap = 16.0;
-        let mid = if wide { 150.0 } else { avail };
-        let side = if wide { ((avail - mid - gap * 2.0) / 2.0).floor() } else { avail };
-        if wide {
-            ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing.x = gap;
-                ui.allocate_ui_with_layout(egui::vec2(side, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                    ui.set_width(side);
-                    self.sim_ours(ui);
-                    self.sim_preview(ui);
-                });
-                ui.allocate_ui_with_layout(egui::vec2(mid, 0.0), egui::Layout::top_down(egui::Align::Center), |ui| {
-                    ui.set_width(mid);
-                    self.sim_vs(ui, false);
-                });
-                ui.allocate_ui_with_layout(egui::vec2(side, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                    ui.set_width(side);
-                    self.sim_theirs(ui);
-                });
-            });
-        } else {
-            self.sim_ours(ui);
-            self.sim_vs(ui, true);
-            ui.add_space(14.0);
-            self.sim_theirs(ui);
-            self.sim_preview(ui);
-        }
-    }
-
-    fn sim_ours(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn sim_ours(&mut self, ui: &mut egui::Ui) {
         let teams = self.team_choices();
         let mut go_planner = false;
+        let mut go_edit: Option<u64> = None;
         let mut set_team: Option<u64> = None;
-        let mut toggle: Option<usize> = None;
         let s = self.setup.sim.setup.clone();
-        let team = s.team.and_then(|id| self.setup.team.teams().teams.iter().find(|t| t.id == id).cloned());
-        side_card(ui, OURS, "YOUR SIDE", |ui| {
-            if teams.is_empty() {
+        if teams.is_empty() {
+            side_card(ui, OURS, "YOUR SIDE", |ui| {
                 ui.label(RichText::new("No teams yet").font(crate::fonts::sans_bold_font(16.0)).color(TEXT()));
                 ui.label(small("Battle Sim uses your Team Planner teams. Make one there (it can be just one Pokémon) and come back."));
                 ui.add_space(8.0);
                 go_planner = kit::accent_button_w(ui, egui::Button::new(RichText::new("Open the Team Planner").size(13.0)), 8.0, 160.0).clicked();
-                return;
-            }
-            // which team
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-                for (id, name, n) in teams.iter().take(8) {
-                    let label = format!("{}  {n}", if name.trim().is_empty() { "Untitled team" } else { name });
-                    if chip(ui, &label, s.team == Some(*id), OURS).clicked() {
-                        set_team = Some(*id);
-                    }
-                }
             });
-            ui.add_space(10.0);
-            let Some(t) = &team else {
-                ui.label(small("Pick a team."));
-                return;
-            };
-            if t.members.is_empty() {
-                ui.label(small("This team has no Pokémon yet."));
-                return;
-            }
-            // the lineup: click to bring one along, the first ones lead
-            let full = ui.available_width();
-            let n = t.members.len();
-            let tile = ((full - 8.0 * 5.0) / 6.0).clamp(56.0, 92.0);
+        }
+        // all your teams, as in the Team Planner: click one to battle with it
+        if !teams.is_empty() {
+            ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 8.0;
-                for (i, m) in t.members.iter().enumerate() {
-                    let order = s.picks.iter().position(|p| *p == i);
-                    let (r, resp) = ui.allocate_exact_size(egui::vec2(tile, tile + 20.0), Sense::click());
-                    let ht = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered(), kit::QUICK);
-                    let p = ui.painter().clone();
-                    let leads = match s.format {
-                        Format::Singles => 1,
-                        Format::Doubles => 2,
-                    };
-                    let col = match order {
-                        Some(o) if o < leads => OURS,
-                        Some(_) => theme::blend(OURS, MUTED(), 0.4),
-                        None => LINE(),
-                    };
-                    let box_r = Rect::from_min_size(r.min, egui::vec2(tile, tile));
-                    p.rect_filled(box_r, 12.0, if order.is_some() { theme::blend(CARD(), OURS, 0.12) } else { theme::blend(kit::sunken(), CARD_HOVER(), ht) });
-                    p.rect_stroke(box_r, 12.0, Stroke::new(if order.is_some() { 1.5f32 } else { 1.0 }, col));
-                    let dim = order.is_none();
-                    if !self.team_sprite(&p, &m.species, m.shiny, box_r.center(), egui::vec2(tile - 8.0, tile - 8.0)) {
-                        p.text(box_r.center(), Align2::CENTER_CENTER, m.species.chars().take(2).collect::<String>(), crate::fonts::sans_bold_font(13.0), MUTED());
-                    }
-                    if dim {
-                        p.rect_filled(box_r, 12.0, CARD().gamma_multiply(0.55));
-                    }
-                    if let Some(o) = order {
-                        let c = egui::pos2(box_r.max.x - 12.0, box_r.min.y + 12.0);
-                        p.circle_filled(c, 10.0, if o < leads { OURS } else { theme::blend(CARD(), MUTED(), 0.5) });
-                        p.text(c, Align2::CENTER_CENTER, (o + 1).to_string(), crate::fonts::sans_bold_font(11.0), Color32::WHITE);
-                    }
-                    let f = crate::fonts::sans_font(11.0);
-                    p.text(egui::pos2(box_r.center().x, r.max.y - 8.0), Align2::CENTER_CENTER, super::charts::clip(ui, m.display_name(), &f, tile), f, if dim { MUTED() } else { TEXT() });
-                    let tip = match order {
-                        Some(o) if o < leads => "Leads the battle. Click to leave it out.".to_string(),
-                        Some(_) => "In the back. Click to leave it out.".to_string(),
-                        None => "Click to bring it along".to_string(),
-                    };
-                    if resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked() {
-                        toggle = Some(i);
-                    }
-                }
+                ui.label(RichText::new(format!("YOUR TEAMS  ·  {}", teams.len())).font(crate::fonts::sans_bold_font(11.0)).color(super::charts::ink(OURS)));
+                ui.label(small("·  click one to battle with it"));
             });
             ui.add_space(8.0);
-            let picked = s.picks.iter().filter(|p| **p < n).count();
-            let txt = match (picked, s.format) {
-                (0, _) => "Click the Pokémon that battle. The first you pick leads.".to_string(),
-                (1, Format::Doubles) => "Doubles needs two to lead: pick another one.".to_string(),
-                (k, _) => format!("{k} battling · numbers show the order they come out"),
-            };
-            ui.label(small(txt));
-            ui.horizontal(|ui| {
-                if ui.link(RichText::new("All").size(12.0)).clicked() {
-                    self.setup.sim.setup.picks = (0..n).collect();
-                }
-                if ui.link(RichText::new("None").size(12.0)).clicked() {
-                    self.setup.sim.setup.picks.clear();
-                }
-                ui.add_space(6.0);
-                world_label(ui, t.world);
-            });
-        });
+            let all: Vec<crate::teams::Team> = teams.iter().filter_map(|(id, _, _)| self.setup.team.teams().teams.iter().find(|t| t.id == *id).cloned()).collect();
+            let avail = ui.available_width();
+            let gap = 14.0;
+            let cols = ((avail + gap) / (300.0 + gap)).floor().max(1.0) as usize;
+            let cw = ((avail - gap * (cols as f32 - 1.0)) / cols as f32).floor();
+            for row in all.chunks(cols) {
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing.x = gap;
+                    for t in row {
+                        let on = s.team == Some(t.id);
+                        let (resp, edit) = self.team_card_edit(ui, t, cw, true);
+                        if edit {
+                            go_edit = Some(t.id);
+                        }
+                        if on {
+                            // chosen: a green edge and a tick
+                            let r = resp.rect;
+                            let p = ui.painter();
+                            p.rect_stroke(r, 14.0, Stroke::new(2.0f32, OURS));
+                            let c = egui::pos2(r.min.x + 6.0, r.min.y + 6.0);
+                            p.circle_filled(c, 11.0, OURS);
+                            p.circle_stroke(c, 11.0, Stroke::new(2.0f32, CARD()));
+                            p.text(c, Align2::CENTER_CENTER, "✔", crate::fonts::sans_bold_font(11.0), Color32::WHITE);
+                        }
+                        let resp = resp.on_hover_text(if on { "Battling with this team" } else { "Battle with this team" });
+                        if resp.clicked() && !edit {
+                            set_team = Some(t.id);
+                        }
+                    }
+                });
+                ui.add_space(gap);
+            }
+        }
         if go_planner {
             self.go_to(Tab::Team);
+        }
+        if let Some(id) = go_edit {
+            self.go_to(Tab::Team);
+            self.setup.team.open_team(id);
         }
         if let Some(id) = set_team {
             let n = self.setup.team.teams().teams.iter().find(|t| t.id == id).map(|t| t.members.len()).unwrap_or(0);
@@ -330,105 +233,10 @@ impl App {
             st.team = Some(id);
             st.picks = (0..n.min(6)).collect();
         }
-        if let Some(i) = toggle {
-            let picks = &mut self.setup.sim.setup.picks;
-            if let Some(p) = picks.iter().position(|x| *x == i) {
-                picks.remove(p);
-            } else {
-                picks.push(i);
-            }
-        }
-    }
-
-    /// The middle: VS, singles or doubles, and Start. In a narrow window
-    /// it's one row between the two sides.
-    fn sim_vs(&mut self, ui: &mut egui::Ui, compact: bool) {
-        let s = self.setup.sim.setup.clone();
-        let mut f = s.format;
-        let ready = self.sim_ready();
-        let label = match s.mode {
-            Mode::Catch => "Test the catch",
-            _ => "Start battle",
-        };
-        let mut start = false;
-        let medal = |ui: &mut egui::Ui, size: f32| {
-            let (r, _) = ui.allocate_exact_size(egui::vec2(size, size), Sense::hover());
-            let p = ui.painter();
-            let c = r.center();
-            let rad = size / 2.0 - 2.0;
-            p.circle_filled(c, rad, theme::blend(CARD(), RED, 0.10));
-            p.circle_stroke(c, rad, Stroke::new(2.0f32, theme::blend(LINE(), OURS, 0.6)));
-            p.line_segment([c + egui::vec2(rad * 0.22, -rad * 0.87), c + egui::vec2(-rad * 0.22, rad * 0.87)], Stroke::new(2.0f32, theme::blend(LINE(), RED, 0.5)));
-            p.text(c, Align2::CENTER_CENTER, "VS", crate::fonts::sans_bold_font(size * 0.3), TEXT());
-        };
-        let formats = |ui: &mut egui::Ui, f: &mut Format| {
-            if s.mode == Mode::Catch {
-                ui.label(small("Catch tests are one on one"));
-                return;
-            }
-            for (v, l) in [(Format::Singles, "Singles"), (Format::Doubles, "Doubles")] {
-                if chip(ui, l, *f == v, OURS).clicked() {
-                    *f = v;
-                }
-            }
-        };
-        let button = |ui: &mut egui::Ui, start: &mut bool| {
-            let resp = ui.add_enabled_ui(ready.is_ok(), |ui| kit::accent_button_w(ui, egui::Button::new(RichText::new(label).size(14.0)), 8.0, 130.0)).inner;
-            let resp = match &ready {
-                Err(why) => resp.on_disabled_hover_text(why.as_str()),
-                Ok(()) if s.mode == Mode::Catch => resp.on_hover_text("Go to the throws in the Catch Lab"),
-                Ok(()) => resp.on_hover_text("Play this battle yourself"),
-            };
-            *start = resp.clicked();
-        };
-        let n_auto = super::sim_auto::auto_count(self.setup.sim.auto_n);
-        let mut auto = false;
-        let auto_link = |ui: &mut egui::Ui, auto: &mut bool| {
-            if s.mode != Mode::Catch && ready.is_ok() {
-                *auto = ui.link(RichText::new(format!("or simulate {} battles", thousands(n_auto))).size(12.0)).on_hover_text("Both sides played by the AI, many times over: your win rate and who does what").clicked();
-            }
-        };
-        if compact {
-            ui.add_space(14.0);
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 12.0;
-                medal(ui, 56.0);
-                formats(ui, &mut f);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    button(ui, &mut start);
-                    auto_link(ui, &mut auto);
-                });
-            });
-        } else {
-            ui.add_space(30.0);
-            medal(ui, 96.0);
-            ui.add_space(14.0);
-            ui.vertical_centered(|ui| {
-                ui.spacing_mut().item_spacing.y = 4.0;
-                formats(ui, &mut f);
-            });
-            ui.add_space(16.0);
-            button(ui, &mut start);
-            ui.add_space(6.0);
-            ui.vertical_centered(|ui| auto_link(ui, &mut auto));
-        }
-        if f != s.format {
-            self.setup.sim.setup.format = f;
-        }
-        if start {
-            self.sim_start();
-        }
-        if auto {
-            self.sim_auto_start();
-        }
-        if let Some(n) = &self.setup.sim.note {
-            ui.add_space(6.0);
-            ui.add(egui::Label::new(small(n.clone())).wrap());
-        }
     }
 
     /// The first turn at a glance: your leads against theirs, both ways.
-    fn sim_preview(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn sim_preview(&mut self, ui: &mut egui::Ui) {
         use super::team_calc::{calc_mon, calc_move, Poke};
         let s = self.setup.sim.setup.clone();
         let Some(team) = s.team.and_then(|id| self.setup.team.teams().teams.iter().find(|t| t.id == id).cloned()) else { return };
@@ -497,7 +305,7 @@ impl App {
     }
 
     /// Whether the setup can start, and why not.
-    fn sim_ready(&mut self) -> Result<(), String> {
+    pub(super) fn sim_ready(&mut self) -> Result<(), String> {
         let s = self.setup.sim.setup.clone();
         // the catch odds only need the wild Pokémon
         if s.mode == Mode::Catch {
@@ -528,7 +336,37 @@ impl App {
         }
     }
 
-    fn sim_start(&mut self) {
+    /// Can the catch test start: a wild Pokémon, and someone of yours to
+    /// send out.
+    pub(super) fn sim_catch_ready(&mut self) -> Result<(), String> {
+        let s = self.setup.sim.setup.clone();
+        if s.foes.is_empty() {
+            return Err("Pick a wild Pokémon".into());
+        }
+        let Some(t) = s.team.and_then(|id| self.setup.team.teams().teams.iter().find(|t| t.id == id).cloned()) else {
+            return Err("Pick one of your teams to battle with".into());
+        };
+        if !s.picks.iter().any(|p| *p < t.members.len()) {
+            return Err("Pick who battles on your side".into());
+        }
+        Ok(())
+    }
+
+    /// A catch test: a one-on-one wild battle that opens on the Poké Balls.
+    pub(super) fn sim_catch_battle(&mut self) {
+        let keep = (self.setup.sim.setup.mode, self.setup.sim.setup.format);
+        let st = &mut self.setup.sim.setup;
+        st.mode = Mode::Wild;
+        st.format = Format::Singles;
+        st.foes.truncate(1);
+        self.setup.sim.catch_first = true;
+        self.sim_start();
+        self.setup.sim.catch_first = false;
+        let st = &mut self.setup.sim.setup;
+        (st.mode, st.format) = keep;
+    }
+
+    pub(super) fn sim_start(&mut self) {
         if self.setup.sim.setup.mode == Mode::Catch {
             // a catch test happens right here, in the Catch Lab
             self.setup.sim.scroll_lab = true;
@@ -550,7 +388,7 @@ impl App {
         }
     }
 
-    fn sim_theirs(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn sim_theirs(&mut self, ui: &mut egui::Ui) {
         let s = self.setup.sim.setup.clone();
         match s.mode {
             Mode::Trainer => self.sim_trainers(ui),
@@ -559,9 +397,14 @@ impl App {
     }
 
     /// The last setups, to start again with one click.
-    fn sim_recent(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn sim_recent(&mut self, ui: &mut egui::Ui) {
         let recent: Vec<Setup> = self.setup.sim.file().recent.clone();
         if recent.is_empty() {
+            kit::card(ui, |ui| {
+                ui.label(RichText::new("Recent").font(crate::fonts::sans_bold_font(15.0)).color(TEXT()));
+                ui.add_space(4.0);
+                ui.label(small("Every battle and catch test you start is kept here, so you can set it up again in one click."));
+            });
             return;
         }
         let teams = self.setup.team.teams().teams.clone();

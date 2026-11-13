@@ -636,7 +636,7 @@ impl App {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // nature
                     let cur = m.nature.clone();
-                    egui::ComboBox::from_id_salt("team-nature")
+                    kit::Dropdown::from_id_salt("team-nature")
                         .selected_text(nature_label(&cur))
                         .width(190.0)
                         .height(360.0)

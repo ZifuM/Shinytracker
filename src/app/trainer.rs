@@ -780,7 +780,7 @@ impl App {
         let data = crate::card::ProfileData {
             name: self.cfg.trainer_name.clone(),
             level,
-            title: progress::title(level).to_string(),
+            title: self.player_title(level),
             metal: (metal.to_string(), main, light),
             xp_into: into,
             xp_need: need,
@@ -794,6 +794,9 @@ impl App {
             show_achievements: self.cfg.profile_card_achievements,
             date: fmt_date(now_unix()),
             icon: Some(crate::share::icon()),
+            avatar: super::avatar::card_avatar(),
+            plate: self.cfg.plate.clone(),
+            frame: self.cfg.frame.clone(),
         };
         (data, ready)
     }
@@ -810,6 +813,8 @@ impl App {
         let opts = {
             let mut o = self.cfg.card.clone();
             o.animated = false;
+            // the trainer card is a still picture: an animated style shows its still twin
+            o.style = o.style.still();
             o
         };
         let key = (
@@ -950,16 +955,18 @@ impl App {
             ui.add_space(6.0);
             kit::checkbox(ui, &mut self.cfg.profile_card_shinies, "Shiny showcase (your latest 6 shinies)");
             kit::checkbox(ui, &mut self.cfg.profile_card_achievements, "Recent achievements (your latest 6)");
+            kit::checkbox(ui, &mut self.cfg.card.show_avatar, "Profile picture by your name").on_hover_text("Shows next to your name, when you've set a profile picture");
         });
         kit::section(ui, "Style");
         {
             let data = thumb_data;
             let o = self.cfg.card.clone();
-            let key = format!("profile|{:?}|{:?}|{}|{}|{}|{}|{}|{}", o.theme, o.layout, data.level, data.xp_into, ready, self.cfg.trainer_name, self.cfg.profile_card_shinies, self.cfg.profile_card_achievements);
+            let styles = self.style_choices(false);
+            let key = format!("profile|{:?}|{:?}|{}|{}|{}|{}|{}|{}|{}", o.theme, o.layout, data.level, data.xp_into, ready, self.cfg.trainer_name, self.cfg.profile_card_shinies, self.cfg.profile_card_achievements, o.show_avatar);
             let ctx = ui.ctx().clone();
-            self.style_thumbs(&ctx, key, |_| (super::hunt_pages::ThumbOf::Profile(data), o));
+            self.style_thumbs(&ctx, key, &styles, |_| (super::hunt_pages::ThumbOf::Profile(data), o));
+            self.card_style_picker(ui, &styles);
         }
-        self.card_style_picker(ui);
         kit::section(ui, "Theme (pick a type)");
         kit::card(ui, |ui| {
             ui.horizontal_wrapped(|ui| {

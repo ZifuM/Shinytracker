@@ -44,7 +44,7 @@ pub(super) fn tab_meta(t: Tab) -> (&'static str, &'static str, Color32) {
 
 /// Pages that are still experimental (marked in the sidebar).
 pub(super) fn is_experimental(t: Tab) -> bool {
-    matches!(t, Tab::Map | Tab::Info | Tab::Team | Tab::Sim | Tab::Breed | Tab::Calc)
+    matches!(t, Tab::Team | Tab::Sim | Tab::Breed | Tab::Calc)
 }
 
 /// Sidebar entries: (group heading, page, parent app).
@@ -378,14 +378,23 @@ impl App {
                 let name = if self.cfg.trainer_name.trim().is_empty() { "Trainer".to_string() } else { self.cfg.trainer_name.clone() };
                 let clip = Rect::from_min_max(egui::pos2(bc.x + 26.0, rect.min.y), egui::pos2(rect.max.x - 8.0, rect.max.y));
                 let pc = p.with_clip_rect(clip);
-                pc.text(egui::pos2(bc.x + 28.0, rect.center().y - 8.0), Align2::LEFT_CENTER, name, crate::fonts::sans_bold_font(13.5), TEXT());
-                pc.text(
-                    egui::pos2(bc.x + 28.0, rect.center().y + 10.0),
-                    Align2::LEFT_CENTER,
-                    format!("Level {level} · {}", crate::progress::title(level)),
-                    crate::fonts::sans_font(12.0),
-                    MUTED(),
-                );
+                let plate = self.cfg.plate.clone();
+                if plate.is_empty() {
+                    pc.text(egui::pos2(bc.x + 28.0, rect.center().y - 8.0), Align2::LEFT_CENTER, name, crate::fonts::sans_bold_font(13.5), TEXT());
+                } else {
+                    // the battle pass name plate, with the name on it
+                    let pc = p.with_clip_rect(clip.with_min_x(bc.x + 19.0).expand2(egui::vec2(0.0, 6.0)));
+                    let size = 11.5;
+                    let f = crate::fonts::sans_bold_font(size);
+                    let nw = pc.layout_no_wrap(name.clone(), f, TEXT()).size().x.min(clip.width() - 30.0);
+                    let ctx = ui.ctx().clone();
+                    let r = App::plate_rect(bc.x + 31.0, rect.center().y - 8.0, nw, 22.0);
+                    self.draw_plate_ui(&ctx, &pc, &plate, r, &name, size);
+                }
+                // a battle pass title in its look's colour
+                let title = self.player_title(level);
+                let lr = pc.text(egui::pos2(bc.x + 28.0, rect.center().y + 10.0), Align2::LEFT_CENTER, format!("Level {level} · "), crate::fonts::sans_font(12.0), MUTED());
+                pc.text(egui::pos2(lr.max.x, rect.center().y + 10.0), Align2::LEFT_CENTER, &title, crate::fonts::sans_font(12.0), super::pass_page::title_col(&title, MUTED()));
             }
             if resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Your Trainer Profile").clicked() {
                 self.go_to(Tab::Profile);

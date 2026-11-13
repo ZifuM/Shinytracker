@@ -25,41 +25,88 @@ impl App {
         if wide {
             let left_w = ((avail - gap) * 0.6).floor();
             let right_w = avail - gap - left_w;
-            ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing.x = gap;
-                ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                    ui.set_width(left_w);
-                    if self.home_runs(ui) {
-                        ui.add_space(gap);
-                    }
-                    self.home_rare(ui);
-                });
-                ui.allocate_ui_with_layout(egui::vec2(right_w, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                    ui.set_width(right_w);
-                    self.home_almost(ui);
-                    ui.add_space(gap);
-                    if self.home_breeding(ui) {
-                        ui.add_space(gap);
-                    }
-                    self.recent_shinies(ui);
-                });
+            // rows of two cards; in each row both cards end level (the
+            // shorter one grows to match)
+            let breeding = self.home_breeding_on();
+            self.home_row(ui, "r1", left_w, right_w, gap, |app, ui, e| {
+                app.home_runs(ui, e);
+                e
+            }, |app, ui, e| {
+                app.home_almost(ui, e);
+                e
             });
+            ui.add_space(gap);
+            self.home_row(
+                ui,
+                "r2",
+                left_w,
+                right_w,
+                gap,
+                |app, ui, _| {
+                    app.home_rare(ui);
+                    0.0
+                },
+                |app, ui, e| {
+                    app.recent_shinies(ui, e);
+                    e
+                },
+            );
+            if breeding {
+                ui.add_space(gap);
+                self.home_breeding(ui, 0.0);
+            }
             ui.add_space(gap);
             self.home_jump(ui);
         } else {
-            if self.home_runs(ui) {
+            if self.home_runs(ui, 0.0) {
                 ui.add_space(gap);
             }
-            self.home_almost(ui);
+            self.home_almost(ui, 0.0);
             ui.add_space(gap);
-            if self.home_breeding(ui) {
+            if self.home_breeding(ui, 0.0) {
                 ui.add_space(gap);
             }
-            self.recent_shinies(ui);
+            self.recent_shinies(ui, 0.0);
             ui.add_space(gap);
             self.home_rare(ui);
             ui.add_space(gap);
             self.home_jump(ui);
+        }
+    }
+
+    /// Two cards side by side whose bottoms line up: each side is told how
+    /// much taller to grow (from last frame's heights) and says how much it
+    /// grew, so the natural heights can be measured again.
+    fn home_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        key: &str,
+        lw: f32,
+        rw: f32,
+        gap: f32,
+        left: impl FnOnce(&mut App, &mut egui::Ui, f32) -> f32,
+        right: impl FnOnce(&mut App, &mut egui::Ui, f32) -> f32,
+    ) {
+        let id = egui::Id::new(("home-row", key));
+        let (ln, rn): (f32, f32) = ui.ctx().data(|d| d.get_temp(id)).unwrap_or((0.0, 0.0));
+        let (el, er) = ((rn - ln).max(0.0), (ln - rn).max(0.0));
+        let (mut lh, mut rh) = (0.0, 0.0);
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = gap;
+            let r = ui.allocate_ui_with_layout(egui::vec2(lw, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                ui.set_width(lw);
+                left(self, ui, el)
+            });
+            lh = r.response.rect.height() - r.inner;
+            let r = ui.allocate_ui_with_layout(egui::vec2(rw, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                ui.set_width(rw);
+                right(self, ui, er)
+            });
+            rh = r.response.rect.height() - r.inner;
+        });
+        if (lh - ln).abs() > 0.5 || (rh - rn).abs() > 0.5 {
+            ui.ctx().data_mut(|d| d.insert_temp(id, (lh, rh)));
+            ui.ctx().request_repaint();
         }
     }
 
@@ -180,7 +227,10 @@ impl App {
                         }
                         _ => {
                             p.text(egui::pos2(r.min.x + 16.0, vy), Align2::LEFT_CENTER, level.to_string(), big, TEXT());
-                            p.text(egui::pos2(r.min.x + 16.0, r.max.y - 18.0), Align2::LEFT_CENTER, crate::progress::title(level), small, MUTED());
+                            p.text(egui::pos2(r.min.x + 16.0, r.max.y - 18.0), Align2::LEFT_CENTER, self.player_title(level), small, {
+                                let t = self.player_title(level);
+                                super::pass_page::title_col(&t, MUTED())
+                            });
                             // XP towards the next level
                             let f = (into as f32 / need.max(1) as f32).clamp(0.0, 1.0);
                             let bar = Rect::from_min_max(egui::pos2(art.min.x, art.center().y + 2.0), egui::pos2(art.max.x, art.center().y + 10.0));
@@ -223,18 +273,70 @@ impl App {
 
     /// Your other hunts, most recent first, each a click from resuming.
     /// Returns false (and draws nothing) when there are none.
-    fn home_runs(&mut self, ui: &mut egui::Ui) -> bool {
+    fn home_runs(&mut self, ui: &mut egui::Ui, extra: f32) -> bool {
         let mut runs: Vec<(u64, u64)> = self.cfg.saved_runs.iter().filter(|r| r.id != self.cfg.run_id).map(|r| (r.id, r.stats.last_unix.max(r.saved_unix))).collect();
-        if runs.is_empty() {
-            return false;
-        }
         runs.sort_by(|a, b| b.1.cmp(&a.1));
         let total = runs.len();
         let mut resume: Option<u64> = None;
+        let mut view: Option<usize> = None;
         let mut all = false;
+        // nothing to resume: show the hunts you've finished instead
+        let mut done: Vec<usize> = (0..self.cfg.history.len()).collect();
+        done.sort_by(|a, b| self.cfg.history[*b].when_unix.cmp(&self.cfg.history[*a].when_unix));
+        let finished_mode = runs.is_empty() && !done.is_empty();
         kit::card(ui, |ui| {
-            all = super::profile_page::card_head(ui, "📜", kit::C_GREEN, "Pick up a hunt", Some(&format!("All runs ({total}) ›")));
+            let (title, link) = if finished_mode {
+                ("Completed hunts", format!("All runs ({}) ›", done.len()))
+            } else if total > 0 {
+                ("Pick up a hunt", format!("All runs ({total}) ›"))
+            } else {
+                ("Pick up a hunt", "Runs ›".to_string())
+            };
+            all = super::profile_page::card_head(ui, if finished_mode { "🏆" } else { "📜" }, kit::C_GREEN, title, Some(&link));
             ui.add_space(8.0);
+            if finished_mode {
+                ui.label(RichText::new("Nothing to pick up right now, so here are the hunts you've finished.").size(12.0).color(MUTED()));
+                ui.add_space(6.0);
+                for (k, i) in done.iter().take(3).enumerate() {
+                    let Some(info) = self.run_info(super::RunRef::Finished(*i)) else { continue };
+                    if k > 0 {
+                        let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), Sense::hover());
+                        ui.painter().line_segment([r.left_center(), r.right_center()], Stroke::new(1.0f32, LINE()));
+                    }
+                    let (r, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 64.0), Sense::hover());
+                    let p = ui.painter_at(r.expand(2.0));
+                    if resp.hovered() {
+                        p.rect_filled(r.expand2(egui::vec2(6.0, 0.0)), 12.0, kit::CARD_HOVER());
+                    }
+                    let col = match info.odds.filter(|o| *o > 1.0) {
+                        Some(o) => super::charts::luck_col(crate::stats::found_by(info.count, o)),
+                        None => kit::C_GREEN,
+                    };
+                    let sc = egui::pos2(r.min.x + 28.0, r.center().y);
+                    p.circle_filled(sc, 26.0, theme::blend(CARD(), col, 0.16));
+                    if let Some((_, sp)) = self.species_of(info.slug.as_deref()) {
+                        // the shiny it ended with
+                        self.draw_sprite_centered(&p, &sp, true, sc, egui::vec2(48.0, 48.0));
+                    }
+                    let x = r.min.x + 66.0;
+                    p.text(egui::pos2(x, r.center().y - 10.0), Align2::LEFT_CENTER, &info.name, crate::fonts::sans_bold_font(14.5), TEXT());
+                    let when = info.ended.map(ago).unwrap_or_default();
+                    p.text(egui::pos2(x, r.center().y + 11.0), Align2::LEFT_CENTER, format!("{} · found {when}", info.method), crate::fonts::sans_font(11.5), MUTED());
+                    let bw = 96.0;
+                    let br = Rect::from_min_size(egui::pos2(r.max.x - bw, r.center().y - 16.0), egui::vec2(bw, 32.0));
+                    let b = ui.put(br, egui::Button::new(RichText::new("View run ›").font(crate::fonts::sans_bold_font(12.5))).fill(kit::btn_fill()).rounding(16.0));
+                    if b.on_hover_text("Open this hunt's stats").clicked() {
+                        view = Some(*i);
+                    }
+                    let nx = br.min.x - 16.0;
+                    p.text(egui::pos2(nx, r.center().y - 9.0), Align2::RIGHT_CENTER, theme::thousands(info.count), crate::fonts::sans_bold_font(16.0), TEXT());
+                    let mult = info.odds.filter(|o| *o > 1.0).map(|o| info.count as f64 / o);
+                    let sub = mult.map_or("encounters".to_string(), |m| format!("{m:.2}× the odds"));
+                    p.text(egui::pos2(nx, r.center().y + 11.0), Align2::RIGHT_CENTER, sub, crate::fonts::sans_font(11.5), if mult.is_some() { super::charts::ink(col) } else { MUTED() });
+                }
+            } else if runs.is_empty() {
+                ui.label(RichText::new("No saved hunts yet. When you change target, the hunt you were on is saved here so you can pick it up again.").size(12.5).color(MUTED()));
+            }
             for (k, (id, last)) in runs.iter().take(3).enumerate() {
                 let Some(info) = self.run_info(super::RunRef::Saved(*id)) else { continue };
                 if k > 0 {
@@ -274,9 +376,16 @@ impl App {
                     p.text(egui::pos2(nx, r.center().y + 11.0), Align2::RIGHT_CENTER, "encounters", crate::fonts::sans_font(11.5), MUTED());
                 }
             }
+            ui.add_space(extra);
         });
         if let Some(id) = resume {
             self.resume_run(id);
+        }
+        if let Some(i) = view {
+            self.setup.scroll_top = true;
+            self.go_to(Tab::Runs);
+            self.setup.view_run = Some(super::RunRef::Finished(i));
+            self.setup.nav_collapsed.retain(|t| *t != Tab::Shiny);
         }
         if all {
             self.go_to(Tab::Runs);
@@ -298,7 +407,17 @@ impl App {
 
     /// What's going on in the Breeding Planner, when something is. Returns
     /// whether it drew anything.
-    fn home_breeding(&mut self, ui: &mut egui::Ui) -> bool {
+    /// Whether there's anything going on in the Breeding Planner to show.
+    fn home_breeding_on(&mut self) -> bool {
+        if self.wiki.is_none() {
+            return false;
+        }
+        let f = self.setup.breed.file();
+        let pair = !f.daycare.a.species.is_empty() && !f.daycare.b.species.is_empty();
+        pair || !f.target.species.is_empty()
+    }
+
+    fn home_breeding(&mut self, ui: &mut egui::Ui, extra: f32) -> bool {
         let Some(w) = self.wiki.clone() else { return false };
         let f = self.setup.breed.file().clone();
         let pair = !f.daycare.a.species.is_empty() && !f.daycare.b.species.is_empty();
@@ -349,6 +468,7 @@ impl App {
                 }
                 ui.label(RichText::new(line).size(12.5).color(MUTED()));
             }
+            ui.add_space(extra);
         });
         if go {
             self.go_to(Tab::Breed);
@@ -357,7 +477,7 @@ impl App {
     }
 
     /// The achievements you're closest to.
-    fn home_almost(&mut self, ui: &mut egui::Ui) {
+    fn home_almost(&mut self, ui: &mut egui::Ui, extra: f32) {
         let l = self.lifetime_full();
         let near = self.near_achievements(&l);
         let mut go = false;
@@ -366,11 +486,11 @@ impl App {
             ui.add_space(6.0);
             if near.is_empty() {
                 ui.label(RichText::new("Start hunting and your next achievements show up here.").size(12.5).color(MUTED()));
-                return;
             }
             for (a, f) in near.iter().take(3) {
                 self.near_row(ui, a, *f, &l);
             }
+            ui.add_space(extra);
         });
         if go {
             self.go_to(Tab::Profile);
@@ -627,7 +747,7 @@ impl App {
     }
 
     /// The last few shinies caught, newest first.
-    fn recent_shinies(&mut self, ui: &mut egui::Ui) {
+    fn recent_shinies(&mut self, ui: &mut egui::Ui, extra: f32) {
         let recent: Vec<(Option<usize>, String, u64, u64)> = self
             .cfg
             .history
@@ -647,17 +767,31 @@ impl App {
             ui.add_space(10.0);
             if recent.is_empty() {
                 ui.label(RichText::new("No shinies yet. Your first one shows up here, with how long it took.").size(12.5).color(MUTED()));
+                ui.add_space(extra);
                 return;
             }
+            // six slots: one row of six when there's room, else two rows of
+            // three; empty slots wait for the next ones
             let w = ui.available_width();
-            let cols = ((w + 8.0) / (96.0 + 8.0)).floor().clamp(1.0, 6.0) as usize;
+            let cols = 3usize;
+            let rows = 6 / cols;
             let cw = ((w - 8.0 * (cols as f32 - 1.0)) / cols as f32).floor();
-            for row in recent.chunks(cols) {
+            let th = 118.0;
+            let sprite_h = 62.0;
+            for row in 0..rows {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
-                    for (idx, name, enc, when) in row {
+                    for c in 0..cols {
+                        let Some((idx, name, enc, when)) = recent.get(row * cols + c) else {
+                            // a faint empty slot
+                            let (r, _) = ui.allocate_exact_size(egui::vec2(cw, th), Sense::hover());
+                            let p = ui.painter_at(r);
+                            p.rect_stroke(r.shrink(0.5), 12.0, Stroke::new(1.0f32, theme::blend(LINE(), GOLD, 0.12)));
+                            p.text(r.center(), Align2::CENTER_CENTER, "?", crate::fonts::sans_bold_font(18.0), MUTED().gamma_multiply(0.35));
+                            continue;
+                        };
                         let k = recent.iter().position(|x| x.3 == *when && x.1 == *name).unwrap_or(0);
-                        let (r, resp) = ui.allocate_exact_size(egui::vec2(cw, 118.0), Sense::click());
+                        let (r, resp) = ui.allocate_exact_size(egui::vec2(cw, th), Sense::click());
                         let p = ui.painter_at(r);
                         let ht = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered(), kit::QUICK);
                         p.rect_filled(r, 12.0, theme::blend(CARD(), GOLD, 0.06 + 0.06 * ht));
@@ -666,7 +800,7 @@ impl App {
                         }
                         if let Some(i) = idx {
                             let sp = self.species[*i].clone();
-                            self.draw_sprite(&p, &sp, true, egui::pos2(r.center().x, r.min.y + 70.0), egui::vec2(cw - 16.0, 62.0));
+                            self.draw_sprite_centered(&p, &sp, true, egui::pos2(r.center().x, r.min.y + (th - 44.0) / 2.0), egui::vec2(cw - 16.0, sprite_h));
                         }
                         theme::sparkle(&p, r.right_top() + egui::vec2(-12.0, 12.0), 4.5, GOLD);
                         p.text(egui::pos2(r.center().x, r.max.y - 34.0), Align2::CENTER_CENTER, name, crate::fonts::sans_bold_font(12.5), TEXT());
@@ -682,8 +816,11 @@ impl App {
                         }
                     }
                 });
-                ui.add_space(8.0);
+                if row + 1 < rows {
+                    ui.add_space(8.0);
+                }
             }
+            ui.add_space(extra);
         });
         if dex || trophy.is_some() {
             self.setup.tab = Tab::Pokedex;

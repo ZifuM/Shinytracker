@@ -536,6 +536,13 @@ pub struct Config {
     pub appearance: Appearance,
     /// Trainer profile name (also used on share images).
     pub trainer_name: String,
+    /// The title picked on the Profile (empty = the level's own title).
+    pub title_choice: String,
+    /// Battle pass rewards claimed (reward ids).
+    pub pass_claimed: Vec<String>,
+    /// The name plate and picture frame worn (reward ids; empty = none).
+    pub plate: String,
+    pub frame: String,
     /// Achievements unlocked, with when.
     pub achievements: Vec<Unlocked>,
     /// One-off things that happened, for fun achievements.
@@ -702,6 +709,10 @@ impl Default for Config {
             poster_look: None,
             appearance: Appearance::default(),
             trainer_name: String::new(),
+            title_choice: String::new(),
+            pass_claimed: Vec::new(),
+            plate: String::new(),
+            frame: String::new(),
             achievements: Vec::new(),
             events: Vec::new(),
             level_seen: 0,
