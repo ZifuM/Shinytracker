@@ -413,11 +413,11 @@ impl App {
                         kit::icon_chip(&p, chip, icon, color, true);
                         let tx = chip.max.x + 12.0;
                         let maxw = r.max.x - tx - 26.0;
-                        p.text(egui::pos2(tx, r.center().y - 8.0), Align2::LEFT_CENTER, name, crate::fonts::sans_bold_font(13.5), TEXT());
+                        let name_r = p.text(egui::pos2(tx, r.center().y - 8.0), Align2::LEFT_CENTER, name, crate::fonts::sans_bold_font(13.5), TEXT());
                         p.text(egui::pos2(tx, r.center().y + 10.0), Align2::LEFT_CENTER, super::charts::clip(ui, about, &crate::fonts::sans_font(11.5), maxw), crate::fonts::sans_font(11.5), MUTED());
                         p.text(egui::pos2(r.max.x - 14.0, r.center().y), Align2::RIGHT_CENTER, "›", egui::FontId::proportional(18.0), if ht > 0.5 { TEXT() } else { MUTED() });
                         if super::shell::is_experimental(*tab) {
-                            kit::exp_badge(&p, egui::pos2(r.max.x - 10.0, r.min.y + 14.0));
+                            kit::warn_triangle(&p, egui::pos2(name_r.max.x + 13.0, name_r.center().y), 13.0, None);
                         }
                         if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                             go = Some(*tab);
@@ -609,8 +609,8 @@ impl App {
                     kit::icon_chip(&p, chip, icon, color, true);
                     let name_r = p.text(egui::pos2(chip.max.x + 12.0, chip.center().y), Align2::LEFT_CENTER, name, crate::fonts::sans_bold_font(15.0), TEXT());
                     p.text(rect.right_top() + egui::vec2(-16.0, 34.0), Align2::RIGHT_CENTER, "›", egui::FontId::proportional(18.0), if hov { TEXT() } else { MUTED() });
-                    if super::shell::is_experimental(*tab) && name_r.max.x + 40.0 < rect.max.x - 32.0 {
-                        kit::exp_badge(&p, rect.right_top() + egui::vec2(-32.0, 34.0));
+                    if super::shell::is_experimental(*tab) {
+                        kit::warn_triangle(&p, egui::pos2(name_r.max.x + 14.0, name_r.center().y), 14.0, None);
                     }
                     let g = p.layout(about.to_string(), crate::fonts::sans_font(12.5), MUTED(), rect.width() - 32.0);
                     p.galley(egui::pos2(rect.min.x + 16.0, chip.max.y + 10.0), g, MUTED());

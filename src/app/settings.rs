@@ -652,18 +652,15 @@ impl App {
                     ui.painter().add(egui::Shape::line(pts.to_vec(), st));
                 }
                 if super::shell::is_experimental(tab) {
-                    // the EXP pill, or a dot on the icon when the name runs
-                    // into it (Damage Calculator in the narrow sidebar)
+                    // the warning triangle, or a small one on the icon when the
+                    // name runs into it (Damage Calculator in the narrow sidebar)
                     // (measured in the regular weight so it doesn't flip when selected)
                     let tw = ui.painter().layout_no_wrap(label.to_string(), crate::fonts::sans_font(13.5), MUTED()).size().x;
-                    let fits = rect.min.x + 38.0 + tw + 4.0 < right - 28.0;
+                    let fits = rect.min.x + 38.0 + tw + 6.0 < right - 15.0;
                     let mark = if fits {
                         kit::exp_badge(ui.painter(), egui::pos2(right, y - 1.0))
                     } else {
-                        let c = egui::pos2(rect.min.x + 26.0, y - 8.0);
-                        ui.painter().circle_filled(c, 5.0, kit::SIDEBAR());
-                        ui.painter().circle_filled(c, 3.5, kit::C_ORANGE);
-                        Rect::from_center_size(c, egui::vec2(10.0, 10.0))
+                        kit::warn_triangle(ui.painter(), egui::pos2(rect.min.x + 27.0, y - 7.0), 10.0, Some(kit::SIDEBAR()))
                     };
                     ui.interact(mark, egui::Id::new(("nav-exp-classic", label)), egui::Sense::hover()).on_hover_text(kit::EXPERIMENTAL_TIP);
                 }

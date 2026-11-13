@@ -313,10 +313,8 @@ impl App {
                 }
                 if is_experimental(tab) {
                     let mark = if compact {
-                        let c = resp.rect.center() + egui::vec2(12.0, -12.0);
-                        ui.painter().circle_filled(c, 5.0, SIDEBAR());
-                        ui.painter().circle_filled(c, 3.5, kit::C_ORANGE);
-                        egui::Rect::from_center_size(c, egui::vec2(10.0, 10.0))
+                        let c = resp.rect.center() + egui::vec2(12.0, -11.0);
+                        kit::warn_triangle(ui.painter(), c, 11.0, Some(SIDEBAR()))
                     } else {
                         kit::exp_badge(ui.painter(), egui::pos2(resp.rect.max.x - 10.0, resp.rect.center().y))
                     };

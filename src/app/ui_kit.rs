@@ -819,18 +819,46 @@ pub fn last_card_rect(ui: &Ui) -> Option<egui::Rect> {
     ui.ctx().data(|d| d.get_temp::<egui::Rect>(egui::Id::new("kit-last-card")))
 }
 
-/// The pages still being worked on: they carry an "EXP" mark in the sidebar.
+/// The pages still being worked on: they carry a ⚠ warning triangle.
 pub const EXPERIMENTAL_TIP: &str = "Experimental: still being built and tested, so things may change or not work yet";
 
-/// A small "EXP" pill, its right edge centred on `right`; returns its rect.
+/// The yellow warning triangle with a black "!", centred on `c`, `size`
+/// points wide. Drawn from shapes so it looks the same in every font.
+/// `ring` draws a thin outline in that colour so it stands out on an icon.
+pub fn warn_triangle(p: &egui::Painter, c: egui::Pos2, size: f32, ring: Option<Color32>) -> Rect {
+    let yellow = Color32::from_rgb(250, 204, 21);
+    let ink = Color32::from_rgb(24, 22, 18);
+    let h = size * 0.88;
+    let top = c + egui::vec2(0.0, -h / 2.0);
+    let (bl, br) = (c + egui::vec2(-size / 2.0, h / 2.0), c + egui::vec2(size / 2.0, h / 2.0));
+    // a darker edge keeps it readable on light backgrounds
+    let ring = ring.or_else(|| theme::pal().light.then(|| Color32::from_rgb(176, 128, 8)));
+    if let Some(r) = ring {
+        let k = (size * 0.14).max(1.5);
+        p.add(egui::Shape::convex_polygon(
+            vec![top + egui::vec2(0.0, -k * 1.3), br + egui::vec2(k * 1.15, k * 0.7), bl + egui::vec2(-k * 1.15, k * 0.7)],
+            r,
+            Stroke::NONE,
+        ));
+    }
+    // fill, then a rounded outline in the same yellow softens the corners
+    p.add(egui::Shape::convex_polygon(vec![top, br, bl], yellow, Stroke::NONE));
+    let soft = Stroke::new((size * 0.14).max(1.2), yellow);
+    p.add(egui::Shape::closed_line(vec![top, br, bl], soft));
+    // the "!": a bar and a dot
+    let w = (size * 0.13).max(1.4);
+    let bar_top = c + egui::vec2(0.0, -h * 0.16);
+    let bar_bot = c + egui::vec2(0.0, h * 0.17);
+    p.line_segment([bar_top, bar_bot], Stroke::new(w, ink));
+    p.circle_filled(c + egui::vec2(0.0, h * 0.34), w * 0.62, ink);
+    Rect::from_center_size(c, egui::vec2(size + 2.0, h + 2.0))
+}
+
+/// The experimental mark beside a name: the warning triangle with its right
+/// edge on `right`; returns its rect.
 pub fn exp_badge(p: &egui::Painter, right: egui::Pos2) -> Rect {
-    let col = C_ORANGE;
-    let g = p.layout_no_wrap("EXP".to_string(), crate::fonts::sans_bold_font(9.0), super::charts::ink(col));
-    let r = Rect::from_min_size(egui::pos2(right.x - g.size().x - 10.0, right.y - 8.0), egui::vec2(g.size().x + 10.0, 16.0));
-    p.rect_filled(r, 8.0, super::charts::faint(col, 0.18));
-    p.rect_stroke(r, 8.0, Stroke::new(1.0f32, super::charts::faint(col, 0.45)));
-    p.galley(egui::pos2(r.min.x + 5.0, r.center().y - g.size().y / 2.0), g, Color32::WHITE);
-    r
+    let size = 15.0;
+    warn_triangle(p, egui::pos2(right.x - size / 2.0, right.y), size, None)
 }
 
 /// Rounded card container.
