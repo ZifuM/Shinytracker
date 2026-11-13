@@ -1258,11 +1258,13 @@ impl App {
                 *x += 10.0;
             };
 
+            // several targets take turns, one at a time
+            let turn = this.bar_rotation(ctx);
             // Sprite
             if m.sprites {
                 let foot = egui::pos2(x + 22.0, top + BAR_H - 6.0);
                 theme::platform(&p, foot, 18.0, 4.5);
-                match this.target_idx().map(|i| this.species[i].clone()) {
+                match turn.as_ref().map(|t| t.0).or_else(|| this.target_idx()).map(|i| this.species[i].clone()) {
                     Some(sp) => {
                         this.draw_sprite(&p, &sp, true, foot + egui::vec2(0.0, 2.0), egui::vec2(44.0, 40.0));
                     }
@@ -1292,10 +1294,21 @@ impl App {
             } else if m.target || m.counter {
                 let mut w: f32 = 0.0;
                 if m.target {
-                    let name = this.targets_title().map(|t| t.to_uppercase()).unwrap_or_else(|| "PICK A TARGET".to_string());
                     let col = if target_flash && blink { GOLD } else if this.target_idx().is_some() { Color32::WHITE } else { MUTED() };
                     let y = if m.counter { top + 15.0 } else { mid };
-                    w = w.max(outlined_text(&p, egui::pos2(x, y), Align2::LEFT_CENTER, &name, 7.5, col).width());
+                    match &turn {
+                        Some((_, name, k, n)) => {
+                            // the current one's name, "1/3" after it; room for the longest
+                            let r = outlined_text(&p, egui::pos2(x, y), Align2::LEFT_CENTER, &name.to_uppercase(), 7.5, col);
+                            let widest = this.bar_names().iter().map(|nm| p.layout_no_wrap(nm.clone(), crate::fonts::pixel_font(7.5), Color32::WHITE).size().x).fold(r.width(), f32::max);
+                            let tag = tiny(&p, egui::pos2(x + widest + 6.0, y), Align2::LEFT_CENTER, &format!("{}/{}", k + 1, n), MUTED());
+                            w = w.max(widest + 6.0 + tag.width());
+                        }
+                        None => {
+                            let name = this.targets_title().map(|t| t.to_uppercase()).unwrap_or_else(|| "PICK A TARGET".to_string());
+                            w = w.max(outlined_text(&p, egui::pos2(x, y), Align2::LEFT_CENTER, &name, 7.5, col).width());
+                        }
+                    }
                 }
                 if m.counter {
                     let y = if m.target { top + 34.0 } else { mid };

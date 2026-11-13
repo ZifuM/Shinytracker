@@ -15,12 +15,20 @@ use std::time::{Duration, Instant};
 
 /// How long after a battle starts to keep looking for the shiny star.
 const STAR_WINDOW_MS: u64 = 8000;
-/// Skip the battle intro (boxes sliding in, grass sparkles).
-const STAR_IGNORE_MS: u64 = 600;
+/// Skip the very start of the battle intro. Kept short so the alert beats a
+/// sped-up game (x4): a sliding name box can't pass the same-place check
+/// below anyway.
+const STAR_IGNORE_MS: u64 = 150;
 /// A ★ must be seen this many looks in a row, in the same place...
-const STAR_FRAMES: u32 = 3;
+const STAR_FRAMES: u32 = 2;
 /// ...over at least this long.
-const STAR_HOLD_MS: u64 = 300;
+const STAR_HOLD_MS: u64 = 60;
+/// While a ★ could show up, the name boxes are looked at this often (a
+/// cheap check: no text reading), so the alert comes as soon as it can.
+const STAR_FAST_MS: u64 = 30;
+/// The quick looks run this long into a battle (when the ★ shows, even at
+/// normal game speed); after it, the usual pace until the window ends.
+const STAR_FAST_UNTIL_MS: u64 = 4000;
 
 /// The sensitivity setting -> smallest ★ size in pixels (default 60 -> 15).
 fn star_min_px(threshold: u32) -> u32 {
@@ -261,7 +269,9 @@ fn run(
                 idle_reason: if s.paused { Some("Paused") } else { None },
                 ..Default::default()
             }));
-            std::thread::sleep(Duration::from_millis(200));
+            // Look again soon while a ★ could still show up.
+            let watching = s.shiny_star_alert && !star_done && !s.name_regions.is_empty() && since.is_some_and(|d| d <= Duration::from_millis(STAR_FAST_UNTIL_MS));
+            std::thread::sleep(Duration::from_millis(if watching { STAR_FAST_MS } else { 200 }));
             continue;
         }
 
@@ -400,6 +410,49 @@ fn run(
         }));
 
         let wait = s.interval_ms.saturating_sub(loop_ms as u64).max(30);
-        std::thread::sleep(Duration::from_millis(wait));
+        // Early in a battle, fill the wait with quick ★ looks (no text
+        // reading) instead of sleeping through it.
+        let until = Instant::now() + Duration::from_millis(wait);
+        while s.shiny_star_alert && !star_done && Instant::now() < until {
+            let age = tracker.battle_age_ms(clock.elapsed().as_millis() as u64);
+            if !age.is_some_and(|a| a <= STAR_FAST_UNTIL_MS) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(STAR_FAST_MS).min(until.saturating_duration_since(Instant::now())));
+            if !age.is_some_and(|a| a >= STAR_IGNORE_MS) {
+                continue;
+            }
+            let Ok(frame) = capturer.grab(s.monitor) else { break };
+            for (i, r) in s.name_regions.iter().enumerate() {
+                let found = frame.crop(*r).and_then(|c| c.find_star(star_min_px(s.star_threshold)));
+                if star_check(&mut star_track, i, found) {
+                    star_done = true;
+                    send(WorkerMsg::ShinyStar { plate: i, yellow: found.map_or(0, |f| f.2) });
+                    break;
+                }
+            }
+        }
+        let left = until.saturating_duration_since(Instant::now());
+        if !left.is_zero() {
+            std::thread::sleep(left);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn star_needs_two_looks_in_place() {
+        let mut t: StarTrack = Vec::new();
+        assert!(!star_check(&mut t, 0, Some((10.0, 5.0, 40))));
+        // a sliding name box: moved too far, starts over
+        assert!(!star_check(&mut t, 0, Some((30.0, 5.0, 40))));
+        std::thread::sleep(Duration::from_millis(STAR_HOLD_MS + 5));
+        // held still long enough: shiny
+        assert!(star_check(&mut t, 0, Some((31.0, 5.0, 40))));
+        // gone: forgotten
+        assert!(!star_check(&mut t, 0, None));
     }
 }

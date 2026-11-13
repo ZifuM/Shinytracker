@@ -107,7 +107,7 @@ impl App {
         let (r, _) = ui.allocate_exact_size(egui::vec2(size, size), Sense::hover());
         let p = ui.painter_at(r);
         p.rect_filled(r, size / 2.0, CARD_HOVER());
-        match self.target_idx() {
+        match self.shown_target_idx(ui.ctx()) {
             Some(i) => {
                 let sp = self.species[i].clone();
                 self.draw_sprite(&p, &sp, true, r.center_bottom() - egui::vec2(0.0, size * 0.06), egui::vec2(size * 0.94, size * 0.9));

@@ -365,7 +365,9 @@ impl App {
         let sc = pos2(rect.min.x + 104.0, rect.center().y);
         p.circle_filled(sc, 78.0, ch::faint(col, 0.06));
         p.circle_filled(sc, 58.0, ch::faint(col, 0.12));
-        if let Some((_, sp)) = self.species_of(info.slug.as_deref()) {
+        // the hunt on now: several targets take turns
+        let shown = if info.current { self.shown_target_idx(ui.ctx()).map(|i| (i, self.species[i].clone())) } else { self.species_of(info.slug.as_deref()) };
+        if let Some((_, sp)) = shown {
             self.draw_sprite_centered(&p, &sp, true, sc, vec2(112.0, 112.0));
         }
         let x = rect.min.x + 208.0;

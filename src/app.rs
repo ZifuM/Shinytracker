@@ -91,6 +91,9 @@ pub const MINI_SIZE: [f32; 2] = [84.0, 96.0];
 pub(crate) const GIFT_PLATE: usize = 99;
 
 /// The line under "SHINY!" on the alert banner.
+/// How long each target shows on a bar overlay when a hunt has several.
+const BAR_ROTATE_MS: u64 = 5000;
+
 fn shiny_alert_text(plate_idx: usize) -> String {
     if plate_idx == GIFT_PLATE {
         "Your starter is shiny!".to_string()
@@ -680,6 +683,33 @@ impl App {
     }
 
     /// "Scyther", "Scyther + Scizor", "Scyther + Scizor + 2 more".
+    /// On the bar overlays a hunt with several targets shows one at a time,
+    /// each for `BAR_ROTATE_MS`: (species index, its name, which one, how many).
+    /// None for a hunt with one target (or none).
+    fn bar_rotation(&self, ctx: &egui::Context) -> Option<(usize, String, usize, usize)> {
+        let all = self.all_target_idx();
+        if all.len() < 2 {
+            return None;
+        }
+        let t = self.t_ms();
+        let k = ((t / BAR_ROTATE_MS) as usize) % all.len();
+        // come back when it's the next one's turn
+        ctx.request_repaint_after(std::time::Duration::from_millis(BAR_ROTATE_MS - t % BAR_ROTATE_MS + 5));
+        Some((all[k], self.species[all[k]].name.to_string(), k, all.len()))
+    }
+
+    /// The target whose sprite to show on a hunt banner: with several
+    /// targets they take turns like on the bar overlay (5 seconds each).
+    fn shown_target_idx(&self, ctx: &egui::Context) -> Option<usize> {
+        self.bar_rotation(ctx).map(|t| t.0).or_else(|| self.target_idx())
+    }
+
+    /// The widest of the targets' names on the bar, so the bar keeps one
+    /// width while they take turns.
+    fn bar_names(&self) -> Vec<String> {
+        self.all_target_idx().iter().map(|&i| self.species[i].name.to_uppercase()).collect()
+    }
+
     fn targets_title(&self) -> Option<String> {
         let all = self.all_target_idx();
         let name = |k: usize| self.species[all[k]].name;

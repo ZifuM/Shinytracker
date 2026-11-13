@@ -666,7 +666,7 @@ impl App {
             for (rad, alpha) in [(s * 0.6, 6u8), (s * 0.45, 8), (s * 0.31, 12)] {
                 pc.circle_filled(sprite_c, rad, Color32::from_rgba_premultiplied(alpha, alpha, alpha, alpha));
             }
-            match self.target_idx() {
+            match self.shown_target_idx(ui.ctx()) {
                 Some(i) => {
                     let sp = self.species[i].clone();
                     self.draw_sprite(&pc, &sp, true, sprite_c + egui::vec2(0.0, s * 0.32), egui::vec2(s * 0.78, s * 0.72));

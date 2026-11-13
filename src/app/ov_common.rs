@@ -885,8 +885,10 @@ impl App {
                 (lk.divider)(&p, egui::pos2(*x, top + 12.0), egui::pos2(*x, top + BAR_H - 12.0));
                 *x += 10.0;
             };
+            // several targets take turns, one at a time
+            let turn = this.bar_rotation(ctx);
             if m.sprites {
-                match v.target.clone() {
+                match turn.as_ref().map(|t| this.species[t.0].clone()).or_else(|| v.target.clone()) {
                     Some(sp) => {
                         this.draw_sprite(&p, &sp, true, egui::pos2(x + 22.0, top + BAR_H - 5.0), egui::vec2(44.0, 42.0));
                     }
@@ -906,10 +908,21 @@ impl App {
             } else if m.target || m.counter {
                 let mut w: f32 = 0.0;
                 if m.target {
-                    let name = v.title.clone().unwrap_or_else(|| "Pick a target".to_string()).to_uppercase();
                     let col = if v.flash && v.blink { GOLD } else if v.target.is_some() { lk.text } else { lk.muted };
                     let y = if m.counter { top + 15.0 } else { mid };
-                    w = w.max(p.text(egui::pos2(x, y), Align2::LEFT_CENTER, name, (lk.label)(10.5), col).width());
+                    match &turn {
+                        Some((_, name, k, n)) => {
+                            // the current one's name, "1/3" after it; room for the longest
+                            let r = p.text(egui::pos2(x, y), Align2::LEFT_CENTER, name.to_uppercase(), (lk.label)(10.5), col);
+                            let widest = this.bar_names().iter().map(|nm| p.layout_no_wrap(nm.clone(), (lk.label)(10.5), col).size().x).fold(r.width(), f32::max);
+                            let tag = p.text(egui::pos2(x + widest + 6.0, y), Align2::LEFT_CENTER, format!("{}/{}", k + 1, n), (lk.label)(9.0), lk.muted);
+                            w = w.max(widest + 6.0 + tag.width());
+                        }
+                        None => {
+                            let name = v.title.clone().unwrap_or_else(|| "Pick a target".to_string()).to_uppercase();
+                            w = w.max(p.text(egui::pos2(x, y), Align2::LEFT_CENTER, name, (lk.label)(10.5), col).width());
+                        }
+                    }
                 }
                 if m.counter {
                     let y = if m.target { top + 33.0 } else { mid };

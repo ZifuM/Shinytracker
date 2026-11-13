@@ -154,7 +154,9 @@ impl App {
         }
         p.rect_stroke(rect, 20.0, egui::Stroke::new(1.0f32, kit::LINE()));
         let sc = egui::pos2(rect.min.x + 120.0, rect.center().y);
-        if let Some((_, sp)) = self.species_of(info.slug.as_deref()) {
+        // the hunt on now: several targets take turns
+        let shown = if info.current { self.shown_target_idx(ui.ctx()).map(|i| (i, self.species[i].clone())) } else { self.species_of(info.slug.as_deref()) };
+        if let Some((_, sp)) = shown {
             self.draw_sprite_centered(&p, &sp, true, sc, egui::vec2(170.0, 170.0));
         }
         theme::sparkle(&p, sc + egui::vec2(64.0, -62.0), 9.0, GOLD);
