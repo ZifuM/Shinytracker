@@ -37,13 +37,17 @@ pub(super) struct BreedState {
     pub boxv: super::breed_box::BoxView,
     /// A short "done" message: (text, when).
     pub flash: Option<(String, Instant)>,
+    pub moves: super::breed_moves::MovesView,
+    pub plan: super::breed_planner::PlanView,
 }
 
 /// The Breeding Planner's pages.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub(super) enum BreedView {
     #[default]
+    Plan,
     DayCare,
+    Moves,
     Breeders,
     Log,
 }
@@ -227,7 +231,9 @@ impl App {
         };
         let (nb, nl) = (self.setup.breed.file().breeders.len(), self.setup.breed.file().log.len());
         let tabs = [
+            (BreedView::Plan, "Plan".to_string()),
             (BreedView::DayCare, "Day Care".to_string()),
+            (BreedView::Moves, "Egg moves".to_string()),
             (BreedView::Breeders, if nb > 0 { format!("Breeders  {nb}") } else { "Breeders".into() }),
             (BreedView::Log, if nl > 0 { format!("Hatch log  {nl}") } else { "Hatch log".into() }),
         ];
@@ -249,6 +255,8 @@ impl App {
             }
         }
         match view {
+            BreedView::Plan => return self.page_breed_plan(ui, &w),
+            BreedView::Moves => return self.page_egg_moves(ui, &w),
             BreedView::Breeders => return self.page_breeders(ui, &w),
             BreedView::Log => return self.page_hatch_log(ui, &w),
             BreedView::DayCare => {}

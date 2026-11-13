@@ -4,6 +4,7 @@
 mod app;
 mod battle;
 mod breed;
+mod breed_plan;
 mod calc;
 mod canvas;
 mod capture;

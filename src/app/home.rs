@@ -38,6 +38,9 @@ impl App {
                     ui.set_width(right_w);
                     self.home_almost(ui);
                     ui.add_space(gap);
+                    if self.home_breeding(ui) {
+                        ui.add_space(gap);
+                    }
                     self.recent_shinies(ui);
                 });
             });
@@ -49,6 +52,9 @@ impl App {
             }
             self.home_almost(ui);
             ui.add_space(gap);
+            if self.home_breeding(ui) {
+                ui.add_space(gap);
+            }
             self.recent_shinies(ui);
             ui.add_space(gap);
             self.home_rare(ui);
@@ -288,6 +294,66 @@ impl App {
         if self.rare_home_titled(ui, Some(&head)) {
             self.go_to(Tab::Map);
         }
+    }
+
+    /// What's going on in the Breeding Planner, when something is. Returns
+    /// whether it drew anything.
+    fn home_breeding(&mut self, ui: &mut egui::Ui) -> bool {
+        let Some(w) = self.wiki.clone() else { return false };
+        let f = self.setup.breed.file().clone();
+        let pair = !f.daycare.a.species.is_empty() && !f.daycare.b.species.is_empty();
+        if !pair && f.target.species.is_empty() {
+            return false;
+        }
+        let mut go = false;
+        kit::card(ui, |ui| {
+            go = super::profile_page::card_head(ui, "🐣", kit::C_PINK, "Breeding", Some("Open ›"));
+            ui.add_space(6.0);
+            let name = |id: &str| w.mon(id).map(|m| m.name.clone()).unwrap_or_else(|| id.to_string());
+            if !f.target.species.is_empty() {
+                let t = &f.target;
+                let stats = t.ivs.iter().filter(|x| **x).count();
+                let mut what = vec![];
+                if let Some(n) = &t.nature {
+                    what.push(n.clone());
+                }
+                if stats > 0 {
+                    what.push(format!("{stats} at 31"));
+                }
+                if t.shiny {
+                    what.push("shiny".into());
+                }
+                let extra = if what.is_empty() { String::new() } else { format!(" ({})", what.join(", ")) };
+                ui.horizontal(|ui| {
+                    let (r, _) = ui.allocate_exact_size(egui::vec2(40.0, 40.0), Sense::hover());
+                    let p = ui.painter().clone();
+                    self.team_sprite(&p, &t.species, t.shiny, r.center(), egui::vec2(38.0, 38.0));
+                    ui.label(RichText::new(format!("Planning a {}{extra}", name(&t.species))).size(13.0).color(TEXT()));
+                });
+            }
+            if pair {
+                let fam = crate::breed::family_pair(&w, &f.daycare.a, &f.daycare.b);
+                let mine: Vec<&crate::breed::Hatch> = f.log.iter().filter(|h| h.pair == fam).collect();
+                let goal = if f.daycare.goal_set { f.daycare.goal.clone() } else { crate::breed::Goal::from_parents(&f.daycare.a, &f.daycare.b) };
+                let hits = mine.iter().filter(|h| h.hits(&goal)).count();
+                let shinies = mine.iter().filter(|h| h.shiny).count();
+                let mut line = format!("In the Day Care: {} × {}", name(&f.daycare.a.species), name(&f.daycare.b.species));
+                if !mine.is_empty() {
+                    line.push_str(&format!(" · {} Egg{} logged", mine.len(), if mine.len() == 1 { "" } else { "s" }));
+                    if hits > 0 {
+                        line.push_str(&format!(", {hits} the one you want"));
+                    }
+                    if shinies > 0 {
+                        line.push_str(&format!(", {shinies} shiny"));
+                    }
+                }
+                ui.label(RichText::new(line).size(12.5).color(MUTED()));
+            }
+        });
+        if go {
+            self.go_to(Tab::Breed);
+        }
+        true
     }
 
     /// The achievements you're closest to.

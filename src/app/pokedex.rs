@@ -1187,10 +1187,13 @@ impl App {
             }
             State::Ready(_) => {}
         }
-        let left = |ui: &mut egui::Ui| {
+        let mut breed_go: Option<BreedGo> = None;
+        let mut left = |ui: &mut egui::Ui| {
             glance_card(ui, e);
             ui.add_space(16.0);
-            breeding_card(ui, e);
+            if let Some(g) = breeding_card(ui, m, e) {
+                breed_go = Some(g);
+            }
         };
         let right = |ui: &mut egui::Ui| {
             stats_card(ui, m, e);
@@ -1217,6 +1220,11 @@ impl App {
             left(ui);
             ui.add_space(16.0);
             right(ui);
+        }
+        match breed_go {
+            Some(BreedGo::Plan) => self.open_breed_plan(crate::breed_plan::Target { species: m.id.clone(), ..Default::default() }, None),
+            Some(BreedGo::Partners) => self.open_breed_partners(&m.id),
+            None => {}
         }
         ui.add_space(12.0);
         ui.horizontal_wrapped(|ui| {
@@ -1526,32 +1534,55 @@ fn glance_card(ui: &mut egui::Ui, e: Option<&crate::dexextra::Extra>) {
     });
 }
 
-/// Egg groups, egg cycles and the gender split as a bar.
-fn breeding_card(ui: &mut egui::Ui, e: Option<&crate::dexextra::Extra>) {
+/// What the Breeding card's buttons ask for.
+enum BreedGo {
+    Plan,
+    Partners,
+}
+
+/// Egg groups, egg cycles, the gender split as a bar, and the way into the
+/// Breeding Planner. Uses the app's own breeding data, so it works offline.
+fn breeding_card(ui: &mut egui::Ui, m: &crate::wiki::Mon, e: Option<&crate::dexextra::Extra>) -> Option<BreedGo> {
+    let info = crate::breed::info(&m.id);
+    let mut go = None;
     kit::card(ui, |ui| {
         ui.set_width(ui.available_width());
         card_title(ui, "Breeding");
         let cw = ((ui.available_width() - 16.0) / 2.0).floor();
+        let groups = match info {
+            Some(i) => i.groups.join(", "),
+            None => val(e, |e| e.egg_groups.join(", ")),
+        };
+        let cycles = match info {
+            Some(i) => format!("{} (about {} steps)", i.cycles, super::sim_home::thousands(crate::breed::hatch_steps(i.cycles, false, false))),
+            None => val(e, |e| e.egg_cycles.clone()),
+        };
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = 16.0;
-            fact(ui, cw, "Egg groups", &val(e, |e| e.egg_groups.join(", ")));
-            fact(ui, cw, "Egg cycles", &val(e, |e| e.egg_cycles.clone()));
+            fact(ui, cw, "Egg groups", &groups);
+            fact(ui, cw, "Egg cycles", &cycles);
         });
         ui.add_space(12.0);
         ui.label(RichText::new("Gender").size(11.5).color(MUTED()));
         ui.add_space(4.0);
-        let g = e.map(|e| e.gender.clone()).unwrap_or_default();
-        let male = g.split('%').next().and_then(|s| s.trim().parse::<f32>().ok()).filter(|_| g.contains("male"));
+        // male share 0..=1, None when genderless
+        let male: Option<f32> = match info {
+            Some(i) => i.female_chance().map(|f| 1.0 - f as f32),
+            None => {
+                let g = e.map(|e| e.gender.clone()).unwrap_or_default();
+                g.split('%').next().and_then(|s| s.trim().parse::<f32>().ok()).filter(|_| g.contains("male")).map(|v| v / 100.0)
+            }
+        };
         let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 10.0), Sense::hover());
         let p = ui.painter();
         let blue = Color32::from_rgb(86, 150, 240);
         let pink = Color32::from_rgb(240, 120, 170);
         match male {
             Some(mp) => {
-                let mw = r.width() * (mp / 100.0).clamp(0.0, 1.0);
+                let mw = r.width() * mp.clamp(0.0, 1.0);
                 p.rect_filled(r, 5.0, pink);
                 if mw > 0.0 {
-                    let rounding = if mp >= 100.0 { egui::Rounding::same(5.0) } else { egui::Rounding { nw: 5.0, sw: 5.0, ne: 0.0, se: 0.0 } };
+                    let rounding = if mp >= 1.0 { egui::Rounding::same(5.0) } else { egui::Rounding { nw: 5.0, sw: 5.0, ne: 0.0, se: 0.0 } };
                     p.rect_filled(Rect::from_min_size(r.min, vec2(mw, r.height())), rounding, blue);
                 }
             }
@@ -1560,8 +1591,32 @@ fn breeding_card(ui: &mut egui::Ui, e: Option<&crate::dexextra::Extra>) {
             }
         }
         ui.add_space(4.0);
-        ui.label(RichText::new(if g.is_empty() { if e.is_some() { "—".to_string() } else { "…".to_string() } } else { g.replace("male,", "male ·") }).size(12.5).color(TEXT()));
+        let label = match info {
+            Some(i) => i.gender_label().to_string(),
+            None => e.map(|e| e.gender.replace("male,", "male ·")).unwrap_or_else(|| "…".into()),
+        };
+        ui.label(RichText::new(label).size(12.5).color(TEXT()));
+        // Into the Breeding Planner.
+        if let Some(i) = info {
+            ui.add_space(10.0);
+            if i.no_eggs() {
+                ui.label(RichText::new("Can't make Eggs itself.").size(12.5).color(MUTED()));
+            }
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(8.0, 6.0);
+                if kit::accent_button_w(ui, egui::Button::new(RichText::new("🐣  Plan breeding it").size(12.5)), 8.0, 0.0)
+                    .on_hover_text("Open the Breeding Planner with this as the goal")
+                    .clicked()
+                {
+                    go = Some(BreedGo::Plan);
+                }
+                if !i.no_eggs() && super::team_home::soft(ui, "Who it breeds with").on_hover_text("Open the Day Care with it, to see every partner").clicked() {
+                    go = Some(BreedGo::Partners);
+                }
+            });
+        }
     });
+    go
 }
 
 fn stat_color(v: u32) -> Color32 {

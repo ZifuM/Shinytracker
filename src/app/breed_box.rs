@@ -87,7 +87,7 @@ fn stat_pills(p: &egui::Painter, at: egui::Pos2, ivs: &[Option<u8>; 6], w: f32) 
 }
 
 /// A small rounded tag; returns its width.
-fn tag(p: &egui::Painter, at: egui::Pos2, text: &str, col: Color32) -> f32 {
+pub(super) fn tag(p: &egui::Painter, at: egui::Pos2, text: &str, col: Color32) -> f32 {
     let g = p.layout_no_wrap(text.to_string(), crate::fonts::sans_bold_font(10.5), super::charts::ink(col));
     let r = Rect::from_min_size(at, g.size() + egui::vec2(14.0, 8.0));
     p.rect_filled(r, r.height() / 2.0, super::charts::faint(col, 0.16));
@@ -641,15 +641,18 @@ impl App {
                     f.log[i].kept = Some(id);
                     self.setup.breed.flash = Some((format!("Kept the {} in your Breeders.", name_of(w, &h.species)), Instant::now()));
                 }
-                's' => {
+                's' | 't' => {
                     let h = f.log[i].clone();
-                    let mut p = h.to_parent();
-                    p.other_trainer = false;
+                    let child = h.to_parent();
                     let name = name_of(w, &h.species);
-                    let (_, carried) = place(&mut f.daycare, p);
-                    let msg = match carried {
-                        Some(item) => format!("The {name} is in the Day Care now, holding the {item} its parent had."),
-                        None => format!("The {name} is in the Day Care now."),
+                    let old = if a == 's' { &mut f.daycare.a } else { &mut f.daycare.b };
+                    let was = if old.is_ditto() { "Ditto".to_string() } else { name_of(w, &old.species) };
+                    let held = old.held.clone();
+                    let ability = if old.is_ditto() { child.ability } else { old.ability };
+                    *old = Parent { held: held.clone(), ability, ..child };
+                    let msg = match held {
+                        Held::Nothing => format!("The {name} took the {was}'s place in the Day Care."),
+                        h => format!("The {name} took the {was}'s place in the Day Care, holding the {}.", h.name()),
                     };
                     self.setup.breed.flash = Some((msg, Instant::now()));
                 }
@@ -855,12 +858,11 @@ impl App {
             tx += tag(&p, egui::pos2(tx, r.center().y - 10.0), "THE ONE", kit::C_GREEN) + 4.0;
         }
         let _ = tx;
-        // Better than the parent it would stand in for?
+        // Better than a parent it could stand in for?
         let mine = h.to_parent();
-        let rival = [&dc.a, &dc.b]
-            .into_iter()
-            .find(|q| !q.is_ditto() && !mine.is_ditto() && q.gender() == mine.gender() && breed::baby_of(w, &q.species) == breed::baby_of(w, &mine.species));
-        let better = h.pair == breed::family_pair(w, &dc.a, &dc.b) && rival.is_some_and(|q| mine.goal_score(goal) > q.goal_score(goal));
+        let slot = (h.pair == breed::family_pair(w, &dc.a, &dc.b)).then(|| crate::breed_plan::swap_slot(w, &dc.a, &dc.b, &mine, goal)).flatten();
+        let rival = slot.map(|i| if i == 0 { &dc.a } else { &dc.b });
+        let better = slot.is_some();
         let br = Rect::from_min_max(egui::pos2(r.max.x - 300.0, r.min.y), r.max);
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(br.shrink2(egui::vec2(8.0, 0.0))).layout(egui::Layout::right_to_left(egui::Align::Center)));
         child.spacing_mut().item_spacing.x = 6.0;
@@ -878,7 +880,7 @@ impl App {
                 .on_hover_text(format!("Better than your {} for what you want: put it in the Day Care instead", who.to_lowercase()))
                 .clicked()
             {
-                out = Some('s');
+                out = Some(if slot == Some(0) { 's' } else { 't' });
             }
         }
         ui.add_space(6.0);

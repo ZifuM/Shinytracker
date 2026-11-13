@@ -956,11 +956,18 @@ pub struct BreedFile {
     pub log: Vec<Hatch>,
     /// Add each logged Egg to the Masuda hunt's count.
     pub count_hunt: bool,
+    /// The Plan: what you're breeding for, steps you ticked, items you have.
+    pub target: crate::breed_plan::Target,
+    pub plan_done: Vec<String>,
+    pub have_items: Vec<String>,
+    /// The egg move finder: for which Pokémon, which move.
+    pub finder_species: String,
+    pub finder_move: String,
 }
 
 impl BreedFile {
     fn has_data(&self) -> bool {
-        !self.daycare.a.species.is_empty() || !self.daycare.b.species.is_empty() || !self.breeders.is_empty() || !self.log.is_empty()
+        !self.daycare.a.species.is_empty() || !self.daycare.b.species.is_empty() || !self.breeders.is_empty() || !self.log.is_empty() || !self.target.species.is_empty()
     }
 
     /// A new id no breeder or hatch uses.

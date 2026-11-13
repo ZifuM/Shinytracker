@@ -375,6 +375,7 @@ impl App {
         let mut open: Option<Picker> = None;
         let mut open_r: Option<Picker> = None;
         let mut to_dex = false;
+        let mut to_breed = false;
         let mut left = |app: &mut App, ui: &mut egui::Ui, m: &mut Member| {
             kit::card(ui, |ui| {
                 ui.set_width(left_w - 32.0);
@@ -460,9 +461,15 @@ impl App {
                     ui.end_row();
                 });
                 ui.add_space(10.0);
-                if ui.link(RichText::new("Open in the Pokédex ›").size(12.0)).clicked() {
-                    to_dex = true;
-                }
+                ui.horizontal(|ui| {
+                    if ui.link(RichText::new("Open in the Pokédex ›").size(12.0)).clicked() {
+                        to_dex = true;
+                    }
+                    ui.add_space(8.0);
+                    if ui.link(RichText::new("Plan breeding it ›").size(12.0)).on_hover_text("Open the Breeding Planner with this set as the goal: nature, stats at 31, Ability and egg moves").clicked() {
+                        to_breed = true;
+                    }
+                });
             });
         };
         let mut right = |app: &mut App, ui: &mut egui::Ui, m: &mut Member| {
@@ -514,6 +521,9 @@ impl App {
         if to_dex {
             let id = wiki_id(&orig.species);
             self.info_open_dex(id);
+        }
+        if to_breed {
+            self.plan_from_member(&orig, world);
         }
     }
 
