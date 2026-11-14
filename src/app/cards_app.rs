@@ -1405,8 +1405,8 @@ impl App {
                 let row = Rect::from_min_size(pos2(inner.min.x, y), vec2(inner.width(), 40.0));
                 let mut cu = ui.new_child(egui::UiBuilder::new().max_rect(row).layout(egui::Layout::left_to_right(egui::Align::Center)));
                 cu.spacing_mut().item_spacing.x = 12.0;
-                kit::segmented(&mut cu, &mut bar.show, &[(true, "On"), (false, "Off")]);
-                cu.add_enabled_ui(bar.show, |ui| {
+                kit::segmented(&mut cu, &mut bar.on, &[(true, "On"), (false, "Off")]);
+                cu.add_enabled_ui(bar.on, |ui| {
                     ui.label(RichText::new("Pinned under the overlay's").size(kit::fs(12.5)).color(MUTED()));
                     kit::segmented(ui, &mut bar.right, &[(false, "Left end"), (true, "Right end")]);
                 });
@@ -2142,8 +2142,8 @@ impl App {
             ui.add_space(4.0);
             note(ui, "A slim bar with your XP and packs, pinned under the shiny overlay while it runs (a third of its width). It moves with the overlay; click it to open the Card Collector.");
             ui.add_space(8.0);
-            ui.checkbox(&mut bar.show, RichText::new("Show the XP bar under the overlay").size(kit::fs(13.0)).color(TEXT()));
-            ui.add_enabled_ui(bar.show, |ui| {
+            ui.checkbox(&mut bar.on, RichText::new("Show the XP bar under the overlay").size(kit::fs(13.0)).color(TEXT()));
+            ui.add_enabled_ui(bar.on, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Pinned to the").size(kit::fs(13.0)).color(TEXT()));
                     let mut side = bar.right;

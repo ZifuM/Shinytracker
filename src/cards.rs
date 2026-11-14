@@ -372,27 +372,18 @@ pub struct Pull {
     pub cards: Vec<String>,
 }
 
-/// Where the XP bar overlay sits.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// The XP bar on the overlay. It's always pinned under the shiny overlay
+/// (it never floats or remembers a spot of its own), and it's off until it's
+/// ticked on the Start overlay screen. (Saves from before keep their old
+/// "show" / "pos" / "snapped" / "alone" fields, which are ignored now, so
+/// everyone starts with it off.)
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct BarCfg {
-    /// Show it while the overlay runs.
-    pub show: bool,
-    /// Its spot when it's on its own.
-    pub pos: Option<[f32; 2]>,
-    /// Snapped under the shiny overlay (they move together).
-    pub snapped: bool,
-    /// Its own overlay: shown even when the shiny overlay isn't running.
-    /// (No longer used: the bar is always pinned under the overlay.)
-    pub alone: bool,
+    /// Ticked on the Start overlay screen.
+    pub on: bool,
     /// Pinned under the overlay's right end (else its left).
     pub right: bool,
-}
-
-impl Default for BarCfg {
-    fn default() -> Self {
-        BarCfg { show: true, pos: None, snapped: true, alone: false, right: false }
-    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

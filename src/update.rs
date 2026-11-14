@@ -46,15 +46,24 @@ fn set(s: &Shared, v: State) {
 }
 
 /// "v1.2.3" / "1.2" → (1, 2, 3, 0); "v0.6.1.2" (a rare grass data build)
-/// → (0, 6, 1, 2). Anything unreadable → None.
+/// → (0, 6, 1, 2); a hotfix "v0.7.2a" (or "0.7.2-a") → (0, 7, 2, 1), "b" → 2
+/// and so on, so 0.7.2 < 0.7.2a < 0.7.2b < 0.7.3. Anything unreadable → None.
 pub fn parse_version(v: &str) -> Option<(u32, u32, u32, u32)> {
     let v = v.trim().trim_start_matches(['v', 'V']);
+    // a hotfix letter on the end: "0.7.2a" / "0.7.2-a"
+    let (v, letter) = match v.char_indices().last() {
+        Some((i, c)) if c.is_ascii_lowercase() && v[..i].ends_with(|d: char| d.is_ascii_digit() || d == '-') => (v[..i].trim_end_matches('-'), Some(c as u32 - 'a' as u32 + 1)),
+        _ => (v, None),
+    };
     let mut it = v.split(|c: char| c == '.' || c == '-' || c == '+');
     let a = it.next()?.parse().ok()?;
     let b = it.next().map_or(Some(0), |x| x.parse().ok())?;
     let c = it.next().map_or(Some(0), |x| x.parse().ok())?;
     let d = it.next().map_or(Some(0), |x| x.parse().ok())?;
-    Some((a, b, c, d))
+    if it.next().is_some() {
+        return None;
+    }
+    Some((a, b, c, letter.unwrap_or(d)))
 }
 
 /// Is `latest` a newer version than `current`?
@@ -266,5 +275,14 @@ mod tests {
         assert!(!is_newer("v0.2.0", "0.2.0"));
         assert!(!is_newer("garbage", "0.2.0"));
         assert!(!is_newer("v0.1.9", "0.2.0"));
+        // hotfixes: a lowercase letter on the patch number
+        assert_eq!(parse_version("v0.7.2a"), Some((0, 7, 2, 1)));
+        assert_eq!(parse_version("0.7.2-a"), Some((0, 7, 2, 1)));
+        assert_eq!(parse_version("v0.7.2b"), Some((0, 7, 2, 2)));
+        assert!(is_newer("v0.7.2a", "0.7.2"));
+        assert!(is_newer("v0.7.2b", "0.7.2a"));
+        assert!(is_newer("v0.7.3", "0.7.2b"));
+        assert!(!is_newer("v0.7.2a", "0.7.2a"));
+        assert!(!is_newer("v0.7.2", "0.7.2a"));
     }
 }

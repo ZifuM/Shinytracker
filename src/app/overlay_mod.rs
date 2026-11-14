@@ -1167,10 +1167,12 @@ impl App {
 
             // Notices and pop-ups hover just under the overlay, never over it.
             let below = !this.notices.is_empty() || this.toasts_pending();
+            // (pop-ups open under the Card Collector's XP bar when it's there)
+            let room = this.bar_room();
             this.ov_shape.clear();
             this.ov_shape.push([full.min.x, full.min.y, full.width(), full.height(), 12.0]);
             if below {
-                let area = Rect::from_min_max(egui::pos2(full.min.x, full.max.y + 6.0), egui::pos2(full.max.x, full.max.y + 6.0 + BELOW_H - 8.0));
+                let area = Rect::from_min_max(egui::pos2(full.min.x, full.max.y + 6.0 + room), egui::pos2(full.max.x, full.max.y + 6.0 + room + BELOW_H - 8.0));
                 if !this.notices.is_empty() {
                     this.draw_notice(ui, ctx, area, crate::config::OverlayTheme::Classic);
                 }
@@ -1200,7 +1202,9 @@ impl App {
                 gr.on_hover_text("Drag to resize the overlay");
             }
 
-            this.ov_size = Some([width, (full.max.y - win.min.y + 1.0 + if below { BELOW_H + 6.0 } else { 0.0 }).ceil()]);
+            let extra = if below { BELOW_H + 6.0 + room } else { 0.0 };
+            this.setup.cards.bar_ui.card_h = Some((full.max.y - win.min.y + 1.0).ceil());
+            this.ov_size = Some([width, (full.max.y - win.min.y + 1.0 + extra).ceil()]);
         });
     }
 

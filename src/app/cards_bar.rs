@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 /// The bar's height and the gap under the overlay.
 pub(super) const BAR_H: f32 = 24.0;
-const GAP: f32 = 4.0;
+pub(super) const GAP: f32 = 4.0;
 /// The narrowest it gets (under the small badge, say), so it stays readable.
 const MIN_W: f32 = 150.0;
 
@@ -25,6 +25,13 @@ pub(super) struct BarState {
     applied: Option<Rect>,
     applied_pass: Option<bool>,
     keeper: Option<isize>,
+    /// The bar is on this frame (installed, ticked on the Start overlay
+    /// screen, overlay running): pop-ups under the overlay make room for it.
+    pub on: bool,
+    /// The overlay's own height, without the room under it for pop-ups
+    /// (the overlay's units), so the bar pins to the overlay itself and
+    /// never drops down with a pop-up. None: the whole window.
+    pub card_h: Option<f32>,
 }
 
 /// Where the bar goes for the overlay at `s`.
@@ -35,11 +42,25 @@ pub(super) fn spot(s: Rect, right: bool) -> Rect {
 }
 
 impl App {
+    /// Room to leave between the overlay and a pop-up under it while the bar
+    /// is there (the overlay's own units).
+    pub(super) fn bar_room(&self) -> f32 {
+        if self.setup.cards.bar_ui.on {
+            (BAR_H + GAP * 2.0) / self.ov_scale()
+        } else {
+            0.0
+        }
+    }
+
     /// The bar's window: shown while the overlay runs (and the app is on).
     pub(super) fn cards_bar_viewport(&mut self, ctx: &egui::Context) {
         let bar = self.setup.cards.file().bar.clone();
         let shiny = self.setup.cards.bar_ui.shiny;
-        let show = crate::apps::live(crate::apps::AppId::Cards) && bar.show && self.overlay_on && !self.ov_hidden && shiny.is_some();
+        // Only with Card Collector installed, ticked on the Start overlay
+        // screen, and the shiny overlay showing.
+        let on = crate::apps::live(crate::apps::AppId::Cards) && bar.on && self.overlay_on && !self.ov_hidden;
+        self.setup.cards.bar_ui.on = on;
+        let show = on && shiny.is_some();
         let Some(s) = shiny.filter(|_| show) else {
             let b = &mut self.setup.cards.bar_ui;
             b.geom = None;

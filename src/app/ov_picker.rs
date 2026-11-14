@@ -47,7 +47,7 @@ impl App {
     /// What's picked and can open: (shiny overlay, XP bar, Pokégotchi).
     pub(super) fn overlay_picks(&mut self) -> (bool, bool, bool) {
         let shiny = self.cfg.ov_pick_shiny;
-        let cards = shiny && self.has_app(AppId::Cards) && self.setup.cards.file().bar.show;
+        let cards = shiny && self.has_app(AppId::Cards) && self.setup.cards.file().bar.on;
         let gotchi = self.has_app(AppId::Gotchi) && {
             let f = self.setup.gotchi.file();
             f.overlay.show && f.partner().is_some()
@@ -115,7 +115,7 @@ impl App {
                 let installed = self.has_app(*a);
                 // can it be ticked, and is it?
                 let (usable, ticked, why) = match a {
-                    AppId::Cards => (installed && shiny, bar.as_ref().is_some_and(|b| b.show), if !shiny { Some("Opens with the Shiny Hunter overlay") } else { None }),
+                    AppId::Cards => (installed && shiny, bar.as_ref().is_some_and(|b| b.on), if !shiny { Some("Opens with the Shiny Hunter overlay") } else { None }),
                     AppId::Gotchi => (installed && pet, gov.as_ref().is_some_and(|g| g.show), if installed && !pet { Some("Adopt a shiny in Pokégotchi first") } else { None }),
                     _ => (true, shiny, None),
                 };
@@ -212,7 +212,7 @@ impl App {
                         AppId::Cards => {
                             if let Some(b) = bar.as_mut() {
                                 if kit::segmented(&mut cu, &mut b.right, &[(false, "Left end"), (true, "Right end")]) {
-                                    b.show = true;
+                                    b.on = true;
                                     tile_click = false;
                                 }
                             }
@@ -237,7 +237,7 @@ impl App {
                     match a {
                         AppId::Cards => {
                             if let Some(b) = bar.as_mut() {
-                                b.show = !b.show;
+                                b.on = !b.on;
                             }
                         }
                         AppId::Gotchi => {
@@ -252,7 +252,7 @@ impl App {
             }
             // footer
             let fy = inner.max.y - foot_h / 2.0;
-            let picked = shiny as usize + (shiny && bar.as_ref().is_some_and(|b| b.show)) as usize + (pet && gov.as_ref().is_some_and(|g| g.show)) as usize;
+            let picked = shiny as usize + (shiny && bar.as_ref().is_some_and(|b| b.on)) as usize + (pet && gov.as_ref().is_some_and(|g| g.show)) as usize;
             let note = match self.cfg.keybinds.get(crate::hotkeys::HotAction::StartStop) {
                 Some(k) => format!("{picked} picked · in the game, {} opens your picks straight away", k.text()),
                 None => format!("{picked} picked"),

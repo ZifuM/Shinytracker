@@ -423,9 +423,11 @@ impl App {
     pub(super) fn ov_finish(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, v: &OvView, full: Rect, shapes: Vec<[f32; 5]>, bottom: f32, grip: Color32) {
         let win_top = ui.max_rect().min.y;
         let below = !self.notices.is_empty() || self.toasts_pending();
+        // (pop-ups open under the Card Collector's XP bar when it's there)
+        let room = self.bar_room();
         self.ov_shape = shapes;
         if below {
-            let area = Rect::from_min_max(egui::pos2(full.min.x, bottom + 6.0), egui::pos2(full.max.x, bottom + 6.0 + BELOW_H - 8.0));
+            let area = Rect::from_min_max(egui::pos2(full.min.x, bottom + 6.0 + room), egui::pos2(full.max.x, bottom + 6.0 + room + BELOW_H - 8.0));
             if !self.notices.is_empty() {
                 self.draw_notice(ui, ctx, area, self.cfg.overlay.theme);
             }
@@ -453,7 +455,9 @@ impl App {
             gr.on_hover_text("Drag to resize the overlay");
         }
         let w = (full.max.x - ui.max_rect().min.x + 1.0).max(v.width);
-        self.ov_size = Some([w.ceil(), (bottom - win_top + 1.0 + if below { BELOW_H + 6.0 } else { 0.0 }).ceil()]);
+        let extra = if below { BELOW_H + 6.0 + room } else { 0.0 };
+        self.setup.cards.bar_ui.card_h = Some((bottom - win_top + 1.0).ceil());
+        self.ov_size = Some([w.ceil(), (bottom - win_top + 1.0 + extra).ceil()]);
     }
 
     /// Draw the overlay in a theme (Full / Compact).

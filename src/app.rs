@@ -1065,7 +1065,7 @@ impl App {
             MINI_SIZE
         } else if self.cfg.overlay.legacy() {
             let below = !self.notices.is_empty() || self.toasts_pending();
-            [FULL_SIZE[0], FULL_SIZE[1] + if below { LEGACY_BELOW } else { 0.0 }]
+            [FULL_SIZE[0], FULL_SIZE[1] + if below { LEGACY_BELOW + self.bar_room() } else { 0.0 }]
         } else {
             self.ov_size.unwrap_or(FULL_SIZE)
         }
@@ -1101,8 +1101,14 @@ impl App {
 
     /// Runs inside the overlay window each frame.
     fn sync_window(&mut self, ctx: &egui::Context) {
-        // where it is, for the Card Collector's bar to snap to
-        self.setup.cards.bar_ui.shiny = ctx.input(|i| i.viewport().outer_rect);
+        // Where the overlay itself is, for the Card Collector's bar to pin
+        // under: its own height, not the window's (the window grows while a
+        // pop-up shows under it; the bar must not drop down with it).
+        let card_h = if self.cfg.mini { None } else { self.setup.cards.bar_ui.card_h.map(|h| h * self.ov_scale()) };
+        self.setup.cards.bar_ui.shiny = ctx.input(|i| i.viewport().outer_rect).map(|r| match card_h {
+            Some(h) => Rect::from_min_size(r.min, egui::vec2(r.width(), h.min(r.height()).max(10.0))),
+            None => r,
+        });
         let want = self.overlay_window_size();
         let ppp = ctx.pixels_per_point();
         let key = self.overlay_layout_key();
@@ -1408,10 +1414,13 @@ impl App {
                 // while a notice or pop-up shows.
                 let full = Rect::from_min_size(ui.max_rect().min, egui::vec2(FULL_SIZE[0], FULL_SIZE[1])).shrink(1.0);
                 let below = !self.notices.is_empty() || self.toasts_pending();
+                // (pop-ups open under the Card Collector's XP bar when it's there)
+                let room = self.bar_room();
+                self.setup.cards.bar_ui.card_h = Some(FULL_SIZE[1]);
                 self.ov_shape.clear();
                 self.ov_shape.push([full.min.x, full.min.y, full.width(), full.height(), 12.0]);
                 if below {
-                    let under = Rect::from_min_max(egui::pos2(full.min.x, full.max.y + 6.0), egui::pos2(full.max.x, full.max.y + LEGACY_BELOW - 2.0));
+                    let under = Rect::from_min_max(egui::pos2(full.min.x, full.max.y + 6.0 + room), egui::pos2(full.max.x, full.max.y + room + LEGACY_BELOW - 2.0));
                     let shape = self.popup_shape(under, crate::config::OverlayTheme::Classic);
                     self.ov_shape.push(shape);
                 }
@@ -2100,9 +2109,10 @@ impl App {
 
                 // Notices (break, goal, "nothing counted?", update) hover
                 // just under the overlay.
+                let room = self.bar_room();
                 let under = Rect::from_min_max(
-                    egui::pos2(full.min.x, full.max.y + 6.0),
-                    egui::pos2(full.max.x, full.max.y + LEGACY_BELOW - 2.0),
+                    egui::pos2(full.min.x, full.max.y + 6.0 + room),
+                    egui::pos2(full.max.x, full.max.y + room + LEGACY_BELOW - 2.0),
                 );
                 if !self.notices.is_empty() {
                     self.draw_notice(ui, ctx, under, crate::config::OverlayTheme::Classic);

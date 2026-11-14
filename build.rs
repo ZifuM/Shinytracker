@@ -10,9 +10,15 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
     // The version the app shows and compares: Cargo's "0.6.1-2" (Cargo only
-    // takes three numbers) is shown as "0.6.1.2", the rare grass data builds.
+    // takes three numbers) is shown as "0.6.1.2", the rare grass data builds,
+    // and a hotfix's "0.7.2-a" as "0.7.2a" (a lowercase letter on the patch
+    // number: a, b, c… in order).
     let v = std::env::var("CARGO_PKG_VERSION").unwrap_or_default();
-    println!("cargo:rustc-env=APP_VERSION={}", v.replace('-', "."));
+    let shown = match v.rsplit_once('-') {
+        Some((base, l)) if l.len() == 1 && l.chars().all(|c| c.is_ascii_lowercase()) => format!("{base}{l}"),
+        _ => v.replace('-', "."),
+    };
+    println!("cargo:rustc-env=APP_VERSION={shown}");
 
     let out = std::path::PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR")).join("wiki.json");
     let data = std::fs::read("assets/wiki.json").unwrap_or_else(|_| {
