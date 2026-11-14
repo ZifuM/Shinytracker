@@ -288,5 +288,8 @@ mod tests {
         // lettered hotfixes after it
         assert!(is_newer("v0.7.2.1", "0.7.2"));
         assert!(is_newer("v0.7.2b", "0.7.2.1"));
+        // v0.7.2.2 (numbers only again: v0.7.2 copies read it too)
+        assert!(is_newer("v0.7.2.2", "0.7.2.1"));
+        assert!(is_newer("v0.7.2.2", "0.7.2"));
     }
 }

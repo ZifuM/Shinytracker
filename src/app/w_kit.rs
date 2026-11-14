@@ -2,10 +2,10 @@
 //! type pills, and pickers for a Pokémon or a place that live inside a
 //! widget.
 
-use super::ui_kit::{self as kit, CARD_HOVER, LINE, MUTED, TEXT};
+use super::ui_kit::{self as kit, CARD_HOVER, MUTED, TEXT};
 use super::App;
 use crate::theme;
-use eframe::egui::{self, pos2, vec2, Align2, Color32, Rect, RichText, Sense, Stroke};
+use eframe::egui::{self, pos2, vec2, Align2, Color32, Rect, RichText, Sense};
 
 /// A widget's heading: icon, title and a link on the right. True when the
 /// link was clicked.
@@ -41,28 +41,9 @@ pub(super) fn type_tag(p: &egui::Painter, at: egui::Pos2, t: &str, extra: &str) 
     r
 }
 
-/// Type labels in a wrapping row.
-pub(super) fn type_row(ui: &mut egui::Ui, types: &[(String, String)]) {
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = vec2(5.0, 5.0);
-        for (t, extra) in types {
-            super::pokedex::type_chip(ui, t, extra);
-        }
-    });
-}
-
 /// A small text button.
 pub(super) fn link(ui: &mut egui::Ui, text: &str) -> bool {
     ui.link(RichText::new(text).size(kit::fs(12.5))).clicked()
-}
-
-/// A rounded button in the accent colour.
-pub(super) fn go_button(ui: &mut egui::Ui, text: &str, primary: bool) -> bool {
-    let b = egui::Button::new(RichText::new(text).font(crate::fonts::sans_bold_font(12.5)).color(if primary { kit::on_primary() } else { TEXT() }))
-        .fill(if primary { kit::primary() } else { kit::btn_fill() })
-        .rounding(16.0)
-        .min_size(vec2(0.0, 30.0));
-    ui.add(b).clicked()
 }
 
 /// "1,234"
@@ -154,8 +135,3 @@ impl App {
     }
 }
 
-/// A thin divider.
-pub(super) fn divider(ui: &mut egui::Ui) {
-    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
-    ui.painter().line_segment([r.left_center(), r.right_center()], Stroke::new(1.0f32, LINE()));
-}

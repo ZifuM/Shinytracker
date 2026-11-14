@@ -6,8 +6,10 @@ use super::home::ago;
 use super::team_analysis::{facts, weak_resist, Facts, BENCH};
 use super::team_calc::{calc_mon, calc_move, default_set, Poke};
 use super::ui_kit::{self as kit, CARD, LINE, MUTED, TEXT};
+use super::w_build::{Head, Lead, Row};
 use super::w_explore::loading;
-use super::w_kit::{self as wk, head, n, note, row};
+use super::w_fit::{self as fit, wbox, Shape, WBox};
+use super::w_kit::{self as wk, n};
 use super::{App, Tab};
 use crate::apps::WidgetCfg;
 use crate::battle::{self, World};
@@ -15,7 +17,7 @@ use crate::calc;
 use crate::sim::{Format, Mode, Setup};
 use crate::teams::{Member, Team};
 use crate::theme;
-use eframe::egui::{self, pos2, vec2, Align2, Color32, Rect, RichText, Sense, Stroke};
+use eframe::egui::{self, pos2, vec2, Align2, Color32, Rect, Sense, Stroke};
 
 /// One Pokémon's best hit on another: (move, min %, max %, KO words).
 pub(super) struct BestHit {
@@ -79,58 +81,74 @@ impl App {
         self.go_to(Tab::Team);
     }
 
-    /// "Make a team first" with a button.
-    fn no_team(&mut self, ui: &mut egui::Ui) {
-        note(ui, "Make a team in the Team Planner and it shows here.");
-        ui.add_space(6.0);
-        if wk::go_button(ui, "Open the Team Planner  ›", false) {
+    /// "Make a team first", with a button when there's room.
+    fn no_team(&mut self, ui: &mut egui::Ui, b: &WBox, r: Rect) {
+        let p = ui.painter_at(b.r);
+        let (top, btn) = if r.height() > b.px(80.0) { fit::split_bottom(r, b.px(30.0), b.px(8.0)) } else { (r, Rect::NOTHING) };
+        fit::empty(&p, b, top, "🛡", "Make a team in the Team Planner and it shows here.");
+        if btn.is_positive() {
+            let br = Rect::from_center_size(btn.center(), vec2(btn.width().min(b.px(220.0)), btn.height()));
+            if fit::button(ui, br, "Open the Team Planner  ›", false, ("no-team", b.r.min.x as i32, b.r.min.y as i32)) {
+                self.go_to(Tab::Team);
+            }
+        } else if ui.interact(r, ui.id().with(("no-team-open", b.r.min.x as i32, b.r.min.y as i32)), Sense::click()).on_hover_text("Open the Team Planner").clicked() {
             self.go_to(Tab::Team);
+        }
+    }
+
+    /// A row of sprites across `r`, as big as fits (up to `max` across).
+    fn sprite_row(&mut self, p: &egui::Painter, r: Rect, mons: &[(String, bool)], max: f32) {
+        if mons.is_empty() {
+            return;
+        }
+        let n = mons.len() as f32;
+        let side = (r.width() / n).min(r.height()).min(max);
+        let x0 = r.center().x - side * n / 2.0;
+        for (k, (sp, shiny)) in mons.iter().enumerate() {
+            self.team_sprite(p, sp, *shiny, pos2(x0 + side * (k as f32 + 0.5), r.center().y), vec2(side, side));
         }
     }
 
     // ───────────────────────────── Team Planner ─────────────────────────────
 
+    /// The main team's six, as big as the box allows.
     pub(super) fn w_mainteam(&mut self, ui: &mut egui::Ui) {
+        let b = wbox(ui, "mainteam");
         let team = self.dash_team();
-        let mut open = false;
-        kit::card(ui, |ui| {
-            let title = team.as_ref().map(|t| if t.name.trim().is_empty() { "Untitled team".to_string() } else { t.name.clone() }).unwrap_or_else(|| "Main team".into());
-            open = head(ui, "🛡", kit::C_BLUE, &title, team.as_ref().map(|_| "Open ›"));
-            ui.add_space(8.0);
-            let Some(t) = team.clone() else { return self.no_team(ui) };
-            let w = ui.available_width();
-            let cols = if w >= 520.0 { 6 } else { 3 };
-            let cw = ((w - 8.0 * (cols as f32 - 1.0)) / cols as f32).floor();
-            for chunk in (0..6).collect::<Vec<_>>().chunks(cols) {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 8.0;
-                    for i in chunk {
-                        let (r, resp) = ui.allocate_exact_size(vec2(cw, 104.0), Sense::click());
-                        let p = ui.painter().clone();
-                        match t.members.get(*i) {
-                            Some(m) => {
-                                let types = battle::data().species(&m.species).map(|s| s.types_in(t.world).to_vec()).unwrap_or_default();
-                                let col = types.first().map(|x| super::pokedex::type_color(x)).unwrap_or(kit::C_BLUE);
-                                let ht = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered(), kit::QUICK);
-                                p.rect_filled(r, 12.0, theme::blend(CARD(), col, 0.08 + 0.08 * ht));
-                                self.team_sprite(&p, &m.species, m.shiny, pos2(r.center().x, r.min.y + 40.0), vec2(62.0, 62.0));
-                                p.with_clip_rect(r).text(pos2(r.center().x, r.max.y - 28.0), Align2::CENTER_CENTER, m.display_name(), crate::fonts::sans_bold_font(12.0), TEXT());
-                                p.with_clip_rect(r).text(pos2(r.center().x, r.max.y - 12.0), Align2::CENTER_CENTER, if m.item.is_empty() { format!("Lv {}", m.level) } else { m.item.clone() }, crate::fonts::sans_font(10.5), MUTED());
-                                if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                    open = true;
-                                }
-                            }
-                            None => {
-                                p.rect_stroke(r.shrink(0.5), 12.0, Stroke::new(1.0f32, theme::blend(LINE(), kit::C_BLUE, 0.15)));
-                                p.text(r.center(), Align2::CENTER_CENTER, "+", crate::fonts::sans_bold_font(20.0), MUTED().gamma_multiply(0.5));
-                            }
+        let title = team.as_ref().map(|t| if t.name.trim().is_empty() { "Untitled team".to_string() } else { t.name.clone() }).unwrap_or_else(|| "Main team".into());
+        let (body, mut open) = fit::head(ui, &b, "🛡", kit::C_BLUE, &title, team.as_ref().map(|_| "Open ›"));
+        let Some(t) = team.clone() else { return self.no_team(ui, &b, body) };
+        for (i, r) in fit::tiles(body, 6, 0.85, b.px(44.0), b.px(44.0), b.px(8.0)).iter().enumerate() {
+            let p = ui.painter_at(*r);
+            match t.members.get(i) {
+                Some(m) => {
+                    let types = battle::data().species(&m.species).map(|s| s.types_in(t.world).to_vec()).unwrap_or_default();
+                    let col = types.first().map(|x| super::pokedex::type_color(x)).unwrap_or(kit::C_BLUE);
+                    let resp = ui.interact(*r, ui.id().with(("mt", i, b.r.min.x as i32, b.r.min.y as i32)), Sense::click());
+                    let ht = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered(), kit::QUICK);
+                    p.rect_filled(*r, b.px(12.0), theme::blend(CARD(), col, 0.08 + 0.08 * ht));
+                    let text_h = if r.height() > b.px(104.0) { b.px(30.0) } else if r.height() > b.px(80.0) { b.px(16.0) } else { 0.0 };
+                    let (pic, words) = fit::split_bottom(r.shrink(b.px(6.0)), text_h, 0.0);
+                    let side = pic.width().min(pic.height());
+                    self.team_sprite(&p, &m.species, m.shiny, pic.center(), vec2(side, side));
+                    if text_h > 0.0 {
+                        let parts = fit::stack(words, if text_h > b.px(20.0) { 2 } else { 1 }, 0.0);
+                        fit::label(&p, parts[0], &m.display_name(), b.bold(11.5), TEXT(), Align2::CENTER_CENTER);
+                        if parts.len() > 1 {
+                            fit::label(&p, parts[1], &if m.item.is_empty() { format!("Lv {}", m.level) } else { m.item.clone() }, b.font(10.5), MUTED(), Align2::CENTER_CENTER);
                         }
                     }
-                });
-                ui.add_space(8.0);
+                    if resp.on_hover_text(m.display_name()).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                        open = true;
+                    }
+                }
+                None => {
+                    p.rect_stroke(r.shrink(0.5), b.px(12.0), Stroke::new(1.0f32, theme::blend(LINE(), kit::C_BLUE, 0.15)));
+                    p.text(r.center(), Align2::CENTER_CENTER, "+", b.bold(20.0), MUTED().gamma_multiply(0.5));
+                }
             }
-        });
-        if let (true, Some(t)) = (open, team) {
+        }
+        if open {
             self.open_team_page(t.id);
         }
     }
@@ -141,170 +159,160 @@ impl App {
 
     /// The types most of the team is weak to.
     pub(super) fn w_teamweak(&mut self, ui: &mut egui::Ui) {
+        let b = wbox(ui, "teamweak");
         let team = self.dash_team();
-        kit::card(ui, |ui| {
-            head(ui, "⚠", kit::C_ORANGE, "Team weaknesses", None);
-            ui.add_space(6.0);
-            let Some(t) = team.clone().filter(|t| !t.members.is_empty()) else { return self.no_team(ui) };
-            let fs = self.team_facts(&t);
-            let mut rows: Vec<(&str, usize, usize)> = calc::types_in(t.world).iter().map(|at| {
+        let Some(t) = team.filter(|t| !t.members.is_empty()) else {
+            let (body, _) = fit::head(ui, &b, "⚠", kit::C_ORANGE, "Team weaknesses", None);
+            return self.no_team(ui, &b, body);
+        };
+        let fs = self.team_facts(&t);
+        let mut list: Vec<(&str, usize, usize)> = calc::types_in(t.world)
+            .iter()
+            .map(|at| {
                 let (w, r) = weak_resist(&fs, at, t.world);
                 (*at, w, r)
-            }).filter(|x| x.1 >= 2 || (x.1 >= 1 && x.2 == 0 && t.members.len() <= 2)).collect();
-            rows.sort_by(|a, b| (b.1 as i32 - b.2 as i32).cmp(&(a.1 as i32 - a.2 as i32)));
-            ui.label(RichText::new(format!("For {}", if t.name.trim().is_empty() { "your team" } else { &t.name })).size(kit::fs(11.5)).color(MUTED()));
-            ui.add_space(4.0);
-            if rows.is_empty() {
-                ui.label(RichText::new("✔  No type hits more than one of them hard.").size(kit::fs(12.5)).color(theme::GREEN));
-            }
-            for (at, weak, resist) in rows.iter().take(5) {
-                let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
-                let p = ui.painter();
-                wk::type_tag(p, pos2(r.min.x, r.center().y), at, "");
-                let bad = *resist == 0;
-                p.text(pos2(r.max.x, r.center().y), Align2::RIGHT_CENTER, format!("{weak} weak · {resist} resist"), crate::fonts::sans_bold_font(11.5), if bad { kit::C_RED } else { MUTED() });
-            }
-        });
+            })
+            .filter(|x| x.1 >= 2 || (x.1 >= 1 && x.2 == 0 && t.members.len() <= 2))
+            .collect();
+        list.sort_by(|a, b| (b.1 as i32 - b.2 as i32).cmp(&(a.1 as i32 - a.2 as i32)));
+        let rows: Vec<Row> = list.iter().map(|(at, weak, resist)| Row::new(*at).lead(Lead::Badge(at.to_uppercase(), super::pokedex::type_color(at))).right(format!("{weak} weak · {resist} resist"), Some(if *resist == 0 { kit::C_RED } else { MUTED() }))).collect();
+        let title = format!("Weak spots · {}", if t.name.trim().is_empty() { "your team" } else { &t.name });
+        let c = self.f_list(ui, &b, Head { icon: "⚠", col: kit::C_ORANGE, title: &title, link: None }, &rows, "✔  No type hits more than one of them hard.");
+        if c.item.is_some() || c.more {
+            self.open_team_page(t.id);
+        }
     }
 
     /// Pick which team the Dashboard shows.
     pub(super) fn w_teamswitch(&mut self, ui: &mut egui::Ui) {
+        let b = wbox(ui, "teamswitch");
         let teams = self.team_choices();
         let cur = self.dash_team().map(|t| t.id);
-        let mut pick: Option<u64> = None;
-        let mut planner = false;
-        kit::card(ui, |ui| {
-            planner = head(ui, "🔁", kit::C_BLUE, "Team switcher", Some("Teams ›"));
-            ui.add_space(4.0);
-            note(ui, "The team widgets show this team.");
-            ui.add_space(6.0);
-            if teams.is_empty() {
-                return self.no_team(ui);
-            }
-            for (id, name, count) in teams.iter().take(6) {
-                let (r, resp) = row(ui, 32.0);
+        if teams.is_empty() {
+            let (body, _) = fit::head(ui, &b, "🔁", kit::C_BLUE, "Team switcher", Some("Teams ›"));
+            return self.no_team(ui, &b, body);
+        }
+        let rows: Vec<Row> = teams
+            .iter()
+            .map(|(id, name, count)| {
                 let on = Some(*id) == cur;
-                let p = ui.painter();
-                let c = pos2(r.min.x + 12.0, r.center().y);
-                p.circle_stroke(c, 7.0, Stroke::new(1.5f32, if on { kit::primary() } else { MUTED() }));
-                if on {
-                    p.circle_filled(c, 4.0, kit::primary());
-                }
-                let label = if name.trim().is_empty() { "Untitled team" } else { name };
-                p.text(pos2(r.min.x + 28.0, r.center().y), Align2::LEFT_CENTER, label, if on { crate::fonts::sans_bold_font(13.0) } else { crate::fonts::sans_font(13.0) }, TEXT());
-                p.text(pos2(r.max.x - 4.0, r.center().y), Align2::RIGHT_CENTER, format!("{count}/6"), crate::fonts::sans_font(11.5), MUTED());
-                if resp.clicked() {
-                    pick = Some(*id);
-                }
-            }
-        });
-        if let Some(id) = pick {
-            self.cfg.home.main_team = Some(id);
+                Row::new(if name.trim().is_empty() { "Untitled team".to_string() } else { name.clone() })
+                    .lead(Lead::Icon(if on { "✔".into() } else { "🛡".into() }, if on { kit::primary() } else { kit::C_SLATE }))
+                    .sub(if on { "Shown on your Dashboard" } else { "" })
+                    .right(format!("{count}/6"), Some(MUTED()))
+                    .tip("Show this team in the team widgets")
+            })
+            .collect();
+        let c = self.f_list(ui, &b, Head { icon: "🔁", col: kit::C_BLUE, title: "Team switcher", link: Some("Teams ›") }, &rows, "");
+        if let Some(k) = c.item {
+            self.cfg.home.main_team = Some(teams[k].0);
             self.dirty = true;
         }
-        if planner {
+        if c.link || c.more {
             self.go_to(Tab::Team);
         }
     }
 
-    /// How hard the team's moves hit every type.
+    /// How hard the team's moves hit every type: a tile per type filling
+    /// the box.
     pub(super) fn w_coverage(&mut self, ui: &mut egui::Ui) {
+        let b = wbox(ui, "coverage");
         let team = self.dash_team();
-        kit::card(ui, |ui| {
-            head(ui, "🎯", kit::C_VIOLET, "Coverage check", None);
-            ui.add_space(6.0);
-            let Some(t) = team.clone().filter(|t| !t.members.is_empty()) else { return self.no_team(ui) };
-            let fs = self.team_facts(&t);
-            let types = calc::types_in(t.world);
-            let best: Vec<(&str, f32)> = types.iter().map(|d| {
-                let b = fs.iter().flatten().flat_map(|f| f.attacks.iter()).map(|a| calc::eff(&a.1, &[d.to_string()], t.world)).fold(-1.0f32, f32::max);
-                (*d, b)
-            }).collect();
-            let se = best.iter().filter(|b| b.1 > 1.0).count();
-            let walls: Vec<&str> = best.iter().filter(|b| b.1 >= 0.0 && b.1 < 1.0).map(|b| b.0).collect();
-            ui.label(RichText::new(format!("Hits {se} of {} types super effectively", types.len())).font(crate::fonts::sans_bold_font(13.0)).color(TEXT()));
-            ui.add_space(8.0);
-            let w = ui.available_width();
-            let cols = ((w + 6.0) / (88.0 + 6.0)).floor().clamp(3.0, 9.0) as usize;
-            let cw = ((w - 6.0 * (cols as f32 - 1.0)) / cols as f32).floor();
-            for chunk in best.chunks(cols) {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 6.0;
-                    for (d, b) in chunk {
-                        let (r, resp) = ui.allocate_exact_size(vec2(cw, 34.0), Sense::hover());
-                        let p = ui.painter();
-                        let (label, col) = match *b {
-                            x if x < 0.0 => ("—", kit::C_SLATE),
-                            x if x >= 2.0 => ("2×", theme::GREEN),
-                            x if x > 1.0 => ("+", theme::GREEN),
-                            x if x == 1.0 => ("1×", kit::C_SLATE),
-                            x if x == 0.0 => ("0×", kit::C_RED),
-                            _ => ("½×", kit::C_ORANGE),
-                        };
-                        p.rect_filled(r, 8.0, theme::blend(CARD(), col, 0.18));
-                        p.rect_filled(Rect::from_min_size(r.min, vec2(4.0, r.height())), 2.0, super::pokedex::type_color(d));
-                        p.with_clip_rect(r).text(pos2(r.min.x + 10.0, r.center().y), Align2::LEFT_CENTER, &d[..d.len().min(4)], crate::fonts::sans_bold_font(11.0), TEXT());
-                        p.text(pos2(r.max.x - 6.0, r.center().y), Align2::RIGHT_CENTER, label, crate::fonts::sans_bold_font(11.5), super::charts::ink(col));
-                        resp.on_hover_text(format!("Best hit on {d}: {label}"));
-                    }
-                });
-                ui.add_space(6.0);
-            }
-            if !walls.is_empty() {
-                note(ui, format!("Nothing hits these hard, and something resists: {}", walls.join(", ")));
-            }
-        });
+        let (body, _) = fit::head(ui, &b, "🎯", kit::C_VIOLET, "Coverage check", None);
+        let Some(t) = team.filter(|t| !t.members.is_empty()) else { return self.no_team(ui, &b, body) };
+        let fs = self.team_facts(&t);
+        let types = calc::types_in(t.world);
+        let best: Vec<(&str, f32)> = types
+            .iter()
+            .map(|d| {
+                let bv = fs.iter().flatten().flat_map(|f| f.attacks.iter()).map(|a| calc::eff(&a.1, &[d.to_string()], t.world)).fold(-1.0f32, f32::max);
+                (*d, bv)
+            })
+            .collect();
+        let se = best.iter().filter(|b| b.1 > 1.0).count();
+        let walls: Vec<&str> = best.iter().filter(|b| b.1 >= 0.0 && b.1 < 1.0).map(|b| b.0).collect();
+        let p = ui.painter_at(b.r);
+        let (top, rest) = fit::split_top(body, b.px(17.0), b.px(6.0));
+        fit::label(&p, top, &format!("Hits {se} of {} types super effectively", types.len()), b.bold(12.5), TEXT(), Align2::LEFT_CENTER);
+        let (grid, foot) = if !walls.is_empty() && rest.height() > b.px(130.0) { fit::split_bottom(rest, b.px(15.0), b.px(6.0)) } else { (rest, Rect::NOTHING) };
+        let cells = fit::tiles(grid, best.len(), 2.6, b.px(46.0), b.px(20.0), b.px(5.0));
+        for (k, r) in cells.iter().enumerate() {
+            let (d, bv) = best[k];
+            let (label, col) = match bv {
+                x if x < 0.0 => ("—", kit::C_SLATE),
+                x if x >= 2.0 => ("2×", theme::GREEN),
+                x if x > 1.0 => ("+", theme::GREEN),
+                x if x == 1.0 => ("1×", kit::C_SLATE),
+                x if x == 0.0 => ("0×", kit::C_RED),
+                _ => ("½×", kit::C_ORANGE),
+            };
+            p.rect_filled(*r, b.px(7.0), theme::blend(CARD(), col, 0.18));
+            p.rect_filled(Rect::from_min_size(r.min, vec2(b.px(4.0), r.height())), 2.0, super::pokedex::type_color(d));
+            let ir = r.shrink2(vec2(b.px(8.0), 0.0));
+            let short = if r.width() > b.px(90.0) { d.to_string() } else { d[..d.len().min(4)].to_string() };
+            fit::label(&p, ir, &short, b.bold(11.0), TEXT(), Align2::LEFT_CENTER);
+            fit::label(&p, ir, label, b.bold(11.5), super::charts::ink(col), Align2::RIGHT_CENTER);
+            ui.interact(*r, ui.id().with(("cov", k, b.r.min.x as i32, b.r.min.y as i32)), Sense::hover()).on_hover_text(format!("Best hit on {d}: {label}"));
+        }
+        if foot.is_positive() {
+            fit::label(&p, foot, &format!("Nothing hits these hard, and something resists: {}", walls.join(", ")), b.font(11.0), MUTED(), Align2::LEFT_CENTER);
+        }
     }
 
     /// A type that would cover the team's biggest gaps, with examples.
     pub(super) fn w_teamidea(&mut self, ui: &mut egui::Ui) {
+        let b = wbox(ui, "teamidea");
         let team = self.dash_team();
+        let (body, _) = fit::head(ui, &b, "💭", kit::C_TEAL, "Team ideas", None);
+        let Some(t) = team.filter(|t| !t.members.is_empty()) else { return self.no_team(ui, &b, body) };
+        let p = ui.painter_at(b.r);
+        let fs = self.team_facts(&t);
+        let types = calc::types_in(t.world);
+        let mut gaps: Vec<(&str, usize)> = types.iter().map(|at| (*at, weak_resist(&fs, at, t.world))).filter(|(_, (w, r))| *w >= 2 && *w > *r).map(|(a, (w, _))| (a, w)).collect();
+        gaps.sort_by(|a, b| b.1.cmp(&a.1));
+        gaps.truncate(3);
+        if gaps.is_empty() {
+            fit::empty(&p, &b, body, "✔", "No big gaps: no type hits most of them hard.");
+            return;
+        }
+        let best = types.iter().map(|d| (*d, gaps.iter().filter(|(a, _)| calc::eff(a, &[d.to_string()], t.world) < 1.0).count())).max_by_key(|x| x.1).filter(|x| x.1 > 0);
+        let Some((ty, covers)) = best else {
+            fit::empty(&p, &b, body, "💭", "No one type covers those. Try a Pokémon with a resisting Ability.");
+            return;
+        };
+        let names: Vec<&str> = gaps.iter().filter(|(a, _)| calc::eff(a, &[ty.to_string()], t.world) < 1.0).map(|g| g.0).collect();
+        // the idea, why, then examples filling the rest
+        let (line, rest) = fit::split_top(body, b.px(24.0), b.px(4.0));
+        let lg = p.layout_no_wrap("Add a".to_string(), b.font(13.0), TEXT());
+        let lw = lg.size().x;
+        p.galley(pos2(line.min.x, line.center().y - lg.size().y / 2.0), lg, TEXT());
+        let tag = wk::type_tag(&p, pos2(line.min.x + lw + b.px(6.0), line.center().y), ty, "");
+        p.text(pos2(tag.max.x + b.px(6.0), line.center().y), Align2::LEFT_CENTER, "type", b.font(13.0), TEXT());
+        let (why, pics) = if rest.height() > b.px(60.0) { fit::split_top(rest, b.px(30.0), b.px(6.0)) } else { (rest, Rect::NOTHING) };
+        fit::note(&p, why, &format!("It takes little from {} ({covers} of your team's weak spots).", names.join(", ")), b.font(11.5));
         let mut open: Option<String> = None;
-        kit::card(ui, |ui| {
-            head(ui, "💭", kit::C_TEAL, "Team ideas", None);
-            ui.add_space(6.0);
-            let Some(t) = team.clone().filter(|t| !t.members.is_empty()) else { return self.no_team(ui) };
-            let fs = self.team_facts(&t);
-            let types = calc::types_in(t.world);
-            let mut gaps: Vec<(&str, usize)> = types.iter().map(|at| (*at, weak_resist(&fs, at, t.world))).filter(|(_, (w, r))| *w >= 2 && *w > *r).map(|(a, (w, _))| (a, w)).collect();
-            gaps.sort_by(|a, b| b.1.cmp(&a.1));
-            gaps.truncate(3);
-            if gaps.is_empty() {
-                ui.label(RichText::new("✔  No big gaps: no type hits most of them hard.").size(kit::fs(12.5)).color(theme::GREEN));
-                return;
-            }
-            // the type that takes little from the most of those
-            let best = types.iter().map(|d| (*d, gaps.iter().filter(|(a, _)| calc::eff(a, &[d.to_string()], t.world) < 1.0).count())).max_by_key(|x| x.1).filter(|x| x.1 > 0);
-            let Some((ty, covers)) = best else {
-                note(ui, "No one type covers those. Try a Pokémon with a resisting Ability.");
-                return;
-            };
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("Add a").size(kit::fs(13.0)).color(TEXT()));
-                super::pokedex::type_chip(ui, ty, "");
-                ui.label(RichText::new("type").size(kit::fs(13.0)).color(TEXT()));
-            });
-            let names: Vec<&str> = gaps.iter().filter(|(a, _)| calc::eff(a, &[ty.to_string()], t.world) < 1.0).map(|g| g.0).collect();
-            note(ui, format!("It takes little from {} ({covers} of your team's weak spots).", names.join(", ")));
-            ui.add_space(6.0);
-            // a few strong ones of that type the team doesn't have yet
+        if pics.is_positive() {
             let d = battle::data();
             let mut picks: Vec<&battle::Species> = d.species.iter().filter(|s| s.num >= 1 && s.num <= 493 && !s.is_mega() && s.base.is_empty() && s.types_in(t.world).iter().any(|x| x == ty) && (t.world != World::Platinum || !s.modern_only()) && !t.members.iter().any(|m| battle::to_id(&m.species) == s.id)).collect();
             picks.sort_by_key(|s| std::cmp::Reverse(s.bst(t.world)));
             let wiki = self.wiki.clone();
-            ui.horizontal(|ui| {
-                for s in picks.iter().take(3) {
-                    let (r, resp) = ui.allocate_exact_size(vec2(70.0, 76.0), Sense::click());
-                    let p = ui.painter().clone();
-                    p.rect_filled(r, 10.0, theme::blend(CARD(), super::pokedex::type_color(ty), 0.1));
-                    self.team_sprite(&p, &s.name, false, pos2(r.center().x, r.min.y + 30.0), vec2(52.0, 52.0));
-                    p.with_clip_rect(r).text(pos2(r.center().x, r.max.y - 12.0), Align2::CENTER_CENTER, &s.name, crate::fonts::sans_bold_font(11.0), TEXT());
-                    if resp.on_hover_text("Its Pokédex page").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                        open = wiki.as_ref().and_then(|w| w.by_dex(s.num)).map(|m| m.id.clone());
-                    }
+            let cells = fit::tiles(pics, picks.len().min(12), 0.9, b.px(54.0), b.px(54.0), b.px(6.0));
+            for (k, r) in cells.iter().enumerate() {
+                let sp = picks[k];
+                let resp = ui.interact(*r, ui.id().with(("idea", k, b.r.min.x as i32, b.r.min.y as i32)), Sense::click());
+                p.rect_filled(*r, b.px(10.0), theme::blend(CARD(), super::pokedex::type_color(ty), if resp.hovered() { 0.18 } else { 0.1 }));
+                let with_name = r.height() > b.px(74.0);
+                let (pic, name_r) = if with_name { fit::split_bottom(r.shrink(b.px(4.0)), b.px(15.0), 0.0) } else { (r.shrink(b.px(4.0)), Rect::NOTHING) };
+                let side = pic.width().min(pic.height());
+                self.team_sprite(&p, &sp.name, false, pic.center(), vec2(side, side));
+                if with_name {
+                    fit::label(&p, name_r, &sp.name, b.bold(11.0), TEXT(), Align2::CENTER_CENTER);
                 }
-            });
-        });
+                if resp.on_hover_text(format!("{}: its Pokédex page", sp.name)).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    open = wiki.as_ref().and_then(|w| w.by_dex(sp.num)).map(|m| m.id.clone());
+                }
+            }
+        }
         if let Some(id) = open {
             self.open_dex_entry(&id);
         }
@@ -322,130 +330,156 @@ impl App {
         self.sim_start();
     }
 
+    /// How the last battle went, with a rematch.
     pub(super) fn w_lastbattle(&mut self, ui: &mut egui::Ui) {
+        let b = wbox(ui, "lastbattle");
         let last = self.setup.sim.file().history.first().cloned();
+        let (body, mut open) = fit::head(ui, &b, "⚔", kit::C_RED, "Last battle", Some("Battle Sim ›"));
+        let p = ui.painter_at(b.r);
+        let Some(lb) = last else {
+            fit::empty(&p, &b, body, "⚔", "Battle in the Battle Sim and how it went shows here.");
+            if open {
+                self.go_to(Tab::Sim);
+            }
+            return;
+        };
+        let res = if lb.result.is_empty() { "Left early".to_string() } else { lb.result.clone() };
+        let col = result_col(&lb.result);
+        let mut want = vec![(b.px(20.0), b.px(22.0)), (b.px(17.0), b.px(19.0))];
+        let room = body.height();
+        let with_sub = room > b.px(80.0);
+        if with_sub {
+            want.push((b.px(14.0), b.px(16.0)));
+        }
+        let with_mons = room > b.px(120.0);
+        if with_mons {
+            want.push((b.px(36.0), b.px(80.0)));
+        }
+        let with_btn = room > b.px(150.0);
+        if with_btn {
+            want.push((b.px(30.0), b.px(32.0)));
+        }
+        let fl = fit::vflow(body, &want, b.px(5.0));
+        let g = p.layout_no_wrap(res.to_uppercase(), b.bold(11.0), Color32::WHITE);
+        let pill = Rect::from_min_size(pos2(fl[0].min.x, fl[0].center().y - (g.size().y + b.px(8.0)) / 2.0), g.size() + vec2(b.px(16.0), b.px(8.0)));
+        p.rect_filled(pill, pill.height() / 2.0, col);
+        p.galley(pill.min + vec2(b.px(8.0), b.px(4.0)), g, Color32::WHITE);
+        fit::label(&p, Rect::from_min_max(pos2(pill.max.x + b.px(8.0), fl[0].min.y), fl[0].max), &ago(lb.when), b.font(11.5), MUTED(), Align2::LEFT_CENTER);
+        fit::label(&p, fl[1], &lb.title, b.bold(14.0), TEXT(), Align2::LEFT_CENTER);
+        let mut k = 2;
+        if with_sub {
+            fit::label(&p, fl[k], &format!("{} · {} turns", lb.team, lb.turns), b.font(11.5), MUTED(), Align2::LEFT_CENTER);
+            k += 1;
+        }
+        if with_mons {
+            let (l, r) = fit::split_left(fl[k], fl[k].width() * 0.45, b.px(4.0));
+            let (mid, r) = fit::split_left(r, b.px(24.0).min(r.width() * 0.2), b.px(4.0));
+            self.sprite_row(&p, l, &lb.ours.iter().take(3).cloned().collect::<Vec<_>>(), b.px(80.0));
+            p.text(mid.center(), Align2::CENTER_CENTER, "vs", b.bold(12.0), MUTED());
+            self.sprite_row(&p, r, &lb.theirs.iter().take(3).cloned().collect::<Vec<_>>(), b.px(80.0));
+            k += 1;
+        }
         let mut again = false;
-        let mut open = false;
-        kit::card(ui, |ui| {
-            open = head(ui, "⚔", kit::C_RED, "Last battle", Some("Battle Sim ›"));
-            ui.add_space(6.0);
-            let Some(b) = last.clone() else {
-                note(ui, "Battle in the Battle Sim and how it went shows here.");
-                return;
-            };
-            ui.horizontal(|ui| {
-                let res = if b.result.is_empty() { "Left early" } else { &b.result };
-                let col = result_col(&b.result);
-                let g = ui.painter().layout_no_wrap(res.to_uppercase(), crate::fonts::sans_bold_font(11.0), Color32::WHITE);
-                let (r, _) = ui.allocate_exact_size(g.size() + vec2(16.0, 8.0), Sense::hover());
-                ui.painter().rect_filled(r, 8.0, col);
-                ui.painter().galley(r.min + vec2(8.0, 4.0), g, Color32::WHITE);
-                ui.label(RichText::new(ago(b.when)).size(kit::fs(11.5)).color(MUTED()));
-            });
-            ui.add_space(4.0);
-            ui.label(RichText::new(&b.title).font(crate::fonts::sans_bold_font(14.0)).color(TEXT()));
-            ui.label(RichText::new(format!("{} · {} turns", b.team, b.turns)).size(kit::fs(11.5)).color(MUTED()));
-            ui.add_space(6.0);
-            let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 46.0), Sense::hover());
-            let p = ui.painter().clone();
-            let mut x = r.min.x + 20.0;
-            for (sp, shiny) in b.ours.iter().take(3) {
-                self.team_sprite(&p, sp, *shiny, pos2(x, r.center().y), vec2(40.0, 40.0));
-                x += 36.0;
-            }
-            p.text(pos2(r.center().x + 10.0, r.center().y), Align2::CENTER_CENTER, "vs", crate::fonts::sans_bold_font(12.0), MUTED());
-            let mut x = r.max.x - 20.0;
-            for (sp, shiny) in b.theirs.iter().take(3) {
-                self.team_sprite(&p, sp, *shiny, pos2(x, r.center().y), vec2(40.0, 40.0));
-                x -= 36.0;
-            }
-            ui.add_space(6.0);
-            again = wk::go_button(ui, "↻  Rematch", true);
-        });
+        if with_btn {
+            let br = Rect::from_min_size(fl[k].min, vec2(fl[k].width().min(b.px(160.0)), fl[k].height()));
+            again = fit::button(ui, br, "↻  Rematch", true, ("rematch", b.r.min.x as i32, b.r.min.y as i32));
+        } else if ui.interact(body, ui.id().with(("lb-open", b.r.min.x as i32, b.r.min.y as i32)), Sense::click()).on_hover_text("Open the Battle Sim").clicked() {
+            open = true;
+        }
         if again {
-            if let Some(b) = last {
-                self.sim_go(b.setup);
-            }
+            self.sim_go(lb.setup);
         } else if open {
             self.go_to(Tab::Sim);
         }
     }
 
+    /// The share of battles won, as a big number and a bar.
     pub(super) fn w_winrecord(&mut self, ui: &mut egui::Ui) {
+        let b = wbox(ui, "winrecord");
         let hist = self.setup.sim.file().history.clone();
-        kit::card(ui, |ui| {
-            head(ui, "🏆", kit::C_GOLD, "Win record", None);
-            ui.add_space(6.0);
-            let played: Vec<&crate::sim::BattleRecord> = hist.iter().filter(|b| !b.result.is_empty()).collect();
-            if played.is_empty() {
-                note(ui, "Finish a battle in the Battle Sim and your record starts here.");
-                return;
+        let small = b.shape() == Shape::Mini || b.flat();
+        let (body, _) = if small { (b.inner(), false) } else { fit::head(ui, &b, "🏆", kit::C_GOLD, "Win record", None) };
+        let p = ui.painter_at(b.r);
+        let played: Vec<&crate::sim::BattleRecord> = hist.iter().filter(|b| !b.result.is_empty()).collect();
+        if played.is_empty() {
+            fit::empty(&p, &b, body, "🏆", "Finish a battle in the Battle Sim and your record starts here.");
+            return;
+        }
+        let won = played.iter().filter(|b| b.result == "Won" || b.result == "Caught").count();
+        let lost = played.iter().filter(|b| b.result == "Lost").count();
+        let other = played.len() - won - lost;
+        let rate = won as f32 / played.len() as f32;
+        let mut by: Vec<(String, usize)> = Vec::new();
+        for r in played.iter().filter(|b| b.result == "Won") {
+            match by.iter_mut().find(|x| x.0 == r.team) {
+                Some(x) => x.1 += 1,
+                None => by.push((r.team.clone(), 1)),
             }
-            let won = played.iter().filter(|b| b.result == "Won" || b.result == "Caught").count();
-            let lost = played.iter().filter(|b| b.result == "Lost").count();
-            let other = played.len() - won - lost;
-            let rate = won as f32 / played.len() as f32;
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(format!("{:.0}%", rate * 100.0)).font(crate::fonts::sans_bold_font(26.0)).color(TEXT()));
-                ui.label(RichText::new(format!("won of {}", played.len())).size(kit::fs(12.5)).color(MUTED()));
-            });
-            ui.add_space(6.0);
-            // one bar: won, lost, other
-            let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 12.0), Sense::hover());
-            let p = ui.painter();
-            let tot = played.len() as f32;
-            let mut x = r.min.x;
-            for (k, col) in [(won, theme::GREEN), (lost, kit::C_RED), (other, kit::C_ORANGE)] {
-                let wv = r.width() * k as f32 / tot;
-                if wv > 0.0 {
-                    p.rect_filled(Rect::from_min_size(pos2(x, r.min.y), vec2(wv, r.height())), 4.0, col);
-                }
-                x += wv;
+        }
+        let best = by.into_iter().max_by_key(|x| x.1);
+        let mut want = vec![(b.px(22.0), b.px(64.0)), (b.px(8.0), b.px(14.0))];
+        if body.height() > b.px(70.0) {
+            want.push((b.px(14.0), b.px(16.0)));
+        }
+        if best.is_some() && body.height() > b.px(100.0) {
+            want.push((b.px(15.0), b.px(17.0)));
+        }
+        let fl = fit::vflow(body, &want, b.px(5.0));
+        let at = fit::hero(&p, Rect::from_min_max(fl[0].min, pos2(fl[0].max.x - b.px(80.0), fl[0].max.y)), &format!("{:.0}%", rate * 100.0), fl[0].height(), TEXT(), Align2::LEFT_CENTER);
+        p.text(pos2(at.max.x + b.px(6.0), at.max.y - at.height() * 0.18), Align2::LEFT_BOTTOM, format!("won of {}", played.len()), b.font(12.0), MUTED());
+        let r = fl[1];
+        let tot = played.len() as f32;
+        let mut x = r.min.x;
+        for (k, col) in [(won, theme::GREEN), (lost, kit::C_RED), (other, kit::C_ORANGE)] {
+            let wv = r.width() * k as f32 / tot;
+            if wv > 0.0 {
+                p.rect_filled(Rect::from_min_size(pos2(x, r.min.y), vec2(wv, r.height())), r.height() / 2.0, col);
             }
-            ui.add_space(4.0);
-            ui.label(RichText::new(format!("{won} won · {lost} lost · {other} ran or other")).size(kit::fs(11.5)).color(MUTED()));
-            // the team with the most wins
-            let mut by: Vec<(String, usize)> = Vec::new();
-            for b in played.iter().filter(|b| b.result == "Won") {
-                match by.iter_mut().find(|x| x.0 == b.team) {
-                    Some(x) => x.1 += 1,
-                    None => by.push((b.team.clone(), 1)),
-                }
-            }
-            if let Some((team, k)) = by.into_iter().max_by_key(|x| x.1) {
-                ui.add_space(6.0);
-                ui.label(RichText::new(format!("🏅  Best team: {team} ({k} win{})", if k == 1 { "" } else { "s" })).size(kit::fs(12.5)).color(TEXT()));
-            }
-        });
+            x += wv;
+        }
+        if want.len() > 2 {
+            fit::label(&p, fl[2], &format!("{won} won · {lost} lost · {other} ran or other"), b.font(11.0), MUTED(), Align2::LEFT_CENTER);
+        }
+        if let (Some((team, k)), true) = (best, want.len() > 3) {
+            fit::label(&p, fl[3], &format!("🏅  Best team: {team} ({k} win{})", if k == 1 { "" } else { "s" }), b.font(12.0), TEXT(), Align2::LEFT_CENTER);
+        }
     }
 
     /// One click: your main team against a random wild Pokémon.
     pub(super) fn w_quickbattle(&mut self, ui: &mut egui::Ui) {
+        let b = wbox(ui, "quickbattle");
         let team = self.dash_team();
-        let mut go = false;
-        kit::card(ui, |ui| {
-            head(ui, "⚡", kit::C_GOLD, "Quick battle", None);
-            ui.add_space(6.0);
-            let Some(t) = team.clone().filter(|t| !t.members.is_empty()) else { return self.no_team(ui) };
-            let name = if t.name.trim().is_empty() { "Your team" } else { &t.name };
-            ui.label(RichText::new(format!("{name} vs a random wild Pokémon")).font(crate::fonts::sans_bold_font(13.5)).color(TEXT()));
-            note(ui, "From anywhere in Sinnoh, at its own level.");
-            ui.add_space(8.0);
-            let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 50.0), Sense::hover());
-            let p = ui.painter().clone();
-            let mut x = r.min.x + 22.0;
-            for m in t.members.iter().take(6) {
-                self.team_sprite(&p, &m.species, m.shiny, pos2(x, r.center().y), vec2(42.0, 42.0));
-                x += 34.0;
-            }
-            p.text(pos2(r.max.x - 22.0, r.center().y), Align2::CENTER_CENTER, "?", crate::fonts::sans_bold_font(24.0), kit::C_GOLD);
-            ui.add_space(6.0);
-            go = wk::go_button(ui, "⚡  Battle!", true);
-        });
+        let small = b.shape() == Shape::Mini || b.flat();
+        let (body, _) = if small { (b.inner(), false) } else { fit::head(ui, &b, "⚡", kit::C_GOLD, "Quick battle", None) };
+        let Some(t) = team.clone().filter(|t| !t.members.is_empty()) else { return self.no_team(ui, &b, body) };
+        let p = ui.painter_at(b.r);
+        let name = if t.name.trim().is_empty() { "Your team".to_string() } else { t.name.clone() };
+        // the line, the team and a "?", and the button
+        let (main, btn) = if b.flat() { fit::split_right(body, (body.width() * 0.32).min(b.px(150.0)), b.px(10.0)) } else { fit::split_bottom(body, b.px(32.0), b.px(8.0)) };
+        let mut want = vec![(b.px(17.0), b.px(19.0))];
+        if main.height() > b.px(64.0) {
+            want.push((b.px(13.0), b.px(15.0)));
+        }
+        if main.height() > b.px(40.0) {
+            want.push((b.px(24.0), b.px(90.0)));
+        }
+        let fl = fit::vflow(main, &want, b.px(4.0));
+        fit::label(&p, fl[0], &format!("{name} vs a random wild Pokémon"), b.bold(13.0), TEXT(), Align2::LEFT_CENTER);
+        if want.len() == 3 {
+            fit::label(&p, fl[1], "From anywhere in Sinnoh, at its own level.", b.font(11.0), MUTED(), Align2::LEFT_CENTER);
+        }
+        if want.len() > 1 {
+            let mr = *fl.last().unwrap_or(&main);
+            let (mons, q) = fit::split_right(mr, mr.height().min(b.px(60.0)), b.px(6.0));
+            self.sprite_row(&p, mons, &t.members.iter().take(6).map(|m| (m.species.clone(), m.shiny)).collect::<Vec<_>>(), b.px(70.0));
+            p.text(q.center(), Align2::CENTER_CENTER, "?", b.bold((q.height() / b.s() * 0.5).clamp(14.0, 34.0)), kit::C_GOLD);
+        }
+        let br = Rect::from_center_size(btn.center(), vec2(btn.width().min(b.px(180.0)), b.px(32.0).min(btn.height())));
+        let go = fit::button(ui, br, "⚡  Battle!", true, ("qb", b.r.min.x as i32, b.r.min.y as i32));
         if !go {
             return;
         }
-        let (Some(t), Some(w)) = (team, self.wiki.clone()) else { return };
+        let Some(w) = self.wiki.clone() else { return };
         let slots: Vec<&crate::wiki::Wild> = w.data.wild.iter().filter(|x| x.setting.is_empty() && battle::data().species(&x.species).is_some()).collect();
         if slots.is_empty() {
             return;
@@ -460,79 +494,44 @@ impl App {
         self.sim_go(s);
     }
 
-    /// Trainers you made, a click from a battle with your main team.
+    /// Trainers you made: click one to battle it with your main team.
     pub(super) fn w_trainers(&mut self, ui: &mut egui::Ui) {
+        let b = wbox(ui, "trainers");
         let trainers = self.setup.sim.file().trainers.clone();
         let team = self.dash_team();
-        let mut fight: Option<u64> = None;
-        let mut open = false;
-        kit::card(ui, |ui| {
-            open = head(ui, "🎖", kit::C_ORANGE, "Your trainers", Some("Battle Sim ›"));
-            ui.add_space(6.0);
-            if trainers.is_empty() {
-                note(ui, "Make trainers to battle (a gym leader, a rival…) in the Battle Sim and they show here.");
-                return;
-            }
-            if let Some(t) = &team {
-                note(ui, format!("Battle them with {}", if t.name.trim().is_empty() { "your team" } else { &t.name }));
-            }
-            ui.add_space(4.0);
-            for tr in trainers.iter().take(4) {
-                let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 48.0), Sense::hover());
-                let p = ui.painter().clone();
+        let ok_team = team.as_ref().is_some_and(|t| !t.members.is_empty());
+        let rows: Vec<Row> = trainers
+            .iter()
+            .map(|tr| {
                 let title = if tr.class.is_empty() { tr.name.clone() } else { format!("{} {}", tr.class, tr.name) };
-                p.text(pos2(r.min.x + 4.0, r.center().y - 9.0), Align2::LEFT_CENTER, title, crate::fonts::sans_bold_font(13.0), TEXT());
-                p.text(pos2(r.min.x + 4.0, r.center().y + 10.0), Align2::LEFT_CENTER, format!("{} Pokémon{}", tr.members.len(), if tr.doubles { " · doubles" } else { "" }), crate::fonts::sans_font(11.0), MUTED());
-                let br = Rect::from_min_size(pos2(r.max.x - 80.0, r.center().y - 15.0), vec2(80.0, 30.0));
-                let mut x = br.min.x - 22.0;
-                for m in tr.members.iter().take(4) {
-                    self.team_sprite(&p, &m.species, m.shiny, pos2(x, r.center().y), vec2(34.0, 34.0));
-                    x -= 30.0;
-                }
-                let ok = team.as_ref().is_some_and(|t| !t.members.is_empty()) && !tr.members.is_empty();
-                let b = ui.put(br, egui::Button::new(RichText::new("Battle").font(crate::fonts::sans_bold_font(12.5)).color(if ok { kit::on_primary() } else { MUTED() })).fill(if ok { kit::primary() } else { kit::btn_fill() }).rounding(15.0));
-                if b.on_hover_text(if ok { "Battle this trainer with your main team" } else { "Needs a team with Pokémon on both sides" }).clicked() && ok {
-                    fight = Some(tr.id);
-                }
+                let ok = ok_team && !tr.members.is_empty();
+                Row::new(title)
+                    .lead(tr.members.first().map_or(Lead::Icon("🎖".into(), kit::C_ORANGE), |m| Lead::Wiki(m.species.clone(), m.shiny)))
+                    .sub(format!("{} Pokémon{}", tr.members.len(), if tr.doubles { " · doubles" } else { "" }))
+                    .right(if ok { "Battle ›" } else { "" }, Some(kit::primary()))
+                    .tip(if ok { "Battle this trainer with your main team" } else { "Needs a team with Pokémon on both sides" })
+            })
+            .collect();
+        let c = self.f_list(ui, &b, Head { icon: "🎖", col: kit::C_ORANGE, title: "Your trainers", link: Some("Battle Sim ›") }, &rows, "Make trainers to battle (a gym leader, a rival…) in the Battle Sim and they show here.");
+        if let (Some(k), Some(t)) = (c.item, team) {
+            let tr = &trainers[k];
+            if !t.members.is_empty() && !tr.members.is_empty() {
+                let doubles = tr.doubles && t.members.len() >= 2;
+                let s = Setup { mode: Mode::Trainer, format: if doubles { Format::Doubles } else { Format::Singles }, team: Some(t.id), picks: (0..t.members.len().min(6)).collect(), trainer: Some(tr.id), world: t.world, ..Default::default() };
+                self.sim_go(s);
             }
-        });
-        if let (Some(id), Some(t)) = (fight, team) {
-            let tr = trainers.iter().find(|x| x.id == id);
-            let doubles = tr.is_some_and(|x| x.doubles) && t.members.len() >= 2;
-            let s = Setup { mode: Mode::Trainer, format: if doubles { Format::Doubles } else { Format::Singles }, team: Some(t.id), picks: (0..t.members.len().min(6)).collect(), trainer: Some(id), world: t.world, ..Default::default() };
-            self.sim_go(s);
-        } else if open {
+        } else if c.link || c.more {
             self.go_to(Tab::Sim);
         }
     }
 
+    /// Your battles, newest first.
     pub(super) fn w_battlehistory(&mut self, ui: &mut egui::Ui) {
-        let hist: Vec<crate::sim::BattleRecord> = self.setup.sim.file().history.iter().take(5).cloned().collect();
-        let mut open = false;
-        kit::card(ui, |ui| {
-            open = head(ui, "📜", kit::C_SLATE, "Battle history", Some("All ›"));
-            ui.add_space(6.0);
-            if hist.is_empty() {
-                note(ui, "Your battles show here once you've played some in the Battle Sim.");
-            }
-            for b in &hist {
-                let (r, resp) = row(ui, 40.0);
-                let p = ui.painter().clone();
-                let res = if b.result.is_empty() { "—" } else { &b.result };
-                let col = result_col(&b.result);
-                let g = p.layout_no_wrap(res.to_string(), crate::fonts::sans_bold_font(10.5), Color32::WHITE);
-                let tr = Rect::from_min_size(pos2(r.min.x + 2.0, r.center().y - 10.0), vec2(58.0, 20.0));
-                p.rect_filled(tr, 7.0, col);
-                p.galley(tr.center() - g.size() / 2.0, g, Color32::WHITE);
-                p.with_clip_rect(r.with_max_x(r.max.x - 70.0)).text(pos2(tr.max.x + 10.0, r.center().y - 8.0), Align2::LEFT_CENTER, &b.title, crate::fonts::sans_bold_font(12.5), TEXT());
-                p.with_clip_rect(r.with_max_x(r.max.x - 70.0)).text(pos2(tr.max.x + 10.0, r.center().y + 10.0), Align2::LEFT_CENTER, format!("{} · {} turns", b.team, b.turns), crate::fonts::sans_font(11.0), MUTED());
-                p.text(pos2(r.max.x - 4.0, r.center().y), Align2::RIGHT_CENTER, ago(b.when), crate::fonts::sans_font(11.0), MUTED());
-                if resp.clicked() {
-                    open = true;
-                }
-            }
-        });
-        if open {
+        let b = wbox(ui, "battlehistory");
+        let hist: Vec<crate::sim::BattleRecord> = self.setup.sim.file().history.iter().take(40).cloned().collect();
+        let rows: Vec<Row> = hist.iter().map(|r| Row::new(r.title.clone()).lead(Lead::Badge(if r.result.is_empty() { "—".into() } else { r.result.clone() }, result_col(&r.result))).sub(format!("{} · {} turns", r.team, r.turns)).right(ago(r.when), Some(MUTED()))).collect();
+        let c = self.f_list(ui, &b, Head { icon: "📜", col: kit::C_SLATE, title: "Battle history", link: Some("All ›") }, &rows, "Your battles show here once you've played some in the Battle Sim.");
+        if c.link || c.item.is_some() || c.more {
             self.setup.sim.file();
             self.setup.sim.view = super::sim_home::SimView::Battle;
             self.setup.sim.drawer = 4;
@@ -547,102 +546,87 @@ impl App {
         self.go_to(Tab::Breed);
     }
 
+    /// The Pokémon you breed with, newest first.
     pub(super) fn w_breeders(&mut self, ui: &mut egui::Ui) {
+        let b = wbox(ui, "breeders");
         let breeders = self.setup.breed.file().breeders.clone();
-        let mut open = false;
-        kit::card(ui, |ui| {
-            open = head(ui, "📦", kit::C_PINK, "Breeders box", Some("All ›"));
-            ui.add_space(6.0);
-            if breeders.is_empty() {
-                note(ui, "Add the Pokémon you breed with in Breeding → Breeders and they show here.");
-                return;
-            }
-            ui.label(RichText::new(format!("{} breeder{}", breeders.len(), if breeders.len() == 1 { "" } else { "s" })).size(kit::fs(11.5)).color(MUTED()));
-            for b in breeders.iter().rev().take(5) {
-                let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 38.0), Sense::hover());
-                let p = ui.painter().clone();
-                self.team_sprite(&p, &b.parent.species, false, pos2(r.min.x + 18.0, r.center().y), vec2(36.0, 36.0));
-                let name = if b.name.trim().is_empty() { self.mon_name(&b.parent.species) } else { b.name.clone() };
-                let g = match b.parent.gender() {
+        let rows: Vec<Row> = breeders
+            .iter()
+            .rev()
+            .map(|br| {
+                let name = if br.name.trim().is_empty() { self.mon_name(&br.parent.species) } else { br.name.clone() };
+                let g = match br.parent.gender() {
                     crate::breed::Gender::Male => " ♂",
                     crate::breed::Gender::Female => " ♀",
                     crate::breed::Gender::Genderless => "",
                 };
-                p.text(pos2(r.min.x + 44.0, r.center().y - 8.0), Align2::LEFT_CENTER, format!("{name}{g}"), crate::fonts::sans_bold_font(12.5), TEXT());
-                p.text(pos2(r.min.x + 44.0, r.center().y + 10.0), Align2::LEFT_CENTER, b.parent.nature.clone().unwrap_or_else(|| "Any nature".into()), crate::fonts::sans_font(11.0), MUTED());
-                // its stats: a dot per stat, filled at 31
-                for (i, iv) in b.parent.ivs.iter().enumerate() {
-                    let c = pos2(r.max.x - 8.0 - (5 - i) as f32 * 12.0, r.center().y);
-                    match iv {
-                        Some(31) => {
-                            p.circle_filled(c, 4.0, kit::C_PINK);
-                        }
-                        Some(_) => {
-                            p.circle_stroke(c, 3.5, Stroke::new(1.2f32, MUTED()));
-                        }
-                        None => {
-                            p.circle_stroke(c, 3.5, Stroke::new(1.0f32, MUTED().gamma_multiply(0.4)));
-                        }
-                    }
-                }
-            }
-        });
-        if open {
+                let perfect = br.parent.ivs.iter().filter(|iv| **iv == Some(31)).count();
+                Row::new(format!("{name}{g}")).lead(Lead::Wiki(br.parent.species.clone(), false)).sub(br.parent.nature.clone().unwrap_or_else(|| "Any nature".into())).right(format!("{perfect}× 31"), Some(if perfect > 0 { kit::C_PINK } else { MUTED() }))
+            })
+            .collect();
+        let c = self.f_list(ui, &b, Head { icon: "📦", col: kit::C_PINK, title: "Breeders box", link: Some("All ›") }, &rows, "Add the Pokémon you breed with in Breeding → Breeders and they show here.");
+        if c.link || c.item.is_some() || c.more {
             self.open_breed(super::breed_home::BreedView::Breeders);
         }
     }
 
     /// The egg moves a Pokémon you pick can get.
     pub(super) fn w_eggmoves(&mut self, ui: &mut egui::Ui, w: &WidgetCfg, preview: bool, out: &mut Option<Vec<String>>) {
-        let Some(wiki) = self.wiki.clone() else { return loading(ui, "💥", "Egg move finder") };
+        let b = wbox(ui, "eggmoves");
         let species = if preview { Some("GIBLE".to_string()) } else { w.data.first().cloned() };
+        let (body, change) = fit::head(ui, &b, "💥", kit::C_PINK, "Egg moves", species.as_ref().map(|_| "Change"));
+        let p = ui.painter_at(b.r);
+        let Some(wiki) = self.wiki.clone() else { return loading(&p, &b, body, ui) };
         let modern = self.setup.breed.file().setup.world != World::Platinum;
-        let mut change = false;
-        let mut picked: Option<String> = None;
         let mut open: Option<String> = None;
-        kit::card(ui, |ui| {
-            change = head(ui, "💥", kit::C_PINK, "Egg moves", species.as_ref().map(|_| "Change"));
-            ui.add_space(6.0);
-            let Some(id) = species.clone() else {
-                note(ui, "Pick a Pokémon to see the moves it can get from an Egg.");
-                ui.add_space(6.0);
-                picked = self.mon_picker(ui, w.id, "egg", "🔍  Gible, Eevee…");
-                return;
-            };
-            let baby = crate::breed::baby_of(&wiki, &id);
-            ui.horizontal(|ui| {
-                let (r, _) = ui.allocate_exact_size(vec2(40.0, 40.0), Sense::hover());
-                let p = ui.painter().clone();
-                self.team_sprite(&p, &baby, false, r.center(), vec2(38.0, 38.0));
-                ui.label(RichText::new(self.mon_name(&baby)).font(crate::fonts::sans_bold_font(14.0)).color(TEXT()));
-            });
-            ui.add_space(4.0);
-            let moves: Vec<String> = wiki.learnset(&baby).map(|l| if modern && !l.megg.is_empty() { l.megg.clone() } else { l.egg.clone() }).unwrap_or_default();
-            if moves.is_empty() {
-                note(ui, "No egg moves.");
-                return;
+        let Some(id) = species else {
+            let (note_r, rest) = fit::split_top(body, b.px(16.0), b.px(6.0));
+            fit::label(&p, note_r, "Pick a Pokémon to see the moves it can get from an Egg.", b.font(11.5), MUTED(), Align2::LEFT_CENTER);
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rest).layout(egui::Layout::top_down(egui::Align::Min)));
+            child.set_clip_rect(rest.intersect(ui.clip_rect()));
+            if let Some(pk) = self.mon_picker(&mut child, w.id, "egg", "🔍  Gible, Eevee…") {
+                *out = Some(vec![pk]);
             }
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = vec2(5.0, 5.0);
-                for k in &moves {
-                    let Some(mv) = wiki.move_info(k) else { continue };
-                    let col = super::pokedex::type_color(&mv.t);
-                    let g = ui.painter().layout_no_wrap(mv.n.clone(), crate::fonts::sans_bold_font(11.5), TEXT());
-                    let (r, resp) = ui.allocate_exact_size(g.size() + vec2(20.0, 10.0), Sense::click());
-                    ui.painter().rect_filled(r, r.height() / 2.0, theme::blend(CARD(), col, 0.22));
-                    ui.painter().circle_filled(pos2(r.min.x + 8.0, r.center().y), 3.0, col);
-                    ui.painter().galley(r.min + vec2(14.0, 5.0), g, TEXT());
-                    if resp.on_hover_text(format!("{} · {} · open its page", mv.t, mv.c)).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                        open = Some(k.clone());
-                    }
-                }
-            });
-        });
+            return;
+        };
+        let baby = crate::breed::baby_of(&wiki, &id);
+        let flat = body.height() < b.px(70.0);
+        let (who, rest) = if flat { fit::split_left(body, (body.width() * 0.3).min(b.px(170.0)), b.px(10.0)) } else { fit::split_top(body, b.px(36.0), b.px(6.0)) };
+        let (sp_r, name_r) = fit::split_left(who, who.height().min(b.px(40.0)), b.px(8.0));
+        self.team_sprite(&p, &baby, false, sp_r.center(), vec2(sp_r.width(), sp_r.width()));
+        fit::label(&p, name_r, &self.mon_name(&baby), b.bold(14.0), TEXT(), Align2::LEFT_CENTER);
+        let moves: Vec<String> = wiki.learnset(&baby).map(|l| if modern && !l.megg.is_empty() { l.megg.clone() } else { l.egg.clone() }).unwrap_or_default();
+        if moves.is_empty() {
+            fit::label(&p, rest, "No egg moves.", b.font(11.5), MUTED(), Align2::LEFT_TOP);
+        }
+        // pills that wrap in the room left (the rest are on its page)
+        let clip = p.with_clip_rect(rest);
+        let (mut x, mut y) = (rest.min.x, rest.min.y);
+        let h = b.px(22.0);
+        for (k, key) in moves.iter().enumerate() {
+            let Some(mv) = wiki.move_info(key) else { continue };
+            let col = super::pokedex::type_color(&mv.t);
+            let g = clip.layout_no_wrap(mv.n.clone(), b.bold(11.0), TEXT());
+            let w_ = g.size().x + b.px(20.0);
+            if x + w_ > rest.max.x && x > rest.min.x {
+                x = rest.min.x;
+                y += h + b.px(5.0);
+            }
+            if y + h > rest.max.y {
+                break;
+            }
+            let r = Rect::from_min_size(pos2(x, y), vec2(w_, h));
+            let resp = ui.interact(r, ui.id().with(("egg-mv", k, w.id)), Sense::click());
+            clip.rect_filled(r, h / 2.0, theme::blend(CARD(), col, if resp.hovered() { 0.32 } else { 0.22 }));
+            clip.circle_filled(pos2(r.min.x + b.px(8.0), r.center().y), b.px(3.0), col);
+            clip.galley(pos2(r.min.x + b.px(14.0), r.center().y - g.size().y / 2.0), g, TEXT());
+            if resp.on_hover_text(format!("{} · {} · open its page", mv.t, mv.c)).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                open = Some(key.clone());
+            }
+            x += w_ + b.px(5.0);
+        }
         if change && !preview {
             *out = Some(Vec::new());
-        }
-        if let Some(p) = picked {
-            *out = Some(vec![p]);
         }
         if let Some(k) = open {
             self.info_open_page(super::info_home::Page::Move(k));
@@ -651,19 +635,19 @@ impl App {
 
     /// The next thing to do in your breeding plan, with a tick.
     pub(super) fn w_nextstep(&mut self, ui: &mut egui::Ui) {
-        let Some(wiki) = self.wiki.clone() else { return loading(ui, "👣", "Next step") };
+        let b = wbox(ui, "nextstep");
+        let (body, open) = fit::head(ui, &b, "👣", kit::C_TEAL, "Next step", Some("Plan ›"));
+        let p = ui.painter_at(b.r);
+        let Some(wiki) = self.wiki.clone() else { return loading(&p, &b, body, ui) };
         let (target, breeders, setup, done) = {
             let f = self.setup.breed.file();
             (f.target.clone(), f.breeders.clone(), f.setup, f.plan_done.clone())
         };
-        let mut open = false;
         let mut tick: Option<String> = None;
-        kit::card(ui, |ui| {
-            open = head(ui, "👣", kit::C_TEAL, "Next step", Some("Plan ›"));
-            ui.add_space(6.0);
+        'draw: {
             if target.species.is_empty() {
-                note(ui, "Pick what you're breeding for in Breeding → Plan and its next step shows here.");
-                return;
+                fit::empty(&p, &b, body, "👣", "Pick what you're breeding for in Breeding → Plan and its next step shows here.");
+                break 'draw;
             }
             let key = format!("{:?}|{:?}|{:?}", target, setup, breeders.iter().map(|b| (&b.parent, b.id)).collect::<Vec<_>>());
             // quick now, with the Egg estimate once it's worked out
@@ -680,43 +664,53 @@ impl App {
                 self.setup.home.plan_rx = Some((key.clone(), rx));
             }
             if let Some((k, rx)) = &self.setup.home.plan_rx {
-                if let Ok(p) = rx.try_recv() {
+                if let Ok(pl) = rx.try_recv() {
                     if *k == key {
-                        self.setup.home.plan = Some((key.clone(), p));
+                        self.setup.home.plan = Some((key.clone(), pl));
                     }
                     self.setup.home.plan_rx = None;
                 }
             }
-            let Some((_, plan)) = self.setup.home.plan.clone() else { return };
+            let Some((_, plan)) = self.setup.home.plan.clone() else { break 'draw };
             if let Some(pr) = &plan.problem {
-                note(ui, pr.clone());
-                return;
+                fit::note(&p, body, pr, b.font(12.0));
+                break 'draw;
             }
             let total = plan.steps.len();
             let finished = plan.steps.iter().filter(|s| s.done || done.contains(&s.key)).count();
-            ui.horizontal(|ui| {
-                let (r, _) = ui.allocate_exact_size(vec2(36.0, 36.0), Sense::hover());
-                let p = ui.painter().clone();
-                self.team_sprite(&p, &target.species, target.shiny, r.center(), vec2(34.0, 34.0));
-                ui.label(RichText::new(format!("{} · step {} of {total}", self.mon_name(&target.species), (finished + 1).min(total))).font(crate::fonts::sans_bold_font(13.0)).color(TEXT()));
-            });
-            ui.add_space(4.0);
-            kit::bar(ui, ui.available_width(), 6.0, if total > 0 { finished as f32 / total as f32 } else { 1.0 });
-            ui.add_space(8.0);
-            match plan.steps.iter().find(|s| !s.done && !done.contains(&s.key)) {
+            let next = plan.steps.iter().find(|s| !s.done && !done.contains(&s.key)).cloned();
+            // who and how far, the bar, the step (its words take what's left), the tick
+            let with_btn = next.is_some() && body.height() > b.px(110.0);
+            let mut want = vec![(b.px(26.0), b.px(34.0)), (b.px(6.0), b.px(8.0)), (b.px(17.0), b.px(20.0))];
+            if next.is_some() && body.height() > b.px(90.0) {
+                want.push((b.px(14.0), body.height()));
+            }
+            if with_btn {
+                want.push((b.px(30.0), b.px(32.0)));
+            }
+            let fl = fit::vflow(body, &want, b.px(5.0));
+            let (sp_r, line_r) = fit::split_left(fl[0], fl[0].height(), b.px(8.0));
+            self.team_sprite(&p, &target.species, target.shiny, sp_r.center(), vec2(sp_r.width(), sp_r.width()));
+            fit::label(&p, line_r, &format!("{} · step {} of {total}", self.mon_name(&target.species), (finished + 1).min(total)), b.bold(13.0), TEXT(), Align2::LEFT_CENTER);
+            fit::meter(&p, fl[1], if total > 0 { finished as f32 / total as f32 } else { 1.0 }, kit::C_TEAL);
+            match &next {
                 Some(s) => {
-                    ui.label(RichText::new(&s.title).font(crate::fonts::sans_bold_font(14.0)).color(TEXT()));
-                    ui.add(egui::Label::new(RichText::new(&s.detail).size(kit::fs(12.0)).color(MUTED())).wrap());
-                    ui.add_space(8.0);
-                    if wk::go_button(ui, "✔  Done", true) {
-                        tick = Some(s.key.clone());
+                    fit::label(&p, fl[2], &s.title, b.bold(14.0), TEXT(), Align2::LEFT_CENTER);
+                    if want.len() > 3 {
+                        fit::note(&p, fl[3], &s.detail, b.font(12.0));
+                    }
+                    if with_btn {
+                        let br = Rect::from_min_size(fl[fl.len() - 1].min, vec2(fl[fl.len() - 1].width().min(b.px(140.0)), fl[fl.len() - 1].height()));
+                        if fit::button(ui, br, "✔  Done", true, ("ns-done", b.r.min.x as i32, b.r.min.y as i32)) {
+                            tick = Some(s.key.clone());
+                        }
                     }
                 }
                 None => {
-                    ui.label(RichText::new("✔  Every step done. Hatch away!").size(kit::fs(13.0)).color(theme::GREEN));
+                    fit::label(&p, fl[2], "✔  Every step done. Hatch away!", b.font(13.0), theme::GREEN, Align2::LEFT_CENTER);
                 }
             }
-        });
+        }
         if let Some(k) = tick {
             let f = self.setup.breed.file();
             if !f.plan_done.contains(&k) {
@@ -729,37 +723,31 @@ impl App {
         }
     }
 
+    /// Eggs hatched, with the week as bars filling the rest.
     pub(super) fn w_hatches(&mut self, ui: &mut egui::Ui) {
+        let b = wbox(ui, "hatches");
         let log = self.setup.breed.file().log.clone();
-        let mut open = false;
-        kit::card(ui, |ui| {
-            open = head(ui, "🐥", kit::C_GOLD, "Hatch tracker", Some("Log ›"));
-            ui.add_space(6.0);
-            if log.is_empty() {
-                note(ui, "Log your Eggs in Breeding and your hatches add up here.");
-                return;
-            }
+        let small = b.shape() == Shape::Mini || b.flat();
+        let (body, mut open) = if small { (b.inner(), false) } else { fit::head(ui, &b, "🐥", kit::C_GOLD, "Hatch tracker", Some("Log ›")) };
+        let p = ui.painter_at(b.r);
+        if log.is_empty() {
+            fit::empty(&p, &b, body, "🐥", "Log your Eggs in Breeding and your hatches add up here.");
+        } else {
             let today = crate::stats::local_day(crate::config::now_unix());
             let shinies = log.iter().filter(|h| h.shiny).count();
-            let week: Vec<usize> = (0..7).map(|k| log.iter().filter(|h| crate::stats::local_day(h.when) == today - 6 + k).count()).collect();
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(n(log.len() as u64)).font(crate::fonts::sans_bold_font(26.0)).color(TEXT()));
-                ui.label(RichText::new("Eggs hatched").size(kit::fs(12.5)).color(MUTED()));
-            });
-            ui.label(RichText::new(format!("✨ {shinies} shin{} · {} today", if shinies == 1 { "y" } else { "ies" }, week[6])).size(kit::fs(12.5)).color(if shinies > 0 { theme::GOLD } else { MUTED() }));
-            ui.add_space(8.0);
-            let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 56.0), Sense::hover());
-            let p = ui.painter();
-            let max = week.iter().copied().max().unwrap_or(0).max(1) as f32;
-            let slot = r.width() / 7.0;
-            for (k, v) in week.iter().enumerate() {
-                let cx = r.min.x + slot * (k as f32 + 0.5);
-                let h = ((r.height() - 16.0) * (*v as f32 / max)).max(3.0);
-                p.rect_filled(Rect::from_min_max(pos2(cx - 7.0, r.max.y - 14.0 - h), pos2(cx + 7.0, r.max.y - 14.0)), 4.0, if k == 6 { kit::C_GOLD } else { theme::blend(CARD(), kit::C_GOLD, if *v > 0 { 0.5 } else { 0.15 }) });
-                let wd = crate::stats::WEEKDAYS[crate::stats::weekday(today - 6 + k as i64)];
-                p.text(pos2(cx, r.max.y - 4.0), Align2::CENTER_CENTER, &wd[..1], crate::fonts::sans_font(10.0), MUTED());
-            }
-        });
+            let week: Vec<u64> = (0..7).map(|k| log.iter().filter(|h| crate::stats::local_day(h.when) == today - 6 + k).count() as u64).collect();
+            let labels: Vec<String> = (0..7).map(|k| crate::stats::WEEKDAYS[crate::stats::weekday(today - 6 + k)][..1].to_string()).collect();
+            let side = b.flat() || body.width() > body.height() * 2.2;
+            let (num_r, chart) = if side { fit::split_left(body, (body.width() * 0.38).min(b.px(200.0)), b.px(10.0)) } else { fit::split_top(body, (body.height() * 0.4).clamp(b.px(36.0), b.px(70.0)), b.px(6.0)) };
+            let fl = fit::vflow(num_r, &[(b.px(20.0), b.px(44.0)), (b.px(13.0), b.px(15.0))], b.px(2.0));
+            let at = fit::hero(&p, Rect::from_min_max(fl[0].min, pos2(fl[0].max.x - b.px(70.0), fl[0].max.y)), &n(log.len() as u64), fl[0].height(), TEXT(), Align2::LEFT_CENTER);
+            p.text(pos2(at.max.x + b.px(6.0), at.max.y - at.height() * 0.18), Align2::LEFT_BOTTOM, "Eggs hatched", b.font(11.5), MUTED());
+            fit::label(&p, fl[1], &format!("✨ {shinies} shin{} · {} today", if shinies == 1 { "y" } else { "ies" }, week[6]), b.font(11.5), if shinies > 0 { theme::GOLD } else { MUTED() }, Align2::LEFT_CENTER);
+            fit::bars(&p, chart, &week, Some(6), kit::C_GOLD, Some(&labels), b.font(10.0));
+        }
+        if small && ui.interact(b.r, ui.id().with(("hatch-open", b.r.min.x as i32, b.r.min.y as i32)), Sense::click()).on_hover_text("Open the hatch log").clicked() {
+            open = true;
+        }
         if open {
             self.open_breed(super::breed_home::BreedView::Log);
         }
@@ -775,82 +763,122 @@ impl App {
         self.go_to(Tab::Calc);
     }
 
+    /// Two Pokémon side by side (with a swap button between them when
+    /// `swap`), as big as `r` allows. Returns which side was clicked (1 or
+    /// 2) and whether swap was.
+    fn calc_pair(&mut self, ui: &mut egui::Ui, b: &WBox, r: Rect, a: &Member, d: &Member, editing: u8, swap: bool, id: u64) -> (u8, bool) {
+        let p = ui.painter_at(r);
+        let mid_w = if swap { b.px(36.0) } else { b.px(24.0) };
+        let (l, rest) = fit::split_left(r, (r.width() - mid_w) / 2.0, 0.0);
+        let (mid, rr) = fit::split_left(rest, mid_w, 0.0);
+        let mut side = 0;
+        for (k, (m, br)) in [(a, l), (d, rr)].into_iter().enumerate() {
+            let br = br.shrink2(vec2(b.px(2.0), 0.0));
+            let resp = ui.interact(br, ui.id().with(("qc-side", id, k)), Sense::click());
+            let on = editing == k as u8 + 1;
+            p.rect_filled(br, b.px(12.0), theme::blend(CARD(), if k == 0 { kit::C_ORANGE } else { kit::C_BLUE }, if on || resp.hovered() { 0.2 } else { 0.1 }));
+            let with_name = br.height() > b.px(56.0);
+            let (pic, name_r) = if with_name { fit::split_bottom(br.shrink(b.px(4.0)), b.px(15.0), 0.0) } else { (br.shrink(b.px(4.0)), Rect::NOTHING) };
+            let s = pic.width().min(pic.height());
+            self.team_sprite(&p, &m.species, false, pic.center(), vec2(s, s));
+            if with_name {
+                fit::label(&p, name_r, &m.species, b.bold(11.5), TEXT(), Align2::CENTER_CENTER);
+            }
+            if swap && resp.on_hover_text("Change").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                side = if on { 3 } else { k as u8 + 1 };
+            }
+        }
+        let mut swapped = false;
+        if swap {
+            let sw = Rect::from_center_size(mid.center(), vec2(b.px(30.0), b.px(30.0)));
+            let sresp = ui.interact(sw, ui.id().with(("qc-swap", id)), Sense::click());
+            let ht = kit::anim(ui.ctx(), sresp.id.with("h"), sresp.hovered(), kit::QUICK);
+            p.circle_filled(sw.center(), sw.width() / 2.0, theme::blend(kit::btn_fill(), kit::primary(), 0.3 * ht));
+            p.circle_stroke(sw.center(), sw.width() / 2.0, Stroke::new(1.0f32, LINE()));
+            // two arrows, drawn
+            let st = Stroke::new(1.6f32, TEXT());
+            let c = sw.center();
+            let k = sw.width() / 30.0;
+            for (y, dir) in [(-4.0, 1.0), (4.0, -1.0)] {
+                let a = c + vec2(-7.0 * dir, y) * k;
+                let e = c + vec2(7.0 * dir, y) * k;
+                p.line_segment([a, e], st);
+                p.line_segment([e, e + vec2(-3.5 * dir, -3.0) * k], st);
+                p.line_segment([e, e + vec2(-3.5 * dir, 3.0) * k], st);
+            }
+            swapped = sresp.on_hover_text("Swap sides").on_hover_cursor(egui::CursorIcon::PointingHand).clicked();
+        } else {
+            p.text(mid.center(), Align2::CENTER_CENTER, "vs", b.bold(12.0), MUTED());
+        }
+        (side, swapped)
+    }
+
+    /// Each side's best hit on the other, as lines down `r`.
+    fn calc_lines(&self, p: &egui::Painter, b: &WBox, r: Rect, a: &Member, d: &Member, world: World) {
+        let wiki = self.wiki.clone();
+        let parts = fit::stack(r, 2, b.px(6.0));
+        for ((x, y), pr) in [(a, d), (d, a)].into_iter().zip(parts.iter()) {
+            let with_ko = pr.height() > b.px(32.0);
+            let (top, ko) = if with_ko { fit::split_top(*pr, pr.height() * 0.55, 0.0) } else { (*pr, Rect::NOTHING) };
+            match best_hit(wiki.as_deref(), x, y, world) {
+                Some(h) => {
+                    let pct = format!("{:.0}–{:.0}%", h.lo, h.hi);
+                    let g = p.layout_no_wrap(pct.clone(), b.bold(13.0), super::charts::ink(hit_col(h.hi)));
+                    let pr2 = Rect::from_min_max(pos2(top.max.x - g.size().x, top.min.y), top.max);
+                    p.galley(pos2(pr2.min.x, top.center().y - g.size().y / 2.0), g, super::charts::ink(hit_col(h.hi)));
+                    fit::label(p, Rect::from_min_max(top.min, pos2(pr2.min.x - b.px(8.0), top.max.y)), &format!("{}'s {}", x.display_name(), h.mv), b.font(12.0), TEXT(), Align2::LEFT_CENTER);
+                    if with_ko && !h.ko.is_empty() {
+                        fit::label(p, ko, &h.ko, b.font(11.0), MUTED(), Align2::LEFT_CENTER);
+                    }
+                }
+                None => {
+                    fit::label(p, top, &format!("{} has no damaging moves.", x.display_name()), b.font(11.5), MUTED(), Align2::LEFT_CENTER);
+                }
+            }
+        }
+    }
+
     /// One Pokémon's best hit on another, with their usual sets.
     pub(super) fn w_quickcalc(&mut self, ui: &mut egui::Ui, w: &WidgetCfg, preview: bool, out: &mut Option<Vec<String>>) {
+        let b = wbox(ui, "quickcalc");
         let world = World::Platinum;
         let (atk, def) = if preview || w.data.len() < 2 { ("Garchomp".to_string(), "Metagross".to_string()) } else { (w.data[0].clone(), w.data[1].clone()) };
         let editing = ui.ctx().data(|d| d.get_temp::<u8>(egui::Id::new(("w-qc-edit", w.id)))).unwrap_or(0);
         let wiki = self.wiki.clone();
+        let (body, open) = fit::head(ui, &b, "🔢", kit::C_ORANGE, "Quick calc", Some("Damage Calc ›"));
+        let p = ui.painter_at(b.r);
+        let a = default_set(&atk, world);
+        let d = default_set(&def, world);
         let mut new: Option<(String, String)> = None;
-        let mut save = false;
-        let mut open = false;
         let mut set_edit: Option<u8> = None;
-        kit::card(ui, |ui| {
-            open = head(ui, "🔢", kit::C_ORANGE, "Quick calc", Some("Damage Calc ›"));
-            ui.add_space(8.0);
-            let a = default_set(&atk, world);
-            let d = default_set(&def, world);
-            // the two, with swap
-            let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 74.0), Sense::hover());
-            let p = ui.painter().clone();
-            let half = r.width() / 2.0;
-            for (k, (m, x)) in [(&a, r.min.x + half / 2.0), (&d, r.max.x - half / 2.0)].into_iter().enumerate() {
-                let br = Rect::from_center_size(pos2(x, r.center().y), vec2(half - 40.0, 70.0));
-                let resp = ui.interact(br, ui.id().with(("w-qc-side", w.id, k)), Sense::click());
-                let on = editing == k as u8 + 1;
-                p.rect_filled(br, 12.0, theme::blend(CARD(), if k == 0 { kit::C_ORANGE } else { kit::C_BLUE }, if on || resp.hovered() { 0.2 } else { 0.1 }));
-                self.team_sprite(&p, &m.species, false, pos2(br.center().x, br.min.y + 28.0), vec2(48.0, 48.0));
-                p.text(pos2(br.center().x, br.max.y - 12.0), Align2::CENTER_CENTER, &m.species, crate::fonts::sans_bold_font(12.0), TEXT());
-                if resp.on_hover_text("Change").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() && !preview {
-                    set_edit = Some(if on { 0 } else { k as u8 + 1 });
-                }
+        // the two at the top (beside the results when it's wide), the save link at the bottom
+        let wide = body.width() > body.height() * 2.4;
+        let (main, foot) = if body.height() > b.px(110.0) { fit::split_bottom(body, b.px(16.0), b.px(6.0)) } else { (body, Rect::NOTHING) };
+        let (pair_r, rest) = if wide { fit::split_left(main, (main.width() * 0.42).min(main.height() * 2.6), b.px(12.0)) } else { fit::split_top(main, (main.height() * 0.45).clamp(b.px(44.0), b.px(120.0)), b.px(8.0)) };
+        let (side, swapped) = self.calc_pair(ui, &b, pair_r, &a, &d, editing, !preview, w.id);
+        if side > 0 {
+            set_edit = Some(if side == 3 { 0 } else { side });
+        }
+        if swapped {
+            new = Some((def.clone(), atk.clone()));
+        }
+        if editing > 0 && !preview {
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rest).layout(egui::Layout::top_down(egui::Align::Min)));
+            child.set_clip_rect(rest.intersect(ui.clip_rect()));
+            if let Some(id) = self.mon_picker(&mut child, w.id, "qc", if editing == 1 { "🔍  Attacker" } else { "🔍  Defender" }) {
+                let name = wiki.as_ref().and_then(|wk| wk.mon(&id)).map(|m| m.name.clone()).unwrap_or(id);
+                new = Some(if editing == 1 { (name, def.clone()) } else { (atk.clone(), name) });
+                set_edit = Some(0);
             }
-            // swap: a round button with two arrows
-            let sw = Rect::from_center_size(r.center(), vec2(30.0, 30.0));
-            let sresp = ui.interact(sw, ui.id().with(("w-qc-swap", w.id)), Sense::click());
-            let ht = kit::anim(ui.ctx(), sresp.id.with("h"), sresp.hovered(), kit::QUICK);
-            p.circle_filled(sw.center(), 15.0, theme::blend(kit::btn_fill(), kit::primary(), 0.3 * ht));
-            p.circle_stroke(sw.center(), 15.0, Stroke::new(1.0f32, LINE()));
-            let st = Stroke::new(1.6f32, TEXT());
-            let c = sw.center();
-            for (y, dir) in [(-4.0, 1.0), (4.0, -1.0)] {
-                let a = c + vec2(-7.0 * dir, y);
-                let b = c + vec2(7.0 * dir, y);
-                p.line_segment([a, b], st);
-                p.line_segment([b, b + vec2(-3.5 * dir, -3.0)], st);
-                p.line_segment([b, b + vec2(-3.5 * dir, 3.0)], st);
-            }
-            if sresp.on_hover_text("Swap sides").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() && !preview {
-                new = Some((def.clone(), atk.clone()));
-            }
-            if editing > 0 && !preview {
-                ui.add_space(6.0);
-                if let Some(id) = self.mon_picker(ui, w.id, "qc", if editing == 1 { "🔍  Attacker" } else { "🔍  Defender" }) {
-                    let name = wiki.as_ref().and_then(|wk| wk.mon(&id)).map(|m| m.name.clone()).unwrap_or(id);
-                    new = Some(if editing == 1 { (name, def.clone()) } else { (atk.clone(), name) });
-                    set_edit = Some(0);
-                }
-            }
-            ui.add_space(8.0);
-            for (x, y) in [(&a, &d), (&d, &a)] {
-                match best_hit(wiki.as_deref(), x, y, world) {
-                    Some(h) => {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new(format!("{} {} →", x.species, h.mv)).size(kit::fs(12.5)).color(TEXT()));
-                            ui.label(RichText::new(format!("{:.0}–{:.0}%", h.lo, h.hi)).font(crate::fonts::sans_bold_font(13.5)).color(super::charts::ink(hit_col(h.hi))));
-                        });
-                        if !h.ko.is_empty() {
-                            ui.label(RichText::new(&h.ko).size(kit::fs(11.5)).color(MUTED()));
-                        }
-                    }
-                    None => note(ui, format!("{} has no damaging moves in its set.", x.species)),
-                }
-                ui.add_space(4.0);
-            }
-            note(ui, "With their usual sets, Lv 50.");
-            ui.add_space(4.0);
-            save = wk::link(ui, "⭐  Save this calc");
-        });
+        } else {
+            self.calc_lines(&p, &b, rest, &a, &d, world);
+        }
+        let mut save = false;
+        if foot.is_positive() {
+            let lr = fit::label(&p, foot, "⭐  Save this calc", b.bold(11.5), kit::primary(), Align2::LEFT_CENTER);
+            fit::label(&p, foot, "Usual sets, Lv 50", b.font(10.5), MUTED(), Align2::RIGHT_CENTER);
+            save = ui.interact(lr.expand(3.0), ui.id().with(("qc-save", w.id)), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).clicked();
+        }
         if let Some(e) = set_edit {
             ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(("w-qc-edit", w.id)), e));
         }
@@ -871,192 +899,185 @@ impl App {
         }
     }
 
+    /// Calcs you saved: click one for the Damage Calc.
     pub(super) fn w_savedcalcs(&mut self, ui: &mut egui::Ui) {
+        let b = wbox(ui, "savedcalcs");
         let world = World::Platinum;
         let saved = self.cfg.home.saved_calcs.clone();
         let wiki = self.wiki.clone();
-        let mut open: Option<(String, String)> = None;
-        let mut remove: Option<usize> = None;
-        kit::card(ui, |ui| {
-            head(ui, "⭐", kit::C_GOLD, "Saved calcs", None);
-            ui.add_space(6.0);
-            if saved.is_empty() {
-                note(ui, "Press “⭐ Save this calc” in a Quick calc widget and it's kept here.");
-                return;
-            }
-            for (i, k) in saved.iter().enumerate().take(6) {
-                let Some((a, d)) = k.split_once('|') else { continue };
+        let pairs: Vec<(String, String)> = saved.iter().filter_map(|k| k.split_once('|').map(|(a, d)| (a.to_string(), d.to_string()))).collect();
+        let rows: Vec<Row> = pairs
+            .iter()
+            .map(|(a, d)| {
                 let hit = best_hit(wiki.as_deref(), &default_set(a, world), &default_set(d, world), world);
-                let (r, resp) = row(ui, 40.0);
-                let p = ui.painter().clone();
-                self.team_sprite(&p, a, false, pos2(r.min.x + 16.0, r.center().y), vec2(32.0, 32.0));
-                self.team_sprite(&p, d, false, pos2(r.min.x + 46.0, r.center().y), vec2(32.0, 32.0));
-                p.text(pos2(r.min.x + 70.0, r.center().y - 8.0), Align2::LEFT_CENTER, format!("{a} vs {d}"), crate::fonts::sans_bold_font(12.0), TEXT());
-                if let Some(h) = &hit {
-                    p.text(pos2(r.min.x + 70.0, r.center().y + 10.0), Align2::LEFT_CENTER, format!("{} {:.0}–{:.0}%", h.mv, h.lo, h.hi), crate::fonts::sans_font(11.0), super::charts::ink(hit_col(h.hi)));
+                let row = Row::new(format!("{a} vs {d}")).lead(Lead::Wiki(a.clone(), false)).tip("Open in the Damage Calc · right-click to remove").menu("Remove");
+                match hit {
+                    Some(h) => row.sub(h.mv.clone()).right(format!("{:.0}–{:.0}%", h.lo, h.hi), Some(super::charts::ink(hit_col(h.hi)))),
+                    None => row,
                 }
-                let resp = resp.on_hover_text("Open in the Damage Calc · right-click to remove");
-                if resp.clicked() {
-                    open = Some((a.to_string(), d.to_string()));
-                }
-                resp.context_menu(|ui| {
-                    if ui.button("Remove").clicked() {
-                        remove = Some(i);
-                        ui.close_menu();
-                    }
-                });
+            })
+            .collect();
+        let c = self.f_list(ui, &b, Head { icon: "⭐", col: kit::C_GOLD, title: "Saved calcs", link: None }, &rows, "Press “⭐ Save this calc” in a Quick calc widget and it's kept here.");
+        if let Some(k) = c.menu {
+            if let Some(pos) = saved.iter().position(|s| s == &format!("{}|{}", pairs[k].0, pairs[k].1)) {
+                self.cfg.home.saved_calcs.remove(pos);
+                self.dirty = true;
             }
-        });
-        if let Some(i) = remove {
-            self.cfg.home.saved_calcs.remove(i);
-            self.dirty = true;
-        }
-        if let Some((a, d)) = open {
+        } else if let Some(k) = c.item {
+            let (a, d) = pairs[k].clone();
             self.calc_open(&a, &d, world);
         }
     }
 
-    /// Your main team's Speed against well-known fast Pokémon.
+    /// Your main team's Speed against well-known fast Pokémon: bars that
+    /// fill the box.
     pub(super) fn w_speedtiers(&mut self, ui: &mut egui::Ui) {
+        let b = wbox(ui, "speedtiers");
         let team = self.dash_team();
-        kit::card(ui, |ui| {
-            head(ui, "💨", kit::C_CYAN, "Speed tiers", None);
-            ui.add_space(6.0);
-            let Some(t) = team.clone().filter(|t| !t.members.is_empty()) else { return self.no_team(ui) };
-            let fs = self.team_facts(&t);
-            let level = t.members.iter().map(|m| m.level).max().unwrap_or(50);
-            let d = battle::data();
-            let jolly = d.nature("Jolly");
-            let mut rows: Vec<(String, u16, Option<String>)> = Vec::new();
-            for f in fs.iter().flatten() {
-                let s = if f.item == "Choice Scarf" { f.stats[5] * 3 / 2 } else { f.stats[5] };
-                rows.push((f.name.clone(), s, Some(f.species.clone())));
-            }
-            for (name, b) in BENCH.iter().take(6) {
-                rows.push((format!("{name} (max)"), battle::stat(5, *b, 31, 252, level, jolly, false), None));
-            }
-            rows.sort_by(|a, b| b.1.cmp(&a.1));
-            let top = rows.first().map(|r| r.1).unwrap_or(1).max(1) as f32;
-            for (name, s, sp) in &rows {
-                let mine = sp.is_some();
-                let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), if mine { 26.0 } else { 18.0 }), Sense::hover());
-                let p = ui.painter().clone();
-                let name_w = (r.width() * 0.45).min(150.0);
-                if let Some(sp) = sp {
-                    self.team_sprite(&p, sp, false, pos2(r.min.x + 12.0, r.center().y), vec2(24.0, 24.0));
+        let (body, _) = fit::head(ui, &b, "💨", kit::C_CYAN, "Speed tiers", None);
+        let Some(t) = team.filter(|t| !t.members.is_empty()) else { return self.no_team(ui, &b, body) };
+        let p = ui.painter_at(b.r);
+        let fs = self.team_facts(&t);
+        let level = t.members.iter().map(|m| m.level).max().unwrap_or(50);
+        let d = battle::data();
+        let jolly = d.nature("Jolly");
+        let mut list: Vec<(String, u16, Option<String>)> = Vec::new();
+        for f in fs.iter().flatten() {
+            let s = if f.item == "Choice Scarf" { f.stats[5] * 3 / 2 } else { f.stats[5] };
+            list.push((f.name.clone(), s, Some(f.species.clone())));
+        }
+        for (name, bs) in BENCH.iter() {
+            list.push((format!("{name} (max)"), battle::stat(5, *bs, 31, 252, level, jolly, false), None));
+        }
+        list.sort_by(|a, b| b.1.cmp(&a.1));
+        let (rows_r, foot) = if body.height() > b.px(150.0) { fit::split_bottom(body, b.px(15.0), b.px(6.0)) } else { (body, Rect::NOTHING) };
+        // your team always shows; the fast ones fill what's left
+        let cap = fit::rows(rows_r, 64, b.px(20.0), b.px(3.0), 1.0).len().max(1);
+        let mine = list.iter().filter(|r| r.2.is_some()).count();
+        let mut bench_left = cap.saturating_sub(mine);
+        let shown: Vec<&(String, u16, Option<String>)> = list
+            .iter()
+            .filter(|r| {
+                if r.2.is_some() {
+                    true
+                } else if bench_left > 0 {
+                    bench_left -= 1;
+                    true
+                } else {
+                    false
                 }
-                p.with_clip_rect(r.with_max_x(r.min.x + name_w)).text(pos2(r.min.x + if mine { 28.0 } else { 4.0 }, r.center().y), Align2::LEFT_CENTER, name, if mine { crate::fonts::sans_bold_font(12.0) } else { crate::fonts::sans_font(11.0) }, if mine { TEXT() } else { MUTED() });
-                let bw = (r.width() - name_w - 40.0) * (*s as f32 / top);
-                let bar = Rect::from_min_size(pos2(r.min.x + name_w, r.center().y - if mine { 5.0 } else { 3.0 }), vec2(bw.max(2.0), if mine { 10.0 } else { 6.0 }));
-                p.rect_filled(bar, 4.0, if mine { kit::C_CYAN } else { theme::blend(kit::sunken(), MUTED(), 0.35) });
-                p.text(pos2(bar.max.x + 6.0, r.center().y), Align2::LEFT_CENTER, s.to_string(), crate::fonts::sans_font(11.0), if mine { TEXT() } else { MUTED() });
+            })
+            .collect();
+        let top = shown.first().map(|r| r.1).unwrap_or(1).max(1) as f32;
+        for ((name, s, sp), r) in shown.iter().zip(fit::rows(rows_r, shown.len(), b.px(20.0), b.px(3.0), 2.0).iter()) {
+            let mine = sp.is_some();
+            let name_w = (r.width() * 0.42).min(b.px(170.0));
+            let (name_r, bar_r) = fit::split_left(*r, name_w, b.px(6.0));
+            let (sp_r, nr) = if mine { fit::split_left(name_r, name_r.height().min(b.px(28.0)), b.px(4.0)) } else { (Rect::NOTHING, name_r) };
+            if let Some(sp) = sp {
+                self.team_sprite(&p, sp, false, sp_r.center(), vec2(sp_r.width(), sp_r.width()));
             }
-            ui.add_space(4.0);
-            note(ui, format!("Fast ones with full Speed and a +Speed nature, Lv {level}."));
-        });
+            fit::label(&p, nr, name, if mine { b.bold(12.0) } else { b.font(11.0) }, if mine { TEXT() } else { MUTED() }, Align2::LEFT_CENTER);
+            let (bar_r, num_r) = fit::split_right(bar_r, b.px(34.0), b.px(4.0));
+            let bh = (r.height() * if mine { 0.45 } else { 0.3 }).clamp(4.0, b.px(14.0));
+            let bar = Rect::from_min_size(pos2(bar_r.min.x, r.center().y - bh / 2.0), vec2((bar_r.width() * (*s as f32 / top)).max(2.0), bh));
+            p.rect_filled(bar, bh / 2.0, if mine { kit::C_CYAN } else { theme::blend(kit::sunken(), MUTED(), 0.35) });
+            fit::label(&p, num_r, &s.to_string(), b.font(11.0), if mine { TEXT() } else { MUTED() }, Align2::LEFT_CENTER);
+        }
+        if foot.is_positive() {
+            fit::label(&p, foot, &format!("Fast ones with full Speed and a +Speed nature, Lv {level}."), b.font(11.0), MUTED(), Align2::LEFT_CENTER);
+        }
     }
 
     /// The calculation open in the Damage Calc.
     pub(super) fn w_lastcalc(&mut self, ui: &mut egui::Ui) {
+        let b = wbox(ui, "lastcalc");
         let c = &self.setup.team.calc;
         let (l, r) = (c.left.clone(), c.right.clone());
         let world = self.dash_team().map(|t| t.world).unwrap_or(World::Platinum);
-        let wiki = self.wiki.clone();
-        let mut open = false;
-        kit::card(ui, |ui| {
-            open = head(ui, "📋", kit::C_ORANGE, "Last result", Some("Open ›"));
-            ui.add_space(6.0);
-            let (Some(l), Some(r)) = (l, r) else {
-                note(ui, "Pick two Pokémon in the Damage Calc and the result shows here.");
-                return;
-            };
-            let (rr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 50.0), Sense::hover());
-            let p = ui.painter().clone();
-            self.team_sprite(&p, &l.set.species, l.set.shiny, pos2(rr.min.x + 26.0, rr.center().y), vec2(46.0, 46.0));
-            self.team_sprite(&p, &r.set.species, r.set.shiny, pos2(rr.max.x - 26.0, rr.center().y), vec2(46.0, 46.0));
-            p.text(rr.center(), Align2::CENTER_CENTER, "vs", crate::fonts::sans_bold_font(12.0), MUTED());
-            for (x, y) in [(&l.set, &r.set), (&r.set, &l.set)] {
-                match best_hit(wiki.as_deref(), x, y, world) {
-                    Some(h) => {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label(RichText::new(format!("{}'s {}", x.display_name(), h.mv)).size(kit::fs(12.0)).color(TEXT()));
-                            ui.label(RichText::new(format!("{:.0}–{:.0}%", h.lo, h.hi)).font(crate::fonts::sans_bold_font(13.0)).color(super::charts::ink(hit_col(h.hi))));
-                        });
-                        if !h.ko.is_empty() {
-                            ui.label(RichText::new(&h.ko).size(kit::fs(11.0)).color(MUTED()));
-                        }
-                    }
-                    None => note(ui, format!("{} has no damaging moves.", x.display_name())),
-                }
-                ui.add_space(3.0);
+        let (body, mut open) = fit::head(ui, &b, "📋", kit::C_ORANGE, "Last result", Some("Open ›"));
+        let p = ui.painter_at(b.r);
+        let (Some(l), Some(r)) = (l, r) else {
+            fit::empty(&p, &b, body, "📋", "Pick two Pokémon in the Damage Calc and the result shows here.");
+            if open {
+                self.go_to(Tab::Calc);
             }
-        });
+            return;
+        };
+        let wide = body.width() > body.height() * 2.4;
+        let (pair_r, rest) = if wide { fit::split_left(body, (body.width() * 0.4).min(body.height() * 2.6), b.px(12.0)) } else { fit::split_top(body, (body.height() * 0.42).clamp(b.px(40.0), b.px(110.0)), b.px(8.0)) };
+        self.calc_pair(ui, &b, pair_r, &l.set, &r.set, 0, false, 0);
+        self.calc_lines(&p, &b, rest, &l.set, &r.set, world);
+        if ui.interact(pair_r, ui.id().with(("lc-open", b.r.min.x as i32, b.r.min.y as i32)), Sense::click()).on_hover_text("Open the Damage Calc").clicked() {
+            open = true;
+        }
         if open {
             self.go_to(Tab::Calc);
         }
     }
 
-    /// Your main team against one Pokémon you pick.
+    /// Your main team against one Pokémon you pick: a row each, filling the
+    /// box.
     pub(super) fn w_threat(&mut self, ui: &mut egui::Ui, w: &WidgetCfg, preview: bool, out: &mut Option<Vec<String>>) {
+        let b = wbox(ui, "threat");
         let team = self.dash_team();
         let world = team.as_ref().map(|t| t.world).unwrap_or(World::Platinum);
         let foe_name = if preview { Some("Garchomp".to_string()) } else { w.data.first().cloned() };
         let wiki = self.wiki.clone();
-        let mut change = false;
-        let mut picked: Option<String> = None;
-        kit::card(ui, |ui| {
-            change = head(ui, "🚨", kit::C_RED, "Threat check", foe_name.as_ref().map(|_| "Change"));
-            ui.add_space(6.0);
-            let Some(t) = team.clone().filter(|t| !t.members.is_empty()) else { return self.no_team(ui) };
-            let Some(foe) = foe_name.clone() else {
-                note(ui, "Pick a Pokémon that gives you trouble and see how your team does against it.");
-                ui.add_space(6.0);
-                picked = self.mon_picker(ui, w.id, "threat", "🔍  Garchomp, Gyarados…");
-                return;
-            };
-            let fm = default_set(&foe, world);
-            ui.horizontal(|ui| {
-                let (r, _) = ui.allocate_exact_size(vec2(44.0, 44.0), Sense::hover());
-                let p = ui.painter().clone();
-                self.team_sprite(&p, &fm.species, false, r.center(), vec2(42.0, 42.0));
-                ui.vertical(|ui| {
-                    ui.label(RichText::new(&fm.species).font(crate::fonts::sans_bold_font(14.0)).color(TEXT()));
-                    ui.label(RichText::new(if fm.item.is_empty() { "Its usual set".to_string() } else { format!("{} · its usual set", fm.item) }).size(kit::fs(11.0)).color(MUTED()));
-                });
-            });
-            ui.add_space(6.0);
-            let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 16.0), Sense::hover());
-            ui.painter().text(pos2(hr.max.x - 90.0, hr.center().y), Align2::RIGHT_CENTER, "it hits you", crate::fonts::sans_font(10.5), MUTED());
-            ui.painter().text(pos2(hr.max.x, hr.center().y), Align2::RIGHT_CENTER, "you hit it", crate::fonts::sans_font(10.5), MUTED());
-            let mut answers = 0;
-            for m in t.members.iter().take(6) {
-                let theirs = best_hit(wiki.as_deref(), &fm, m, world);
-                let mine = best_hit(wiki.as_deref(), m, &fm, world);
-                let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::hover());
-                let p = ui.painter().clone();
-                self.team_sprite(&p, &m.species, m.shiny, pos2(r.min.x + 14.0, r.center().y), vec2(30.0, 30.0));
-                p.with_clip_rect(r.with_max_x(r.max.x - 180.0)).text(pos2(r.min.x + 32.0, r.center().y), Align2::LEFT_CENTER, m.display_name(), crate::fonts::sans_bold_font(12.0), TEXT());
-                let them = theirs.as_ref().map_or("—".to_string(), |h| format!("{:.0}%", h.hi));
-                let us = mine.as_ref().map_or("—".to_string(), |h| format!("{:.0}%", h.hi));
-                p.text(pos2(r.max.x - 90.0, r.center().y), Align2::RIGHT_CENTER, them, crate::fonts::sans_bold_font(12.0), theirs.as_ref().map_or(MUTED(), |h| super::charts::ink(hit_col(h.hi))));
-                p.text(pos2(r.max.x, r.center().y), Align2::RIGHT_CENTER, us, crate::fonts::sans_bold_font(12.0), mine.as_ref().map_or(MUTED(), |h| super::charts::ink(theme::blend(hit_col(100.0 - h.hi.min(100.0)), theme::GREEN, 0.0))));
-                if mine.as_ref().is_some_and(|h| h.hi >= 50.0) && theirs.as_ref().map_or(true, |h| h.hi < 50.0) {
-                    answers += 1;
-                }
+        let (body, change) = fit::head(ui, &b, "🚨", kit::C_RED, "Threat check", foe_name.as_ref().map(|_| "Change"));
+        let Some(t) = team.filter(|t| !t.members.is_empty()) else { return self.no_team(ui, &b, body) };
+        let p = ui.painter_at(b.r);
+        let Some(foe) = foe_name else {
+            let (note_r, rest) = fit::split_top(body, b.px(16.0), b.px(6.0));
+            fit::label(&p, note_r, "Pick a Pokémon that gives you trouble.", b.font(11.5), MUTED(), Align2::LEFT_CENTER);
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rest).layout(egui::Layout::top_down(egui::Align::Min)));
+            child.set_clip_rect(rest.intersect(ui.clip_rect()));
+            if let Some(id) = self.mon_picker(&mut child, w.id, "threat", "🔍  Garchomp, Gyarados…") {
+                let name = self.wiki.as_ref().and_then(|wk| wk.mon(&id)).map(|m| m.name.clone()).unwrap_or(id);
+                *out = Some(vec![name]);
             }
-            ui.add_space(4.0);
+            return;
+        };
+        let fm = default_set(&foe, world);
+        // the foe, the table (a row per member) and the verdict
+        let (who, rest) = fit::split_top(body, b.px(34.0), b.px(6.0));
+        let (sp_r, name_r) = fit::split_left(who, who.height(), b.px(8.0));
+        self.team_sprite(&p, &fm.species, false, sp_r.center(), vec2(sp_r.width(), sp_r.width()));
+        let nl = fit::stack(name_r, 2, 0.0);
+        fit::label(&p, nl[0], &fm.species, b.bold(13.5), TEXT(), Align2::LEFT_CENTER);
+        fit::label(&p, nl[1], &if fm.item.is_empty() { "Its usual set".to_string() } else { format!("{} · its usual set", fm.item) }, b.font(10.5), MUTED(), Align2::LEFT_CENTER);
+        let (table, verdict) = if rest.height() > b.px(70.0) { fit::split_bottom(rest, b.px(15.0), b.px(5.0)) } else { (rest, Rect::NOTHING) };
+        let (hdr, body_r) = fit::split_top(table, b.px(14.0), b.px(2.0));
+        let col_w = b.px(70.0);
+        let (_, us_r) = fit::split_right(hdr, col_w, 0.0);
+        fit::label(&p, Rect::from_min_max(pos2(hdr.max.x - col_w * 2.0, hdr.min.y), pos2(hdr.max.x - col_w, hdr.max.y)), "it hits you", b.font(10.0), MUTED(), Align2::RIGHT_CENTER);
+        fit::label(&p, us_r, "you hit it", b.font(10.0), MUTED(), Align2::RIGHT_CENTER);
+        let mut answers = 0;
+        let members: Vec<Member> = t.members.iter().take(6).cloned().collect();
+        let slots = fit::rows(body_r, members.len(), b.px(22.0), b.px(3.0), 2.0);
+        for (m, r) in members.iter().zip(slots.iter()) {
+            let theirs = best_hit(wiki.as_deref(), &fm, m, world);
+            let mine = best_hit(wiki.as_deref(), m, &fm, world);
+            let (left, us) = fit::split_right(*r, col_w, 0.0);
+            let (left, them) = fit::split_right(left, col_w, 0.0);
+            let (sp, nm) = fit::split_left(left, left.height().min(b.px(30.0)), b.px(6.0));
+            self.team_sprite(&p, &m.species, m.shiny, sp.center(), vec2(sp.width(), sp.width()));
+            fit::label(&p, nm, &m.display_name(), b.bold(12.0), TEXT(), Align2::LEFT_CENTER);
+            fit::label(&p, them, &theirs.as_ref().map_or("—".to_string(), |h| format!("{:.0}%", h.hi)), b.bold(12.0), theirs.as_ref().map_or(MUTED(), |h| super::charts::ink(hit_col(h.hi))), Align2::RIGHT_CENTER);
+            fit::label(&p, us, &mine.as_ref().map_or("—".to_string(), |h| format!("{:.0}%", h.hi)), b.bold(12.0), mine.as_ref().map_or(MUTED(), |h| super::charts::ink(hit_col(100.0 - h.hi.min(100.0)))), Align2::RIGHT_CENTER);
+            if mine.as_ref().is_some_and(|h| h.hi >= 50.0) && theirs.as_ref().map_or(true, |h| h.hi < 50.0) {
+                answers += 1;
+            }
+        }
+        if verdict.is_positive() {
             if answers > 0 {
-                ui.label(RichText::new(format!("✔  {answers} of them take it on well (hit it for 50%+, take under 50%).")).size(kit::fs(12.0)).color(theme::GREEN));
+                fit::label(&p, verdict, &format!("✔  {answers} of them take it on well (hit it for 50%+, take under 50%)."), b.font(11.5), theme::GREEN, Align2::LEFT_CENTER);
             } else {
-                ui.label(RichText::new("⚠  Nobody takes it on well. Worth a plan!").size(kit::fs(12.0)).color(kit::C_ORANGE));
+                fit::label(&p, verdict, "⚠  Nobody takes it on well. Worth a plan!", b.font(11.5), kit::C_ORANGE, Align2::LEFT_CENTER);
             }
-        });
+        }
         if change && !preview {
             *out = Some(Vec::new());
-        }
-        if let Some(id) = picked {
-            let name = self.wiki.as_ref().and_then(|wk| wk.mon(&id)).map(|m| m.name.clone()).unwrap_or(id);
-            *out = Some(vec![name]);
         }
     }
 }

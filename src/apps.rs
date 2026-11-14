@@ -658,7 +658,7 @@ pub struct WidgetCfg {
     /// Its place on the Dashboard's grid of squares: [column, row, width,
     /// height]. None: from before the grid (placed in order the first time).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pos: Option<[u8; 4]>,
+    pub pos: Option<[u16; 4]>,
 }
 
 /// The Dashboard's widgets, in order. None: the default layout, which is
@@ -674,7 +674,8 @@ pub struct HomeCfg {
     /// Calculations kept from the Quick calc widget: "attacker|defender".
     pub saved_calcs: Vec<String>,
     /// Which grid the widgets' places are in: 0 the first (6 columns),
-    /// 2 the finer one (12 columns, half-size squares).
+    /// 2 the finer one (12 columns, half-size squares), 3 the same with
+    /// places repaired once (widgets doubled by mistake in v0.7.1/v0.7.2).
     pub grid: u8,
 }
 

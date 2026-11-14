@@ -28,8 +28,9 @@ pub(super) const COLS: i32 = 12;
 pub(super) const MAX_SIDE: i32 = 8;
 /// Narrower squares than this: the widgets just stack (window too narrow).
 const MIN_CELL: f32 = 46.0;
-/// The grid the places are saved in (see `HomeCfg::grid`).
-const GRID_VERSION: u8 = 2;
+/// The grid the places are saved in (see `HomeCfg::grid`). 3: the same
+/// grid as 2, with places repaired once (see `repair`).
+pub(super) const GRID_VERSION: u8 = 3;
 
 /// A place on the grid, in squares.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,50 +42,127 @@ pub(super) struct Cell {
 }
 
 impl Cell {
-    fn of(p: [u8; 4]) -> Cell {
+    pub(super) fn of(p: [u16; 4]) -> Cell {
         Cell { x: p[0] as i32, y: p[1] as i32, w: (p[2] as i32).max(1), h: (p[3] as i32).max(1) }
     }
-    fn save(self) -> [u8; 4] {
-        [self.x.clamp(0, 250) as u8, self.y.clamp(0, 250) as u8, self.w as u8, self.h as u8]
+    pub(super) fn save(self) -> [u16; 4] {
+        [self.x.clamp(0, 60_000) as u16, self.y.clamp(0, 60_000) as u16, self.w.clamp(1, 255) as u16, self.h.clamp(1, 255) as u16]
     }
-    fn overlaps(self, o: Cell) -> bool {
+    pub(super) fn overlaps(self, o: Cell) -> bool {
         self.x < o.x + o.w && o.x < self.x + self.w && self.y < o.y + o.h && o.y < self.y + self.h
     }
 }
 
-/// The smallest a widget can be (wider ones need the room).
+/// A widget's sizes on the grid, in squares: the smallest, the size it's
+/// added at, the biggest, and (for the square ones) its height fixed to its
+/// width plus `tall_by` (a map square, the bingo card a square under its
+/// header). Measured from each widget's content at 1920 wide, so a new
+/// widget has next to no empty space and none can be stretched much past
+/// what it has to show.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Lim {
+    pub min: (i32, i32),
+    pub start: (i32, i32),
+    pub max: (i32, i32),
+    pub tall_by: Option<i32>,
+}
+
+fn lim_of(kind: &str) -> Option<Lim> {
+    match kind {
+        "today" => Some(Lim { min: (2, 1), start: (8, 1), max: (8, 4), tall_by: None }),
+        "almost" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 6), tall_by: None }),
+        "jump" => Some(Lim { min: (2, 1), start: (6, 2), max: (8, 4), tall_by: None }),
+        "clock" => Some(Lim { min: (2, 1), start: (3, 2), max: (6, 4), tall_by: None }),
+        "notes" => Some(Lim { min: (2, 1), start: (3, 2), max: (8, 6), tall_by: None }),
+        "hunt_ctrl" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 5), tall_by: None }),
+        "hunts" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 6), tall_by: None }),
+        "shinies" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 6), tall_by: None }),
+        "showcase" => Some(Lim { min: (2, 1), start: (3, 3), max: (6, 6), tall_by: None }),
+        "week" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 4), tall_by: None }),
+        "shinydex" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 5), tall_by: None }),
+        "luck" => Some(Lim { min: (2, 1), start: (3, 2), max: (6, 4), tall_by: None }),
+        "motd" => Some(Lim { min: (2, 1), start: (4, 2), max: (6, 4), tall_by: None }),
+        "dexsearch" => Some(Lim { min: (2, 2), start: (4, 3), max: (8, 6), tall_by: None }),
+        "favs" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 6), tall_by: None }),
+        "catchable" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 6), tall_by: None }),
+        "typematch" => Some(Lim { min: (3, 2), start: (4, 3), max: (8, 5), tall_by: None }),
+        "rare" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 6), tall_by: None }),
+        "minimap" => Some(Lim { min: (2, 2), start: (4, 4), max: (8, 8), tall_by: Some(0) }),
+        "mapfavs" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 6), tall_by: None }),
+        "huntwhere" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 6), tall_by: None }),
+        "maprecent" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 6), tall_by: None }),
+        "infonews" => Some(Lim { min: (3, 2), start: (4, 3), max: (8, 6), tall_by: None }),
+        "tip" => Some(Lim { min: (2, 1), start: (4, 2), max: (6, 4), tall_by: None }),
+        "infosearch" => Some(Lim { min: (2, 2), start: (4, 3), max: (8, 6), tall_by: None }),
+        "adventure" => Some(Lim { min: (4, 2), start: (6, 2), max: (8, 3), tall_by: None }),
+        "bookmarks" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 6), tall_by: None }),
+        "mainteam" => Some(Lim { min: (2, 1), start: (6, 2), max: (8, 4), tall_by: None }),
+        "teamweak" => Some(Lim { min: (2, 1), start: (4, 2), max: (6, 6), tall_by: None }),
+        "teamswitch" => Some(Lim { min: (2, 1), start: (4, 2), max: (6, 6), tall_by: None }),
+        "coverage" => Some(Lim { min: (3, 2), start: (6, 2), max: (8, 5), tall_by: None }),
+        "teamidea" => Some(Lim { min: (3, 2), start: (4, 3), max: (8, 5), tall_by: None }),
+        "lastbattle" => Some(Lim { min: (3, 1), start: (4, 2), max: (6, 4), tall_by: None }),
+        "winrecord" => Some(Lim { min: (2, 1), start: (3, 2), max: (6, 3), tall_by: None }),
+        "quickbattle" => Some(Lim { min: (3, 1), start: (4, 2), max: (8, 3), tall_by: None }),
+        "trainers" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 6), tall_by: None }),
+        "battlehistory" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 6), tall_by: None }),
+        "breeding" => Some(Lim { min: (2, 1), start: (4, 1), max: (8, 3), tall_by: None }),
+        "breeders" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 6), tall_by: None }),
+        "eggmoves" => Some(Lim { min: (3, 2), start: (4, 2), max: (8, 5), tall_by: None }),
+        "nextstep" => Some(Lim { min: (3, 2), start: (4, 3), max: (8, 5), tall_by: None }),
+        "hatches" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 4), tall_by: None }),
+        "quickcalc" => Some(Lim { min: (3, 2), start: (4, 3), max: (8, 5), tall_by: None }),
+        "savedcalcs" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 6), tall_by: None }),
+        "speedtiers" => Some(Lim { min: (3, 2), start: (4, 3), max: (8, 6), tall_by: None }),
+        "lastcalc" => Some(Lim { min: (3, 2), start: (4, 2), max: (8, 4), tall_by: None }),
+        "threat" => Some(Lim { min: (3, 3), start: (4, 4), max: (8, 6), tall_by: None }),
+        "cards_xp" => Some(Lim { min: (2, 1), start: (4, 1), max: (8, 3), tall_by: None }),
+        "cards_packs" => Some(Lim { min: (2, 2), start: (3, 2), max: (6, 4), tall_by: None }),
+        "cards_pulls" => Some(Lim { min: (2, 1), start: (6, 2), max: (8, 6), tall_by: None }),
+        "cards_sets" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 4), tall_by: None }),
+        "cards_missions" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 6), tall_by: None }),
+        "gotchi_pet" => Some(Lim { min: (2, 2), start: (4, 2), max: (6, 6), tall_by: None }),
+        "gotchi_needs" => Some(Lim { min: (2, 1), start: (3, 2), max: (8, 4), tall_by: None }),
+        "gotchi_care" => Some(Lim { min: (2, 1), start: (4, 1), max: (8, 3), tall_by: None }),
+        "gotchi_pantry" => Some(Lim { min: (2, 2), start: (3, 2), max: (6, 4), tall_by: None }),
+        "gotchi_box" => Some(Lim { min: (2, 1), start: (6, 2), max: (8, 6), tall_by: None }),
+        "bingo_card" => Some(Lim { min: (3, 4), start: (4, 5), max: (7, 8), tall_by: Some(1) }),
+        "bingo_week" => Some(Lim { min: (2, 1), start: (4, 1), max: (8, 3), tall_by: None }),
+        "bingo_next" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 6), tall_by: None }),
+        "bingo_meet" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 6), tall_by: None }),
+        "bingo_recent" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 6), tall_by: None }),
+        "rare_out" => Some(Lim { min: (2, 1), start: (4, 3), max: (8, 6), tall_by: None }),
+        "rare_new" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 6), tall_by: None }),
+        "rare_stats" => Some(Lim { min: (2, 1), start: (4, 1), max: (8, 3), tall_by: None }),
+        "rare_places" => Some(Lim { min: (2, 1), start: (4, 3), max: (8, 6), tall_by: None }),
+        "rare_missing" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 6), tall_by: None }),
+        "replay_last" => Some(Lim { min: (2, 2), start: (4, 3), max: (8, 6), tall_by: None }),
+        "replay_rec" => Some(Lim { min: (2, 1), start: (3, 2), max: (6, 3), tall_by: None }),
+        "replay_recent" => Some(Lim { min: (2, 2), start: (4, 3), max: (8, 6), tall_by: None }),
+        "replay_stats" => Some(Lim { min: (2, 1), start: (4, 1), max: (8, 3), tall_by: None }),
+        "replay_save" => Some(Lim { min: (2, 1), start: (3, 1), max: (6, 3), tall_by: None }),
+        _ => None,
+    }
+}
+
+/// A widget's sizes (anything without its own: 2×2 up to `MAX_SIDE`).
+pub(super) fn lim(d: Option<&WidgetDef>) -> Lim {
+    d.and_then(|d| lim_of(d.kind)).unwrap_or(Lim { min: (2, 2), start: (4, 3), max: (MAX_SIDE, MAX_SIDE), tall_by: None })
+}
+
+/// The smallest a widget can be.
 pub(super) fn min_size(d: &WidgetDef) -> (i32, i32) {
-    if d.kind == "minimap" {
-        return (3, 3);
-    }
-    if d.kind == "bingo_card" {
-        return (3, 4);
-    }
-    match d.span {
-        1 => (2, 2),
-        2 => (4, 2),
-        _ => (6, 2),
-    }
+    lim(Some(d)).min
+}
+
+/// The biggest a widget gets.
+pub(super) fn max_size(d: &WidgetDef) -> (i32, i32) {
+    lim(Some(d)).max
 }
 
 /// The size a widget gets when added.
 pub(super) fn start_size(d: &WidgetDef) -> (i32, i32) {
-    // a map starts square
-    if d.kind == "minimap" {
-        return (6, 6);
-    }
-    // the bingo card starts about square
-    if d.kind == "bingo_card" {
-        return (4, 5);
-    }
-    if d.kind == "bingo_meet" {
-        return (4, 4);
-    }
-    match d.span {
-        1 => (4, 3),
-        2 => (6, 3),
-        _ => (8, 3),
-    }
+    lim(Some(d)).start
 }
 
 /// Keep `fixed` where it is and push anything it overlaps down (and what
@@ -101,6 +179,71 @@ pub(super) fn settle(items: &mut [(u64, Cell)], fixed: Option<u64>) {
         }
         items[i].1 = c;
         placed.push(c);
+    }
+}
+
+/// `v` kept between `lo` and `hi` (`lo` wins when they cross, instead of
+/// a panic).
+fn between(v: i32, lo: i32, hi: i32) -> i32 {
+    v.min(hi).max(lo)
+}
+
+/// A place made possible: inside the 12 columns, within the widget's
+/// smallest and biggest size (and square, for the square ones).
+pub(super) fn fit(c: Cell, l: Lim) -> Cell {
+    let (mw, mh) = (l.min.0.min(COLS), l.min.1);
+    let (xw, xh) = (l.max.0.max(mw).min(COLS), l.max.1.max(l.min.1));
+    let mut w = between(c.w, mw, xw);
+    let h = match l.tall_by {
+        Some(d) => {
+            // the height follows the width
+            w = between(w, between(mh - d, mw, xw), between(xh - d, mw, xw));
+            between(w + d, mh, xh)
+        }
+        None => between(c.h, mh, xh),
+    };
+    Cell { x: between(c.x, 0, COLS - w), y: c.y.max(0), w, h }
+}
+
+/// Could be on the grid at all (whatever the widget): inside the 12
+/// columns and no side past `MAX_SIDE`.
+fn on_grid(c: Cell) -> bool {
+    c.x >= 0 && c.y >= 0 && c.w >= 1 && c.h >= 1 && c.w <= MAX_SIDE && c.h <= MAX_SIDE && c.x + c.w <= COLS
+}
+
+/// Mend places once. v0.7.1 and v0.7.2 doubled the first widget added to
+/// an empty Dashboard (an 8×3 became 16×6, wider than the grid, and
+/// grabbing it crashed): those are halved back. Then every widget is made
+/// to fit its own sizes, whatever now overlaps moves down, and the room
+/// freed is closed up.
+pub(super) fn repair(items: &mut [(u64, Cell)], lim_of: impl Fn(u64) -> Lim) {
+    let mut changed = false;
+    for (id, c) in items.iter_mut() {
+        let l = lim_of(*id);
+        let even = [c.x, c.y, c.w, c.h].iter().all(|v| v % 2 == 0);
+        let was = *c;
+        if !on_grid(*c) && even {
+            *c = Cell { x: c.x / 2, y: c.y / 2, w: c.w / 2, h: c.h / 2 };
+        }
+        *c = fit(*c, l);
+        changed |= *c != was;
+    }
+    settle(items, None);
+    // the room a widget no longer takes is closed up (what was under it
+    // moves up as far as it can, in order)
+    if changed {
+        let mut order: Vec<usize> = (0..items.len()).collect();
+        order.sort_by_key(|i| (items[*i].1.y, items[*i].1.x));
+        for i in order {
+            loop {
+                let mut up = items[i].1;
+                up.y -= 1;
+                if up.y < 0 || items.iter().enumerate().any(|(j, (_, o))| j != i && o.overlaps(up)) {
+                    break;
+                }
+                items[i].1 = up;
+            }
+        }
     }
 }
 
@@ -251,6 +394,8 @@ pub(super) struct Gallery {
     pub app: Option<Option<AppId>>,
     /// Hide the ones already on the Dashboard.
     pub not_added: bool,
+    /// The Starter layouts tab (else the widgets).
+    pub layouts: bool,
 }
 
 #[derive(Default)]
@@ -273,6 +418,11 @@ pub(super) struct HomeState {
     pub text: HashMap<(u64, &'static str), String>,
     /// The breeding plan the Next step widget shows, and what it was made from.
     pub plan: Option<(String, crate::breed_plan::Plan)>,
+    /// The Dashboard from before the last starter layout went on (Undo).
+    pub undo: Option<(&'static str, Vec<WidgetCfg>)>,
+    /// A starter layout clicked on a Dashboard with widgets: asking
+    /// replace or add below.
+    pub preset_pick: Option<usize>,
     /// The full plan (with the Egg estimate) being worked out.
     pub plan_rx: Option<(String, std::sync::mpsc::Receiver<crate::breed_plan::Plan>)>,
 }
@@ -282,7 +432,7 @@ impl App {
         self.cfg.home.widgets.clone().unwrap_or_else(default_widgets)
     }
 
-    fn set_home_widgets(&mut self, w: Vec<WidgetCfg>) {
+    pub(super) fn set_home_widgets(&mut self, w: Vec<WidgetCfg>) {
         self.cfg.home.widgets = Some(w);
         self.dirty = true;
     }
@@ -311,6 +461,8 @@ impl App {
         }
         let c = cells.iter().find(|(i, _)| *i == id).map_or(c, |x| x.1);
         w.push(WidgetCfg { id, kind: d.kind.to_string(), span: d.span, data: Vec::new(), pos: Some(c.save()) });
+        // placed on this grid (never to be doubled as an old place)
+        self.cfg.home.grid = GRID_VERSION;
         self.set_home_widgets(w);
         self.app_toast(format!("Added {} to your Dashboard", d.name));
     }
@@ -336,6 +488,14 @@ impl App {
                     self.setup.home.drag = None;
                     self.setup.home.resize = None;
                     self.setup.home.preview = None;
+                }
+                if let Some((name, _)) = self.setup.home.undo {
+                    let label = format!("↩  Undo {name} layout");
+                    let lw = ui.painter().layout_no_wrap(label.clone(), crate::fonts::sans_bold_font(12.5), TEXT()).size().x + 30.0;
+                    let (r, _) = ui.allocate_exact_size(vec2(lw, 32.0), Sense::hover());
+                    if pill_button(ui, r, &label, false, "home-undo").on_hover_text("Put back the widgets you had before").clicked() {
+                        self.undo_preset();
+                    }
                 }
                 if !edit {
                     return;
@@ -370,7 +530,7 @@ impl App {
     /// button. A few suggestions underneath add with one click.
     fn home_empty(&mut self, ui: &mut egui::Ui) {
         let w = ui.available_width();
-        let h = 330.0;
+        let h = 284.0;
         let (r, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
         let p = ui.painter().clone();
         p.rect_filled(r, 20.0, theme::blend(kit::PAGE(), CARD(), 0.55));
@@ -406,29 +566,15 @@ impl App {
         } else if pill_button(ui, br, "✏  Customize", true, "home-first").clicked() {
             self.setup.home.edit = true;
         }
-        if !edit {
-            return;
-        }
-        // one-click suggestions
-        let picks: Vec<&'static WidgetDef> = ["hunt_ctrl", "today", "rare", "shinies"].iter().filter_map(|k| def(k)).filter(|d| d.app.map_or(true, |a| self.has_app(a))).take(3).collect();
-        let lw = p.layout_no_wrap("Or start with:".into(), crate::fonts::sans_font(12.0), MUTED()).size().x;
-        let sizes: Vec<f32> = picks.iter().map(|d| p.layout_no_wrap(format!("{}  {}", d.icon, d.name), crate::fonts::sans_bold_font(12.0), TEXT()).size().x + 26.0).collect();
-        let total = lw + 10.0 + sizes.iter().sum::<f32>() + 8.0 * sizes.len().saturating_sub(1) as f32;
-        let mut x = r.center().x - total / 2.0;
-        let y = r.min.y + 298.0;
-        p.text(pos2(x, y), Align2::LEFT_CENTER, "Or start with:", crate::fonts::sans_font(12.0), MUTED());
-        x += lw + 10.0;
-        let mut add = None;
-        for (d, sw) in picks.iter().zip(sizes) {
-            let cr = Rect::from_min_size(pos2(x, y - 14.0), vec2(sw, 28.0));
-            if pill_button(ui, cr, &format!("{}  {}", d.icon, d.name), false, ("home-sugg", d.kind)).on_hover_text(d.about).clicked() {
-                add = Some(*d);
-            }
-            x += sw + 8.0;
-        }
-        if let Some(d) = add {
-            self.add_widget(d);
-        }
+        // or a ready-made layout
+        ui.add_space(26.0);
+        ui.set_max_width(w);
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new("Or start with a ready-made layout").font(crate::fonts::sans_bold_font(16.0)).color(TEXT()));
+            ui.label(egui::RichText::new("A few widgets each, laid out for you. Change anything after.").size(kit::fs(12.5)).color(MUTED()));
+        });
+        ui.add_space(12.0);
+        self.preset_cards(ui, "empty", false);
     }
 
     /// The widget gallery: every widget with a live preview, a search box,
@@ -473,6 +619,22 @@ impl App {
                     });
                 });
                 ui.add_space(12.0);
+                // two tabs: single widgets, or a whole layout
+                let mut tab = self.setup.home.gallery.layouts;
+                let wl = format!("Widgets  {}", DEFS.len());
+                let ll = format!("Starter layouts  {}", super::w_presets::PRESETS.len());
+                kit::segmented(ui, &mut tab, &[(false, wl.as_str()), (true, ll.as_str())]);
+                self.setup.home.gallery.layouts = tab;
+                ui.add_space(12.0);
+                if tab {
+                    ui.label(egui::RichText::new("A whole Dashboard in one click, laid out for a kind of player. Apps a layout needs are added with it.").size(kit::fs(12.5)).color(MUTED()));
+                    ui.add_space(12.0);
+                    egui::ScrollArea::vertical().id_salt("gal-layouts").auto_shrink([false, false]).show(ui, |ui| {
+                        ui.set_max_width(ui.available_width() - 6.0);
+                        self.preset_cards(ui, "gal", true);
+                    });
+                    return;
+                }
                 // search, sort, not-added
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 10.0;
@@ -568,7 +730,35 @@ impl App {
                             child.set_clip_rect(inner.intersect(ui.clip_rect()));
                             child.set_width(inner.width());
                             if installed {
+                                // the widget at the size (within its own) that fills the
+                                // preview best, its squares big enough to read
+                                let l = lim(Some(d));
+                                let (mut sw, mut sh) = l.start;
+                                let mut best = -1.0f32;
+                                for w in l.min.0..=l.max.0 {
+                                    for h in l.min.1..=l.max.1 {
+                                        if l.tall_by.is_some_and(|t| h != w + t) {
+                                            continue;
+                                        }
+                                        let cell = ((inner.width() + GAP) / w as f32 - GAP).min((inner.height() + GAP) / h as f32 - GAP);
+                                        if cell < 52.0 {
+                                            continue;
+                                        }
+                                        let cover = (w as f32 * cell) * (h as f32 * cell) / (inner.width() * inner.height());
+                                        let near = ((w - l.start.0).abs() + (h - l.start.1).abs()) as f32 * 0.01;
+                                        if cover - near > best {
+                                            best = cover - near;
+                                            (sw, sh) = (w, h);
+                                        }
+                                    }
+                                }
+                                let cell = ((inner.width() + GAP) / sw as f32 - GAP).min((inner.height() + GAP) / sh as f32 - GAP).max(30.0);
+                                let size = vec2(sw as f32 * (cell + GAP) - GAP, sh as f32 * (cell + GAP) - GAP);
+                                let pr2 = Rect::from_min_size(inner.min, size.min(inner.size()));
+                                card_bg(ui.painter(), pr2, false);
+                                super::w_fit::set_box(Some(super::w_fit::WBox { r: pr2, cols: sw, rows: sh, cell }));
                                 let _ = self.draw_widget(&mut child, &fake, true);
+                                super::w_fit::set_box(None);
                             } else {
                                 widget_ghost(&mut child, d);
                             }
@@ -578,7 +768,11 @@ impl App {
                             // size tag on the preview
                             let (sw, sh) = start_size(d);
                             let (mw, mh) = min_size(d);
-                            let size = if (mw, mh) == (1, 1) { format!("{sw}×{sh}") } else { format!("{sw}×{sh} · smallest {mw}×{mh}") };
+                            let (xw, xh) = max_size(d);
+                            let mut size = if (mw, mh) == (1, 1) { format!("{sw}×{sh}") } else { format!("{sw}×{sh} · smallest {mw}×{mh}") };
+                            if (xw, xh) != (MAX_SIDE, MAX_SIDE) {
+                                size.push_str(&format!(" · biggest {xw}×{xh}"));
+                            }
                             let sg = p.layout_no_wrap(size, crate::fonts::sans_bold_font(10.5), TEXT());
                             let sr = Rect::from_min_size(pos2(pr.max.x - sg.size().x - 22.0, pr.min.y + 8.0), sg.size() + vec2(14.0, 6.0));
                             p.rect_filled(sr, 8.0, CARD().gamma_multiply(0.92));
@@ -634,28 +828,21 @@ impl App {
         let edit = self.setup.home.edit;
         let all = self.home_widgets();
         if all.is_empty() {
+            // nothing to bring over: whatever gets added is on this grid
+            // (v0.7.1 and v0.7.2 left this at 0, so the first widget added
+            // was then doubled as if it came from the first grid)
+            if self.cfg.home.grid != GRID_VERSION {
+                self.cfg.home.grid = GRID_VERSION;
+                self.dirty = true;
+            }
             self.home_empty(ui);
             return;
         }
-        // places from the first grid (squares twice the size): doubled
-        if self.cfg.home.grid < GRID_VERSION {
-            let mut fixed = all.clone();
-            for w in fixed.iter_mut() {
-                if let Some(p) = w.pos {
-                    w.pos = Some([p[0].saturating_mul(2), p[1].saturating_mul(2), p[2].saturating_mul(2), p[3].saturating_mul(2)]);
-                }
-            }
+        // saves from older versions (and anything odd in one) brought up
+        // to date once
+        if self.cfg.home.grid < GRID_VERSION || needs_upgrade(&all) {
+            let fixed = upgrade(&all, self.cfg.home.grid);
             self.cfg.home.grid = GRID_VERSION;
-            self.set_home_widgets(fixed);
-            return self.home_widget_grid(ui);
-        }
-        // widgets from before the grid get their places once
-        if all.iter().any(|w| w.pos.is_none()) {
-            let cells = place_all(&all);
-            let mut fixed = all.clone();
-            for (w, (_, c)) in fixed.iter_mut().zip(cells.iter()) {
-                w.pos = Some(c.save());
-            }
             self.set_home_widgets(fixed);
             return self.home_widget_grid(ui);
         }
@@ -670,7 +857,9 @@ impl App {
         // Widgets whose app isn't installed hide (they show, locked, while
         // customising; they come back when the app does).
         let shown: Vec<WidgetCfg> = all.iter().filter(|w| def(&w.kind).is_some_and(|d| edit || d.app.map_or(true, |a| self.has_app(a)))).cloned().collect();
-        let saved: Vec<(u64, Cell)> = shown.iter().map(|w| (w.id, Cell::of(w.pos.unwrap_or([0, 0, 2, 2])))).collect();
+        // (always inside the grid, whatever the save says)
+        let mut saved: Vec<(u64, Cell)> = shown.iter().map(|w| (w.id, fit(Cell::of(w.pos.unwrap_or([0, 0, 2, 2])), lim(def(&w.kind))))).collect();
+        settle(&mut saved, None);
         if !edit {
             self.setup.home.drag = None;
             self.setup.home.resize = None;
@@ -683,16 +872,22 @@ impl App {
         if let (Some(id), Some(pp)) = (busy, pointer) {
             if let Some(me) = saved.iter().find(|(i, _)| *i == id).map(|x| x.1) {
                 let d = shown.iter().find(|w| w.id == id).and_then(|w| def(&w.kind));
-                let (mw, mh) = d.map_or((1, 1), min_size);
+                let l = lim(d);
+                let ((mw, mh), (xw, xh)) = (l.min, l.max);
                 let mut want = me;
                 if self.setup.home.drag.is_some() {
                     let at = pp - self.setup.home.grab - origin;
-                    want.x = ((at.x / pitch).round() as i32).clamp(0, COLS - me.w);
+                    want.x = between((at.x / pitch).round() as i32, 0, COLS - me.w);
                     want.y = ((at.y / pitch).round() as i32).max(0);
                 } else {
                     let r = rect_of(me);
-                    want.w = (((pp.x - r.min.x + GAP / 2.0) / pitch).round() as i32).clamp(mw, MAX_SIDE.min(COLS - me.x));
-                    want.h = (((pp.y - r.min.y + GAP / 2.0) / pitch).round() as i32).clamp(mh, MAX_SIDE);
+                    want.w = between(((pp.x - r.min.x + GAP / 2.0) / pitch).round() as i32, mw, xw.min(COLS - me.x));
+                    want.h = between(((pp.y - r.min.y + GAP / 2.0) / pitch).round() as i32, mh, xh);
+                    // square ones: the bigger pull wins, the other follows
+                    if let Some(dh) = l.tall_by {
+                        want.w = want.w.max(want.h - dh);
+                    }
+                    want = fit(want, l);
                 }
                 let mut next = saved.clone();
                 if let Some(x) = next.iter_mut().find(|(i, _)| *i == id) {
@@ -800,10 +995,15 @@ impl App {
         // the box itself, so a widget shorter than it still fills it
         card_bg(ui.painter(), r, false);
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r).layout(egui::Layout::top_down(egui::Align::Min)));
-        let clip = Rect::from_min_max(r.min - vec2(18.0, 18.0), pos2(r.max.x + 18.0, r.max.y)).intersect(ui.clip_rect());
+        // (room above for glows, but nothing spills sideways into the
+        // widget next to it)
+        let clip = Rect::from_min_max(pos2(r.min.x, r.min.y - 18.0), r.max).intersect(ui.clip_rect());
         child.set_clip_rect(clip);
         child.set_width(r.width());
         kit::set_card_fill(Some(r.height()));
+        // the box it fills, for widgets that lay themselves out by it
+        let cell = ((r.width() + GAP) / c.w.max(1) as f32 - GAP).max(1.0);
+        super::w_fit::set_box(Some(super::w_fit::WBox { r, cols: c.w, rows: c.h, cell }));
         if locked {
             let p = child.painter().clone();
             p.text(r.min + vec2(20.0, 22.0), Align2::LEFT_TOP, format!("{}  {}", d.icon, d.name), crate::fonts::sans_bold_font(15.0), TEXT());
@@ -814,6 +1014,7 @@ impl App {
             *action = Some(Action::Data(w.id, data));
         }
         kit::set_card_fill(None);
+        super::w_fit::set_box(None);
         // more than fits: fade out at the bottom and close the box neatly
         let used = child.min_rect();
         if used.max.y > r.max.y + 1.0 {
@@ -850,18 +1051,21 @@ impl App {
             ui.ctx().set_cursor_icon(if body.dragged() { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab });
         }
         // the bar: name, size, ×
-        let bar = Rect::from_min_size(pos2(r.min.x + 10.0, r.min.y + 10.0), vec2(r.width() - 20.0, 34.0));
-        p.rect_filled(bar, 12.0, CARD_HOVER());
-        p.rect_stroke(bar, 12.0, Stroke::new(1.0f32, LINE()));
+        // a compact pill (name, size, ×) so the widget shows under it
         let size = format!("{}×{}", c.w, c.h);
-        let sg = p.layout_no_wrap(size, crate::fonts::sans_bold_font(11.5), if busy { kit::primary() } else { MUTED() });
-        let name_room = Rect::from_min_max(bar.min + vec2(2.0, 2.0), pos2(bar.max.x - 46.0 - sg.size().x, bar.max.y - 2.0));
-        p.with_clip_rect(name_room).text(pos2(bar.min.x + 12.0, bar.center().y), Align2::LEFT_CENTER, format!("☰  {}", d.name), crate::fonts::sans_bold_font(12.5), TEXT());
-        p.galley(pos2(bar.max.x - 40.0 - sg.size().x, bar.center().y - sg.size().y / 2.0), sg, MUTED());
+        let sg = p.layout_no_wrap(size, crate::fonts::sans_bold_font(11.0), if busy { kit::primary() } else { MUTED() });
+        let ng = p.layout_no_wrap(format!("☰  {}", d.name), crate::fonts::sans_bold_font(11.5), TEXT());
+        let want_w = ng.size().x + sg.size().x + 60.0;
+        let bar = Rect::from_min_size(pos2(r.min.x + 8.0, r.min.y + 8.0), vec2(want_w.min(r.width() - 16.0).max(60.0), 26.0));
+        p.rect_filled(bar, 13.0, CARD_HOVER().gamma_multiply(0.96));
+        p.rect_stroke(bar, 13.0, Stroke::new(1.0f32, LINE()));
+        let name_room = Rect::from_min_max(bar.min + vec2(2.0, 2.0), pos2(bar.max.x - 34.0 - sg.size().x, bar.max.y - 2.0));
+        p.with_clip_rect(name_room).galley(pos2(bar.min.x + 10.0, bar.center().y - ng.size().y / 2.0), ng, TEXT());
+        p.galley(pos2(bar.max.x - 30.0 - sg.size().x, bar.center().y - sg.size().y / 2.0), sg, MUTED());
         if lifted {
             return None;
         }
-        let xr = Rect::from_min_size(pos2(bar.max.x - 32.0, bar.min.y + 4.0), vec2(26.0, 26.0));
+        let xr = Rect::from_min_size(pos2(bar.max.x - 24.0, bar.min.y + 3.0), vec2(20.0, 20.0));
         if pill_button(ui, xr, "×", false, ("w-x", w.id)).on_hover_text("Remove this widget").clicked() {
             out = Some(Action::Remove(w.id));
         }
@@ -881,8 +1085,9 @@ impl App {
             self.setup.home.resize = Some(w.id);
             self.setup.home.drag = None;
         }
-        let (mw, mh) = min_size(d);
-        let _ = cresp.on_hover_text(format!("Drag to resize ({mw}×{mh} up to {MAX_SIDE}×{MAX_SIDE})"));
+        let l = lim(Some(d));
+        let ((mw, mh), (xw, xh)) = (l.min, l.max);
+        let _ = cresp.on_hover_text(format!("Drag to resize ({mw}×{mh} up to {xw}×{xh}{})", if l.tall_by.is_some() { ", kept square" } else { "" }));
         out
     }
 
@@ -912,26 +1117,18 @@ impl App {
     pub(super) fn draw_widget(&mut self, ui: &mut egui::Ui, w: &WidgetCfg, preview: bool) -> Option<Vec<String>> {
         let mut out: Option<Vec<String>> = None;
         match w.kind.as_str() {
-            "today" => self.home_today(ui),
-            "hunts" => {
-                if !self.home_runs(ui, 0.0) {
-                    empty_card(ui, "🎯", "Pick up a hunt", "Hunts you pause show here, ready to resume.");
-                }
-            }
-            "almost" => self.home_almost(ui, 0.0),
-            "rare" => self.home_rare(ui),
-            "shinies" => self.recent_shinies(ui, 0.0),
-            "breeding" => {
-                if !(self.home_breeding_on() && self.home_breeding(ui, 0.0)) {
-                    empty_card(ui, "🐣", "Breeding", "Put two Pokémon in the Day Care in Breeding and it shows here.");
-                }
-            }
-            "jump" => self.home_jump(ui),
-            "clock" => self.w_clock(ui),
+            "today" => self.f_today(ui),
+            "hunts" => self.f_hunts(ui),
+            "almost" => self.f_almost(ui),
+            "rare" => self.f_rare(ui),
+            "shinies" => self.f_shinies(ui),
+            "breeding" => self.f_breeding(ui),
+            "jump" => self.f_jump(ui),
+            "clock" => self.f_clock(ui),
             "notes" => self.w_notes(ui, w, preview, &mut out),
-            "hunt_ctrl" => self.w_hunt_ctrl(ui),
+            "hunt_ctrl" => self.f_hunt(ui),
             "showcase" => self.w_showcase(ui),
-            "week" => self.w_week(ui),
+            "week" => self.f_week(ui),
             "shinydex" => self.w_shinydex(ui),
             "luck" => self.w_luck(ui),
             "motd" => self.w_motd(ui),
@@ -1006,33 +1203,67 @@ enum Action {
     Layout(Vec<(u64, Cell)>),
 }
 
+/// A layout that needs bringing up to date: a widget with no place yet
+/// (from before the grid) or two with the same id.
+pub(super) fn needs_upgrade(all: &[WidgetCfg]) -> bool {
+    all.iter().any(|w| w.pos.is_none()) || all.iter().enumerate().any(|(i, w)| all[..i].iter().any(|o| o.id == w.id))
+}
+
+/// A saved layout from any version, made right for this one:
+/// - two widgets with the same id: the later one gets a new id;
+/// - places from the first grid (`grid` below 2, squares twice the size):
+///   doubled;
+/// - a widget doubled by mistake in v0.7.1/v0.7.2 (wider than the grid):
+///   halved back, and every widget fitted to its own sizes (then whatever
+///   overlaps moves down and the room freed is closed up);
+/// - widgets from before the grid (v0.7.0, no place): put in the first
+///   space each fits, at the size it's added at.
+pub(super) fn upgrade(all: &[WidgetCfg], grid: u8) -> Vec<WidgetCfg> {
+    let mut fixed: Vec<WidgetCfg> = all.to_vec();
+    let mut next = fixed.iter().map(|w| w.id).max().unwrap_or(0) + 1;
+    for i in 0..fixed.len() {
+        if fixed[..i].iter().any(|o| o.id == fixed[i].id) {
+            fixed[i].id = next;
+            next += 1;
+        }
+    }
+    if grid < 2 {
+        for w in fixed.iter_mut() {
+            if let Some(p) = w.pos {
+                w.pos = Some([p[0].saturating_mul(2), p[1].saturating_mul(2), p[2].saturating_mul(2), p[3].saturating_mul(2)]);
+            }
+        }
+    }
+    if grid < GRID_VERSION {
+        let mut cells: Vec<(u64, Cell)> = fixed.iter().filter_map(|w| w.pos.map(|p| (w.id, Cell::of(p)))).collect();
+        repair(&mut cells, |id| lim(fixed.iter().find(|w| w.id == id).and_then(|w| def(&w.kind))));
+        for w in fixed.iter_mut() {
+            if let Some((_, c)) = cells.iter().find(|(i, _)| *i == w.id) {
+                w.pos = Some(c.save());
+            }
+        }
+    }
+    if fixed.iter().any(|w| w.pos.is_none()) {
+        let cells = place_all(&fixed);
+        for (w, (_, c)) in fixed.iter_mut().zip(cells.iter()) {
+            w.pos = Some(c.save());
+        }
+    }
+    fixed
+}
+
 /// Every widget's place: its own, or (from before the grid) the first space
 /// that fits it, in order, sized from its old width.
-fn place_all(all: &[WidgetCfg]) -> Vec<(u64, Cell)> {
+pub(super) fn place_all(all: &[WidgetCfg]) -> Vec<(u64, Cell)> {
     let mut out: Vec<(u64, Cell)> = all.iter().filter_map(|w| w.pos.map(|p| (w.id, Cell::of(p)))).collect();
     for w in all.iter().filter(|w| w.pos.is_none()) {
-        let (cw, ch) = match w.span {
-            1 => (4, 4),
-            _ => (8, 4),
-        };
+        // (the size it would be added at today)
+        let (cw, ch) = lim(def(&w.kind)).start;
         let c = first_free(&out, cw, ch);
         out.push((w.id, c));
     }
     // back in the widgets' own order
     all.iter().filter_map(|w| out.iter().find(|(i, _)| *i == w.id).copied()).collect()
-}
-
-/// A placeholder card for a widget with nothing to show yet.
-pub(super) fn empty_card(ui: &mut egui::Ui, icon: &str, title: &str, text: &str) {
-    let w = ui.available_width();
-    // in a Dashboard box: as tall as the box
-    let h = kit::take_card_fill().unwrap_or(130.0).max(100.0);
-    let (r, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
-    let p = ui.painter();
-    card_bg(p, r, false);
-    p.text(r.min + vec2(20.0, 22.0), Align2::LEFT_TOP, format!("{icon}  {title}"), crate::fonts::sans_bold_font(15.0), TEXT());
-    let g = p.layout(text.to_string(), crate::fonts::sans_font(12.5), MUTED(), w - 40.0);
-    p.galley(r.min + vec2(20.0, 56.0), g, MUTED());
 }
 
 /// A dashed rounded-ish outline.
@@ -1140,15 +1371,198 @@ mod grid_tests {
         assert_eq!(items[0].1, c(0, 0, 2, 2));
     }
 
+    impl Cell {
+        fn min_with(self, l: Lim) -> Cell {
+            fit(self, l)
+        }
+    }
+
+    fn l(min: (i32, i32), max: (i32, i32)) -> Lim {
+        Lim { min, start: min, max, tall_by: None }
+    }
+
+    fn fitm(c: Cell, m: (i32, i32)) -> Cell {
+        fit(c, l(m, (MAX_SIDE, MAX_SIDE)))
+    }
+
+    #[test]
+    fn places_are_always_possible() {
+        // wider than the grid, too tall, past the right edge, too small
+        assert_eq!(fitm(c(0, 0, 16, 6), (6, 2)), c(0, 0, 8, 6));
+        assert_eq!(fitm(c(0, 0, 4, 12), (2, 2)), c(0, 0, 4, 8));
+        assert_eq!(fitm(c(10, 2, 6, 3), (6, 2)), c(6, 2, 6, 3));
+        assert_eq!(fitm(c(11, 0, 1, 1), (3, 4)), c(9, 0, 3, 4));
+        assert_eq!(fitm(c(-2, -1, 4, 3), (2, 2)), c(0, 0, 4, 3));
+        // fine already: unchanged
+        assert_eq!(fitm(c(4, 7, 8, 8), (6, 2)), c(4, 7, 8, 8));
+        // never a panic when the limits cross
+        assert_eq!(between(5, 6, 4), 6);
+        assert_eq!(between(-3, 0, -4), 0);
+    }
+
+    #[test]
+    fn today_at_a_glance_is_capped() {
+        let d = def("today").unwrap();
+        assert_eq!((lim(Some(d)).min, lim(Some(d)).max), ((2, 1), (8, 4)));
+        // an old 8×5 (or the doubled 16×6) comes back no bigger than 8×4
+        assert_eq!(fit(c(0, 0, 8, 5), lim(Some(d))), c(0, 0, 8, 4));
+        assert_eq!(fit(c(0, 0, 16, 6), lim(Some(d))), c(0, 0, 8, 4));
+    }
+
+    #[test]
+    fn every_widget_has_its_own_sizes() {
+        for d in DEFS {
+            let l = lim_of(d.kind).unwrap_or_else(|| panic!("{} has no sizes", d.kind));
+            assert!(l.min.0 <= l.start.0 && l.start.0 <= l.max.0 && l.min.1 <= l.start.1 && l.start.1 <= l.max.1, "{}", d.kind);
+            assert!(l.max.0 <= MAX_SIDE && l.max.1 <= MAX_SIDE && l.min.0 >= 1 && l.min.1 >= 1, "{}", d.kind);
+            assert_eq!(fit(c(0, 0, l.start.0, l.start.1), l), c(0, 0, l.start.0, l.start.1), "{} starts at a size it can be", d.kind);
+        }
+    }
+
+    #[test]
+    fn square_widgets_stay_square() {
+        let map = lim(def("minimap"));
+        assert_eq!(fit(c(0, 0, 6, 3), map), c(0, 0, 6, 6));
+        assert_eq!(fit(c(0, 0, 1, 9), map), c(0, 0, 2, 2));
+        assert_eq!(fit(c(6, 0, 8, 8), map), c(4, 0, 8, 8));
+        // the bingo card: a square under its header
+        let card = lim(def("bingo_card"));
+        assert_eq!(fit(c(0, 0, 5, 3), card), c(0, 0, 5, 6));
+        assert_eq!(fit(c(0, 0, 8, 8), card), c(0, 0, 7, 8));
+    }
+
+    #[test]
+    fn widgets_doubled_by_mistake_are_halved_back() {
+        // Today at a glance added to an empty Dashboard on v0.7.1/v0.7.2
+        // (8×3 doubled to 16×6), then two more added the right way
+        let mins = |id: u64| l(if id == 1 { (6, 2) } else { (2, 2) }, (MAX_SIDE, MAX_SIDE));
+        // (the two under it move up into the room it no longer takes)
+        let mut items = vec![(1, c(0, 0, 16, 6)), (2, c(0, 6, 4, 3)), (3, c(4, 6, 8, 3))];
+        repair(&mut items, mins);
+        assert_eq!(items, vec![(1, c(0, 0, 8, 3)), (2, c(0, 3, 4, 3)), (3, c(4, 3, 8, 3))]);
+        // added where clicked (x 4, y 2), doubled to (8, 4) 16×6: halved,
+        // and up to the top (nothing above it)
+        let mut items = vec![(1, c(8, 4, 16, 6))];
+        repair(&mut items, mins);
+        assert_eq!(items, vec![(1, c(4, 0, 8, 3))]);
+        // a bingo card doubled to 8×10: back to 4×5
+        let mut items = vec![(1, c(0, 0, 8, 10))];
+        repair(&mut items, |_| Lim { min: (3, 4), start: (4, 5), max: (7, 8), tall_by: Some(1) });
+        assert_eq!(items, vec![(1, c(0, 0, 4, 5))]);
+        // an odd impossible place is fitted, and what it now covers moves down
+        let mut items = vec![(1, c(0, 0, 13, 3)), (2, c(9, 0, 3, 3))];
+        repair(&mut items, mins);
+        assert_eq!(items[0].1, c(0, 0, 8, 3));
+        assert_eq!(items[1].1, c(9, 0, 3, 3));
+        let mut items = vec![(1, c(5, 0, 9, 3)), (2, c(3, 0, 3, 3))];
+        repair(&mut items, mins);
+        assert_eq!(items[1].1, c(3, 0, 3, 3));
+        assert_eq!(items[0].1, c(4, 3, 8, 3), "fitted onto widget 2, so moved below it");
+        // a good layout is left exactly as it was
+        let good = vec![(1, c(0, 0, 8, 3)), (2, c(8, 0, 4, 4)), (3, c(0, 3, 6, 6))];
+        let mut items = good.clone();
+        repair(&mut items, mins);
+        assert_eq!(items, good);
+    }
+
+    /// No widget overlaps another, and each is inside the grid at a size
+    /// it can be.
+    fn sound(ws: &[WidgetCfg]) {
+        let cells: Vec<(u64, Cell, &str)> = ws.iter().map(|w| (w.id, Cell::of(w.pos.expect("placed")), w.kind.as_str())).collect();
+        for (i, (id, c, k)) in cells.iter().enumerate() {
+            assert!(c.x >= 0 && c.y >= 0 && c.x + c.w <= COLS && c.w <= MAX_SIDE && c.h <= MAX_SIDE, "{k} at {c:?}");
+            if let Some(d) = def(k) {
+                assert_eq!(fit(*c, lim(Some(d))), *c, "{k} at {c:?} isn't a size it can be");
+            }
+            for (jd, o, ok) in cells.iter().skip(i + 1) {
+                assert!(!c.overlaps(*o), "{k} ({id}) overlaps {ok} ({jd})");
+            }
+            assert!(cells.iter().filter(|x| x.0 == *id).count() == 1, "id {id} twice");
+        }
+    }
+
+    fn load(json: &str) -> Vec<WidgetCfg> {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn every_old_save_upgrades_cleanly() {
+        // v0.6.x: no Dashboard at all (an empty one)
+        assert!(upgrade(&[], 0).is_empty());
+        // v0.7.0: widgets in a list, no places, any width
+        let v070 = load(r#"[{"id":1,"kind":"today","span":9},{"id":2,"kind":"rare","span":1},{"id":3,"kind":"shinies","span":2},{"id":4,"kind":"jump","span":9},{"id":5,"kind":"notes","span":1,"data":["hello"]}]"#);
+        let up = upgrade(&v070, 0);
+        sound(&up);
+        assert_eq!(up.len(), 5);
+        assert_eq!(up[4].data, vec!["hello".to_string()], "settings kept");
+        // v0.7.1/v0.7.2: the first widget doubled by mistake, the rest fine
+        let doubled = load(r#"[{"id":1,"kind":"today","span":9,"pos":[0,0,16,6]},{"id":2,"kind":"almost","span":1,"pos":[0,6,4,3]},{"id":3,"kind":"jump","span":9,"pos":[4,6,8,3]}]"#);
+        let up = upgrade(&doubled, 2);
+        sound(&up);
+        assert_eq!(Cell::of(up[0].pos.unwrap()), c(0, 0, 8, 3).min_with(lim(def("today"))));
+        // v0.7.1/v0.7.2: a normal layout, some bigger than their new caps
+        let normal = load(r#"[{"id":1,"kind":"clock","span":1,"pos":[0,0,8,8]},{"id":2,"kind":"minimap","span":2,"pos":[8,0,4,4]},{"id":3,"kind":"luck","span":1,"pos":[0,8,8,6]},{"id":4,"kind":"bingo_card","span":1,"pos":[8,4,4,4]}]"#);
+        let up = upgrade(&normal, 2);
+        sound(&up);
+        // a just-added widget saved while the grid version was still 0
+        // (doubled on its first draw in v0.7.1/v0.7.2): comes back as added
+        let fresh = load(r#"[{"id":1,"kind":"today","span":9,"pos":[0,0,8,1]}]"#);
+        let up = upgrade(&fresh, 0);
+        sound(&up);
+        assert_eq!(Cell::of(up[0].pos.unwrap()), c(0, 0, 8, 1));
+        // the developer builds' first grid (6 columns): doubled into this one
+        let six = load(r#"[{"id":1,"kind":"rare","span":1,"pos":[0,0,2,2]},{"id":2,"kind":"week","span":1,"pos":[2,0,4,1]}]"#);
+        let up = upgrade(&six, 0);
+        sound(&up);
+        assert_eq!(Cell::of(up[0].pos.unwrap()), c(0, 0, 4, 4));
+        assert_eq!(Cell::of(up[1].pos.unwrap()), c(4, 0, 8, 2));
+    }
+
+    #[test]
+    fn deep_dashboards_keep_their_rows() {
+        // every widget at its biggest, stacked: well past row 255
+        let all: Vec<WidgetCfg> = DEFS.iter().enumerate().map(|(i, d)| WidgetCfg { id: i as u64 + 1, kind: d.kind.to_string(), span: d.span, data: Vec::new(), pos: None }).collect();
+        let mut y = 0;
+        let mut ws = all.clone();
+        for (w, d) in ws.iter_mut().zip(DEFS.iter()) {
+            let (mw, mh) = max_size(d);
+            w.pos = Some(Cell { x: 0, y, w: mw, h: mh }.save());
+            y += mh;
+        }
+        assert!(y > 255);
+        let json = serde_json::to_string(&ws).unwrap();
+        let back: Vec<WidgetCfg> = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.last().unwrap().pos, ws.last().unwrap().pos);
+        assert!(!needs_upgrade(&back));
+        // and an old save's small numbers still read
+        let old: Vec<WidgetCfg> = serde_json::from_str(r#"[{"id":1,"kind":"today","span":9,"pos":[0,0,8,1]}]"#).unwrap();
+        assert_eq!(old[0].pos, Some([0, 0, 8, 1]));
+    }
+
+    #[test]
+    fn broken_saves_upgrade_without_trouble() {
+        // nonsense places, zero sizes, the same id twice, a widget this
+        // version doesn't know, and one with no place among placed ones
+        let bad = load(r#"[{"id":1,"kind":"today","span":9,"pos":[250,250,0,0]},{"id":1,"kind":"clock","span":1,"pos":[11,0,255,255]},{"id":7,"kind":"from_the_future","span":1,"pos":[3,3,3,3]},{"id":8,"kind":"week","span":1},{"id":9,"kind":"minimap","span":2,"pos":[0,0,7,2]}]"#);
+        let up = upgrade(&bad, 2);
+        assert_eq!(up.len(), 5, "nothing lost");
+        assert!(!needs_upgrade(&up));
+        // the ones this version knows are sound
+        let known: Vec<WidgetCfg> = up.iter().filter(|w| def(&w.kind).is_some()).cloned().collect();
+        sound(&known);
+        // and a second pass changes nothing
+        assert_eq!(upgrade(&up, GRID_VERSION), up);
+    }
+
     #[test]
     fn old_layouts_get_places_once() {
         let old: Vec<WidgetCfg> = serde_json::from_str(r#"[{"id":1,"kind":"today","span":9},{"id":2,"kind":"rare","span":1},{"id":3,"kind":"shinies","span":1}]"#).unwrap();
         let cells = place_all(&old);
-        assert_eq!(cells, vec![(1, c(0, 0, 8, 4)), (2, c(8, 0, 4, 4)), (3, c(0, 4, 4, 4))]);
+        assert_eq!(cells, vec![(1, c(0, 0, 8, 1)), (2, c(8, 0, 4, 2)), (3, c(0, 1, 4, 2))]);
         for d in DEFS {
-            let (mw, mh) = min_size(d);
+            let Lim { min: (mw, mh), max: (xw, xh), .. } = lim(Some(d));
             let (sw, sh) = start_size(d);
-            assert!(mw <= sw && mh <= sh && sw <= MAX_SIDE && sh <= MAX_SIDE, "{}", d.kind);
+            assert!(mw <= sw && mh <= sh && sw <= xw && sh <= xh && xw <= MAX_SIDE && xh <= MAX_SIDE, "{}", d.kind);
         }
     }
 }

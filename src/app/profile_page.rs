@@ -28,7 +28,7 @@ const TITLES: [(u32, &str); 11] = [
 
 const SORTS: [&str; 4] = ["Ladder order", "Closest first", "Recently unlocked", "Rarest tier"];
 
-fn tier_col(t: Tier) -> Color32 {
+pub(super) fn tier_col(t: Tier) -> Color32 {
     let c = t.rgb();
     Color32::from_rgb(c[0], c[1], c[2])
 }
