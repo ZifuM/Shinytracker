@@ -236,6 +236,7 @@ impl App {
         // Undo is offered on the overlay for a few seconds.
         self.undo_caught = Some((std::time::Instant::now(), Box::new(self.cfg.clone())));
         self.cards_shiny(format!("{}:{}:phase", self.cfg.run_id, slug));
+        self.gotchi_shiny(format!("{}:{}:phase", self.cfg.run_id, slug));
         self.cfg.history.push(HuntRecord {
             target: sp.name.to_string(),
             encounters: self.cfg.count,

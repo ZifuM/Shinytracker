@@ -45,6 +45,7 @@ pub fn layout(spans: &[usize], heights: &[f32], cols: usize, gap: f32) -> (Vec<P
 /// Like `layout`, but each item goes into the highest open space it fits,
 /// holes included (a short card can tuck in beside a tall one, under a wide
 /// one). Order still decides who picks first.
+#[allow(dead_code)]
 pub fn pack(spans: &[usize], heights: &[f32], cols: usize, gap: f32) -> (Vec<Place>, f32) {
     let cols = cols.max(1);
     // placed: (first col, span, top, bottom)
@@ -80,6 +81,7 @@ pub fn pack(spans: &[usize], heights: &[f32], cols: usize, gap: f32) -> (Vec<Pla
 }
 
 /// How many columns fit `width` (each at least `min_col` wide), at most `max`.
+#[allow(dead_code)]
 pub fn columns(width: f32, min_col: f32, gap: f32, max: usize) -> usize {
     (((width + gap) / (min_col + gap)).floor() as usize).clamp(1, max.max(1))
 }

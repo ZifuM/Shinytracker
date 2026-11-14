@@ -326,6 +326,64 @@ impl LogTail {
     }
 }
 
+/// Read what's new in every session log in `dir` since the byte positions
+/// in `cursors` (file name → bytes read), and move them on. Returns each
+/// wild Pokémon met (National Dex number, on rare grass) and whether the
+/// cursors changed. The first read (no cursors yet) starts from the end of
+/// every log, so nothing played before is counted; a log that turns up
+/// later (a new session) is read from its top. Only whole lines are taken.
+pub fn read_new_wild(dir: &Path, cursors: &mut std::collections::BTreeMap<String, u64>) -> Option<(Vec<(u32, bool)>, bool)> {
+    let rd = std::fs::read_dir(dir).ok()?;
+    let mut files: Vec<(String, PathBuf, u64)> = rd
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let n = e.file_name().to_string_lossy().to_string();
+            (n.starts_with("session-") && n.ends_with(".log")).then(|| Some((n, e.path(), e.metadata().ok()?.len())))?
+        })
+        .collect();
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    let first = cursors.is_empty();
+    let mut found = Vec::new();
+    let mut moved = false;
+    for (name, path, len) in &files {
+        let at = cursors.get(name).copied();
+        let from = match at {
+            None if first => *len,
+            None => 0,
+            Some(p) if p > *len => 0,
+            Some(p) => p,
+        };
+        if from >= *len {
+            if at != Some(*len) {
+                cursors.insert(name.clone(), *len);
+                moved = true;
+            }
+            continue;
+        }
+        let Ok(mut f) = File::open(path) else { continue };
+        if f.seek(SeekFrom::Start(from)).is_err() {
+            continue;
+        }
+        let mut buf = Vec::new();
+        if f.take(len - from).read_to_end(&mut buf).is_err() {
+            continue;
+        }
+        let upto = buf.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
+        for line in String::from_utf8_lossy(&buf[..upto]).lines() {
+            if let Some(w) = parse_wild(line) {
+                found.push((w.species, w.method.contains("rare grass")));
+            }
+        }
+        cursors.insert(name.clone(), from + upto as u64);
+        moved = true;
+    }
+    // forget logs that are gone (the game tidies old ones away)
+    let before = cursors.len();
+    cursors.retain(|k, _| files.iter().any(|f| &f.0 == k));
+    moved |= cursors.len() != before;
+    Some((found, moved))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

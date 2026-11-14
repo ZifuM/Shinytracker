@@ -328,7 +328,7 @@ impl App {
                                     || self.setup.caught_pick
                                     || (self.setup.profile_card.is_none()
                                         && self.setup.share.is_none()
-                                        && matches!(self.setup.tab, Tab::Home | Tab::Store | Tab::Library | Tab::Profile | Tab::Stats | Tab::Dex | Tab::Trophies | Tab::Runs | Tab::Pokedex | Tab::Map | Tab::Info | Tab::Team | Tab::Sim | Tab::Breed | Tab::Calc | Tab::Cards));
+                                        && matches!(self.setup.tab, Tab::Home | Tab::Store | Tab::Library | Tab::Profile | Tab::Stats | Tab::Dex | Tab::Trophies | Tab::Runs | Tab::Pokedex | Tab::Map | Tab::Info | Tab::Team | Tab::Sim | Tab::Breed | Tab::Calc | Tab::Cards | Tab::Gotchi));
                                 let cap = if modern { 1060.0 } else { 900.0 };
                                 let w = if wide { ui.available_width() } else { ui.available_width().min(cap) };
                                 ui.set_max_width(w);
@@ -363,6 +363,7 @@ impl App {
                                         Tab::Breed => self.page_breed(ui),
                                         Tab::Calc => self.page_damage_calc(ui),
                                         Tab::Cards => self.page_cards(ui),
+                                        Tab::Gotchi => self.page_gotchi(ui),
                                         Tab::Profile => self.page_profile(ui),
                                         Tab::Stats => self.page_stats(ui),
                                         Tab::Dex | Tab::Trophies => {

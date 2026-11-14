@@ -676,6 +676,9 @@ pub struct Config {
     /// Shinies the Card Collector has given XP for (hunt id and Pokémon),
     /// so undoing and logging again doesn't count twice.
     pub cards_shiny_keys: Vec<String>,
+    /// The Start overlay picker: open the Shiny Hunter overlay (the other
+    /// overlays keep their pick in their own app's file).
+    pub ov_pick_shiny: bool,
     /// Game Info: how far into the story you are (index into the wiki's
     /// badge stages: 0 = before Roark … 9 = after the League). None: not set.
     pub info_stage: Option<u8>,
@@ -781,6 +784,7 @@ impl Default for Config {
             guides_read: Vec::new(),
             info_pins: Vec::new(),
             cards_shiny_keys: Vec::new(),
+            ov_pick_shiny: true,
             info_stage: None,
             info_more: true,
             info_modern: false,

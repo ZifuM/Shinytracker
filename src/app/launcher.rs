@@ -13,16 +13,38 @@ pub(super) fn is_shiny_tab(t: Tab) -> bool {
 }
 
 impl App {
+    /// Start overlay: the picker opens (with last time's picks ticked);
+    /// nothing opens until Go.
     pub(super) fn start_overlay(&mut self) {
-        self.overlay_on = true;
-        self.ov_hidden = false;
-        self.cfg.mini = false;
-        self.dirty = true;
+        self.setup.ov_picker = true;
     }
 
+    /// Open the overlays that are picked. False when none are.
+    pub(super) fn launch_overlays(&mut self) -> bool {
+        let picks = self.overlay_picks();
+        if !picks.0 && !picks.2 {
+            return false;
+        }
+        if picks.0 {
+            self.overlay_on = true;
+            self.ov_hidden = false;
+            self.cfg.mini = false;
+        }
+        self.setup.gotchi.shown = picks.2;
+        self.dirty = true;
+        true
+    }
+
+    /// Is any overlay open?
+    pub(super) fn any_overlay(&self) -> bool {
+        self.overlay_on || self.setup.gotchi.shown
+    }
+
+    /// Stop closes them all.
     pub(super) fn stop_overlay(&mut self) {
         self.overlay_on = false;
         self.ov_hidden = false;
+        self.setup.gotchi.shown = false;
         self.save_now();
     }
 
@@ -37,8 +59,8 @@ impl App {
             {
                 self.ov_hidden = false;
             }
-        } else if self.overlay_on {
-            let b = egui::Button::new(RichText::new("■  Stop overlay").size(kit::fs(14.0)).family(kit::strong_family(kit::fs(14.0))).strong().color(TEXT()))
+        } else if self.any_overlay() {
+            let b = egui::Button::new(RichText::new(if self.overlay_on { "■  Stop overlay" } else { "■  Stop overlays" }).size(kit::fs(14.0)).family(kit::strong_family(kit::fs(14.0))).strong().color(TEXT()))
                 .fill(kit::btn_fill())
                 .rounding(kit::btn_round(8.0))
                 .min_size(size);
@@ -49,7 +71,7 @@ impl App {
             let b = egui::Button::new(RichText::new("▶  Start overlay").size(kit::fs(14.0)).family(kit::strong_family(kit::fs(14.0))).strong().color(kit::on_primary()))
                 .min_size(size);
             if kit::accent_button(ui, b, kit::primary_round())
-                .on_hover_text("Open the overlay on top of the game")
+                .on_hover_text("Pick which overlays to open on top of the game")
                 .clicked()
             {
                 self.start_overlay();

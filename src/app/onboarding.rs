@@ -261,7 +261,7 @@ impl App {
                         let b = egui::Button::new(RichText::new("▶  Start the overlay").family(kit::strong_family(14.0)).strong().size(14.0).color(kit::on_primary())).min_size(vec2(190.0, 42.0));
                         if kit::accent_button(ui, b, 21.0).clicked() {
                             self.finish_welcome();
-                            self.start_overlay();
+                            self.launch_overlays();
                         }
                         if ui.add(egui::Button::new(RichText::new("Go to the Dashboard").size(13.5)).fill(kit::btn_fill()).min_size(vec2(120.0, 40.0))).clicked() {
                             self.finish_welcome();

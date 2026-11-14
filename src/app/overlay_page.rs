@@ -207,7 +207,7 @@ impl App {
                 ui.add_space(12.0);
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
-                    if self.overlay_on {
+                    if self.any_overlay() {
                         if ui.add(egui::Button::new("⏹  Stop overlay").fill(kit::btn_fill())).clicked() {
                             self.stop_overlay();
                         }

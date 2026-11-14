@@ -249,6 +249,63 @@ impl SpriteStore {
     }
 }
 
+/// Which pixels of a sprite are drawn, frame by frame (for cutting a
+/// window to the Pokémon's own outline).
+pub struct Mask {
+    pub w: usize,
+    pub h: usize,
+    /// Each frame: one flag per pixel (row by row), and how long it shows.
+    pub frames: Vec<(Vec<bool>, u32)>,
+    total_ms: u64,
+    /// The box every frame fits in: [x0, y0, x1, y1] (x1, y1 exclusive).
+    pub bbox: [usize; 4],
+}
+
+impl Mask {
+    /// The frame showing at `t_ms` (the same one `Anim::frame` picks).
+    pub fn index(&self, t_ms: u64) -> usize {
+        if self.frames.len() == 1 || self.total_ms == 0 {
+            return 0;
+        }
+        let mut t = t_ms % self.total_ms;
+        for (i, (_, d)) in self.frames.iter().enumerate() {
+            if t < *d as u64 {
+                return i;
+            }
+            t -= *d as u64;
+        }
+        0
+    }
+}
+
+/// A downloaded sprite's mask, read from its cached file (None until it's
+/// been downloaded).
+pub fn mask(slug: &str, shiny: bool) -> Option<Mask> {
+    let bytes = std::fs::read(cached_file(slug, shiny)?).ok()?;
+    let frames = decode(&bytes).ok()?;
+    let first = frames.first()?;
+    let (w, h) = (first.0.size[0], first.0.size[1]);
+    let mut bbox = [w, h, 0, 0];
+    let frames: Vec<(Vec<bool>, u32)> = frames
+        .iter()
+        .map(|(img, d)| {
+            let m: Vec<bool> = (0..w * h).map(|i| img.size == [w, h] && img.pixels[i].a() > 24).collect();
+            for (i, on) in m.iter().enumerate() {
+                if *on {
+                    let (x, y) = (i % w, i / w);
+                    bbox = [bbox[0].min(x), bbox[1].min(y), bbox[2].max(x + 1), bbox[3].max(y + 1)];
+                }
+            }
+            (m, *d)
+        })
+        .collect();
+    if bbox[0] >= bbox[2] {
+        bbox = [0, 0, w, h];
+    }
+    let total_ms = frames.iter().map(|(_, d)| *d as u64).sum();
+    Some(Mask { w, h, frames, total_ms, bbox })
+}
+
 fn load(req: &Request) -> Result<Vec<(ColorImage, u32)>, String> {
     if let Ok(bytes) = std::fs::read(&req.cache) {
         if let Ok(frames) = decode(&bytes) {

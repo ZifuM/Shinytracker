@@ -302,29 +302,85 @@ impl App {
                 note(ui, "Open the Map once and the mini map shows here.");
                 return;
             };
+            // as big as its box (a Dashboard widget), else a sensible height
             let w = ui.available_width();
-            let h = (w * size.y / size.x).min(260.0);
-            let (r, resp) = ui.allocate_exact_size(vec2(w, h), Sense::click());
+            let room = ui.available_height();
+            let h = if room.is_finite() && room > 80.0 && room < 1200.0 { room - 2.0 } else { (w * size.y / size.x).min(260.0) };
+            let (r, resp) = ui.allocate_exact_size(vec2(w, h), Sense::click_and_drag());
             let p = ui.painter().clone();
             p.rect_filled(r, 12.0, crate::gamemap::OCEAN);
-            // fit the whole map in, centred
-            let s = (r.width() / size.x).min(r.height() / size.y);
-            let img = Rect::from_center_size(r.center(), size * s);
-            p.with_clip_rect(r).image(tex, img, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), egui::Color32::WHITE);
+            // zoom (1 = the whole map) and the map point in the middle
+            let vid = egui::Id::new("w-minimap-view");
+            let (mut zoom, mut mid) = ui.ctx().data(|d| d.get_temp::<(f32, egui::Vec2)>(vid)).unwrap_or((1.0, size / 2.0));
+            let fit = (r.width() / size.x).min(r.height() / size.y);
+            if resp.hovered() {
+                let (scroll, pp) = ui.input(|i| (i.smooth_scroll_delta.y, i.pointer.hover_pos()));
+                if scroll != 0.0 {
+                    let old = fit * zoom;
+                    zoom = (zoom * (scroll * 0.004).exp()).clamp(1.0, 10.0);
+                    // keep the spot under the pointer where it is
+                    if let Some(pp) = pp {
+                        let at = mid + (pp - r.center()) / old;
+                        mid = at - (pp - r.center()) / (fit * zoom);
+                    }
+                    // the page doesn't scroll while zooming the map
+                    ui.input_mut(|i| i.smooth_scroll_delta = egui::Vec2::ZERO);
+                }
+            }
+            let s = fit * zoom;
+            if resp.dragged() {
+                mid -= resp.drag_delta() / s;
+            }
+            if resp.double_clicked() {
+                zoom = 1.0;
+                mid = size / 2.0;
+            }
+            // keep the map in view
+            let half = r.size() / 2.0 / s;
+            mid.x = if half.x * 2.0 >= size.x { size.x / 2.0 } else { mid.x.clamp(half.x, size.x - half.x) };
+            mid.y = if half.y * 2.0 >= size.y { size.y / 2.0 } else { mid.y.clamp(half.y, size.y - half.y) };
+            ui.ctx().data_mut(|d| d.insert_temp(vid, (zoom, mid)));
+            let img = Rect::from_min_size(r.center() - mid * s, size * s);
+            let clip = p.with_clip_rect(r.intersect(ui.clip_rect()));
+            clip.image(tex, img, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), egui::Color32::WHITE);
             // today's rare grass, outdoors
             let t = ui.input(|i| i.time) as f32;
             for sp in spots.iter().filter(|s| s.matrix == 0) {
                 let c = img.min + vec2(sp.x as f32 + 0.5, sp.y as f32 + 0.5) * s;
                 let pulse = 0.5 + 0.5 * (t * 3.0).sin();
-                p.circle_filled(c, 3.5 + 2.0 * pulse, theme::GOLD.gamma_multiply(0.35));
-                p.circle_filled(c, 3.0, theme::GOLD);
+                let rad = (3.0 * zoom.sqrt()).min(8.0);
+                clip.circle_filled(c, rad + 0.5 + 2.0 * pulse, theme::GOLD.gamma_multiply(0.35));
+                clip.circle_filled(c, rad, theme::GOLD);
             }
             if !spots.is_empty() {
                 ui.ctx().request_repaint_after(std::time::Duration::from_millis(60));
             }
             p.rect_stroke(r, 12.0, Stroke::new(1.0f32, LINE()));
-            if resp.on_hover_text("Open the Map").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                go = true;
+            // zoom buttons
+            let mut bump = 0.0f32;
+            for (k, (label, by)) in [("+", 1.5f32), ("−", 1.0 / 1.5)].iter().enumerate() {
+                let br = Rect::from_min_size(pos2(r.max.x - 34.0, r.min.y + 8.0 + k as f32 * 32.0), vec2(26.0, 26.0));
+                let bresp = ui.interact(br, ui.id().with(("w-minimap-zoom", k)), Sense::click());
+                p.rect_filled(br, 7.0, if bresp.hovered() { kit::CARD_HOVER() } else { kit::CARD().gamma_multiply(0.92) });
+                p.rect_stroke(br, 7.0, Stroke::new(1.0f32, LINE()));
+                p.text(br.center(), egui::Align2::CENTER_CENTER, *label, crate::fonts::sans_bold_font(15.0), TEXT());
+                if bresp.on_hover_text(if k == 0 { "Zoom in" } else { "Zoom out" }).clicked() {
+                    bump = *by;
+                }
+            }
+            if bump != 0.0 {
+                let z = (zoom * bump).clamp(1.0, 10.0);
+                ui.ctx().data_mut(|d| d.insert_temp(vid, (z, mid)));
+            }
+            if zoom > 1.01 {
+                p.text(pos2(r.min.x + 10.0, r.max.y - 10.0), egui::Align2::LEFT_BOTTOM, format!("{:.1}×", zoom), crate::fonts::sans_bold_font(11.0), egui::Color32::from_white_alpha(200));
+            }
+            let tip = "Scroll to zoom · drag to look around · double-click to see it all";
+            let resp = resp.on_hover_text(tip);
+            if resp.dragged() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            } else if resp.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
             }
         });
         if go {

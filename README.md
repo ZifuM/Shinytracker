@@ -1,6 +1,6 @@
 # ✨ Poke Together Companion
 
-A free companion app for **Pokémon Platinum Together**: an always-on-top shiny hunting counter, plus a set of apps you pick yourself (Pokédex, map, team planning, breeding, battles and a card collecting mini game).
+A free companion app for **Pokémon Platinum Together**: an always-on-top shiny hunting counter, plus a set of apps you pick yourself (Pokédex, map, team planning, breeding, battles and two mini games).
 
 ## Download
 
@@ -17,8 +17,9 @@ Windows 10/11, nothing else to install. It updates itself, and can opt in to pre
 - **Battle Sim** *(beta)*: battle wild Pokémon and trainers, and test catch odds
 - **Breeding** *(beta)*: plan eggs, keep your breeders, find egg moves
 - **Card Collector** *(beta)*: hunting earns booster packs of the original Base Set cards; open them, collect them all and trade with friends
+- **Pokégotchi** *(beta)*: adopt a shiny you caught as a pocket pet; hunting feeds it, and it keeps you company on the overlay
 
-The **Dashboard** is yours to build from 50+ widgets.
+The **Dashboard** is yours to build from 55+ widgets on a grid you arrange and size yourself.
 
 <p>
   <img src="docs/overlay.png" alt="The shiny overlay" width="49%">

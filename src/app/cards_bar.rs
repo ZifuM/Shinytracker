@@ -28,7 +28,7 @@ pub(super) struct BarState {
 }
 
 /// Where the bar goes for the overlay at `s`.
-fn spot(s: Rect, right: bool) -> Rect {
+pub(super) fn spot(s: Rect, right: bool) -> Rect {
     let w = (s.width() / 3.0).max(MIN_W).round();
     let x = if right { s.max.x - w } else { s.min.x };
     Rect::from_min_size(pos2(x, s.max.y + GAP), vec2(w, BAR_H))

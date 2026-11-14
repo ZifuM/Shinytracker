@@ -39,6 +39,10 @@ mod cards_app;
 mod dex_tcg;
 mod cards_bar;
 mod cards_trade;
+mod gotchi_app;
+mod gotchi_bar;
+mod gotchi_words;
+mod ov_picker;
 mod breed_box;
 mod breed_moves;
 mod breed_planner;
@@ -76,6 +80,7 @@ mod w_hunt;
 mod w_explore;
 mod w_battle;
 mod w_games;
+mod w_gotchi;
 mod pins;
 mod map;
 mod map_panel;
@@ -131,6 +136,7 @@ enum Tab {
     Breed,
     Calc,
     Cards,
+    Gotchi,
     Profile,
     Stats,
     Dex,
@@ -227,6 +233,9 @@ struct Setup {
     sim: sim_home::SimState,
     breed: breed_home::BreedState,
     cards: cards_app::CardsState,
+    gotchi: gotchi_app::GotchiState,
+    /// The Start overlay picker is open.
+    ov_picker: bool,
     /// "Hunt it on rare grass?" after picking a target that's there today.
     rare_offer: Option<rare::RareOffer>,
     /// Apps in the sidebar whose pages are folded away.
@@ -607,6 +616,8 @@ impl App {
                 sim: Default::default(),
                 breed: Default::default(),
                 cards: Default::default(),
+                gotchi: Default::default(),
+                ov_picker: false,
                 rare_offer: None,
                 // Apps start folded; clicking one opens its pages.
                 nav_collapsed: vec![Tab::Shiny],
@@ -857,6 +868,7 @@ impl App {
                 if !from_log || !self.setup.cards.reads_logs {
                     self.cards_met(&names, added, rare);
                 }
+                self.gotchi_encounter(added, rare, from_log);
                 self.cfg.count += added as u64;
                 self.counted_since_start = true;
                 self.last_added = Some(added as u64);
@@ -978,10 +990,11 @@ impl App {
                 self.dirty = true;
             }
             HotAction::StartStop => {
-                if self.overlay_on {
+                // in the game: no picker, just last time's picks
+                if self.any_overlay() {
                     self.stop_overlay();
-                } else {
-                    self.start_overlay();
+                } else if !self.launch_overlays() {
+                    self.hotkey_notice("🖵", "No overlays picked", "Press Start overlay in the Companion to pick some.");
                 }
             }
             HotAction::AddMany => self.add(self.cfg.keybinds.add_many_n.clamp(1, 99) as i64),
@@ -2132,6 +2145,7 @@ impl App {
         });
         let id = self.cfg.run_id;
         self.cards_shiny(format!("{id}:{}", slug.as_deref().unwrap_or("")));
+        self.gotchi_shiny(format!("{id}:{}", slug.as_deref().unwrap_or("")));
         self.cfg.saved_runs.retain(|r| r.id != id);
         self.start_fresh(self.cfg.target.clone());
         self.add_event("caught_it");
@@ -2880,6 +2894,7 @@ impl eframe::App for App {
         self.sim_save_tick(false);
         self.breed_save_tick(false);
         self.cards_tick(ctx);
+        self.gotchi_tick(ctx);
         self.hotkeys_guard();
         while let Ok(msg) = self.rx.try_recv() {
             self.on_msg(msg);
@@ -2978,6 +2993,7 @@ impl eframe::App for App {
         // The launcher is the main window.
         self.launcher_ui(ctx);
         self.rare_offer_window(ctx);
+        self.ov_picker_window(ctx);
         self.rare_poster_window(ctx);
         self.avatar_window(ctx);
         // The overlay is its own always-on-top window while it's started.
@@ -2988,6 +3004,8 @@ impl eframe::App for App {
         }
         // the Card Collector's XP bar, beside it
         self.cards_bar_viewport(ctx);
+        // and the Pokégotchi
+        self.gotchi_viewport(ctx);
         if !self.overlay_on && self.ov_geom.is_some() {
             self.ov_geom = None;
             self.ov_opened = None;
@@ -3012,6 +3030,7 @@ impl eframe::App for App {
         self.sim_save_tick(true);
         self.breed_save_tick(true);
         self.setup.cards.save_tick(true);
+        self.setup.gotchi.save_tick(true);
     }
 }
 
@@ -3022,5 +3041,6 @@ impl Drop for App {
         self.sim_save_tick(true);
         self.breed_save_tick(true);
         self.setup.cards.save_tick(true);
+        self.setup.gotchi.save_tick(true);
     }
 }

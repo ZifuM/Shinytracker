@@ -272,6 +272,8 @@ mod imp {
         fn CreateRoundRectRgn(x1: i32, y1: i32, x2: i32, y2: i32, w: i32, h: i32) -> *mut c_void;
         fn CombineRgn(dst: *mut c_void, a: *mut c_void, b: *mut c_void, mode: i32) -> i32;
         fn DeleteObject(o: *mut c_void) -> i32;
+        fn CreatePolygonRgn(pts: *const [i32; 2], n: i32, mode: i32) -> *mut c_void;
+        fn CreateRectRgn(x1: i32, y1: i32, x2: i32, y2: i32) -> *mut c_void;
     }
     #[link(name = "user32")]
     extern "system" {
@@ -295,6 +297,42 @@ mod imp {
                 if all.is_null() {
                     all = r;
                 } else {
+                    CombineRgn(all, all, r, RGN_OR);
+                    DeleteObject(r);
+                }
+            }
+            // Windows owns the region from here on.
+            SetWindowRgn(hwnd as Hwnd, all, 1);
+        }
+    }
+
+    /// Cut a window to any shape: polygons, plain boxes [x, y, w, h] and
+    /// rounded boxes [x, y, w, h, radius], all in pixels.
+    pub fn clip_window_shapes(hwnd: isize, polys: &[Vec<[i32; 2]>], boxes: &[[i32; 4]], rounded: &[[i32; 5]]) {
+        const RGN_OR: i32 = 2;
+        const WINDING: i32 = 2;
+        unsafe {
+            if IsWindow(hwnd as Hwnd) == 0 {
+                return;
+            }
+            let all: *mut c_void = CreateRectRgn(0, 0, 0, 0);
+            if all.is_null() {
+                return;
+            }
+            let mut parts: Vec<*mut c_void> = Vec::new();
+            for p in polys {
+                if p.len() >= 3 {
+                    parts.push(CreatePolygonRgn(p.as_ptr(), p.len() as i32, WINDING));
+                }
+            }
+            for b in boxes {
+                parts.push(CreateRectRgn(b[0], b[1], b[0] + b[2], b[1] + b[3]));
+            }
+            for b in rounded {
+                parts.push(CreateRoundRectRgn(b[0], b[1], b[0] + b[2] + 1, b[1] + b[3] + 1, b[4] * 2, b[4] * 2));
+            }
+            for r in parts {
+                if !r.is_null() {
                     CombineRgn(all, all, r, RGN_OR);
                     DeleteObject(r);
                 }
@@ -667,6 +705,7 @@ mod imp {
         *done = true;
     }
     pub fn clip_window(_hwnd: isize, _boxes: &[[i32; 5]]) {}
+    pub fn clip_window_shapes(_hwnd: isize, _polys: &[Vec<[i32; 2]>], _boxes: &[[i32; 4]], _rounded: &[[i32; 5]]) {}
     pub fn game_running() -> bool {
         true
     }
@@ -715,6 +754,8 @@ pub const LAUNCHER_TITLE: &str = "Poke Together Companion";
 pub const OVERLAY_TITLE: &str = "Shiny Hunter overlay";
 /// The Card Collector's XP bar overlay.
 pub const CARD_BAR_TITLE: &str = "Card Collector XP bar";
+/// The Pokégotchi on the overlay.
+pub const GOTCHI_TITLE: &str = "Pokegotchi overlay";
 
 /// Like `ensure_overlay_keeper`, for another overlay window by its title.
 pub fn ensure_keeper_titled(title: &str, last: &mut Option<isize>, borderless_fix: &std::sync::Arc<std::sync::atomic::AtomicBool>) {
@@ -776,6 +817,12 @@ pub fn game_exe() -> Option<std::path::PathBuf> {
 /// Cut a window to a set of rounded boxes ([x, y, w, h, radius], pixels).
 pub fn clip_window(hwnd: isize, boxes: &[[i32; 5]]) {
     imp::clip_window(hwnd, boxes)
+}
+
+/// Cut a window to polygons, boxes and rounded boxes (pixels), so only what's
+/// drawn shows (on some PCs see-through window parts come out black).
+pub fn clip_window_shapes(hwnd: isize, polys: &[Vec<[i32; 2]>], boxes: &[[i32; 4]], rounded: &[[i32; 5]]) {
+    imp::clip_window_shapes(hwnd, polys, boxes, rounded)
 }
 
 /// Round the settings window's corners (Windows 11). Call each frame while

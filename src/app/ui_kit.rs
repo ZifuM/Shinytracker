@@ -777,6 +777,32 @@ pub(crate) fn unique_this_frame(ui: &Ui, id: egui::Id) -> egui::Id {
     })
 }
 
+thread_local! {
+    static CARD_FILL: std::cell::Cell<Option<f32>> = const { std::cell::Cell::new(None) };
+}
+
+/// The next card drawn is stretched to this height (a Dashboard widget
+/// filling its box). Only the first card takes it.
+pub fn set_card_fill(h: Option<f32>) {
+    CARD_FILL.with(|c| c.set(h));
+}
+
+/// Take the stretch for this card (cards inside it don't get it).
+pub fn take_card_fill() -> Option<f32> {
+    CARD_FILL.with(|c| c.take())
+}
+
+/// A card's corner rounding in the look in use.
+pub fn card_rounding() -> f32 {
+    if modern() {
+        14.0
+    } else if clean() {
+        8.0
+    } else {
+        10.0
+    }
+}
+
 /// Remember where the last card was drawn (its frame, without the space
 /// after it), for highlights that outline a card.
 pub(crate) fn note_card(ui: &Ui, rect: egui::Rect) {
@@ -838,6 +864,7 @@ pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     if clean() {
         return clean::card(ui, add);
     }
+    let fill = take_card_fill();
     let shown = egui::Frame::none()
         .fill(CARD())
         .rounding(10.0)
@@ -845,6 +872,9 @@ pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
         .inner_margin(egui::Margin::same(14.0))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
+            if let Some(h) = fill {
+                ui.set_min_height(h - 28.0);
+            }
             add(ui)
         });
     note_card(ui, shown.response.rect);
@@ -1296,6 +1326,7 @@ mod clean {
     }
 
     pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+        let fill = super::take_card_fill();
         let shown = egui::Frame::none()
             .fill(CARD())
             .rounding(8.0)
@@ -1303,6 +1334,9 @@ mod clean {
             .inner_margin(egui::Margin::same(16.0))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
+                if let Some(h) = fill {
+                    ui.set_min_height(h - 32.0);
+                }
                 add(ui)
             });
         super::note_card(ui, shown.response.rect);
@@ -1544,6 +1578,7 @@ pub(crate) mod modern {
     }
 
     pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+        let fill = super::take_card_fill();
         let shown = egui::Frame::none()
             .fill(CARD())
             .rounding(14.0)
@@ -1552,6 +1587,9 @@ pub(crate) mod modern {
             .inner_margin(egui::Margin::same(18.0))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
+                if let Some(h) = fill {
+                    ui.set_min_height(h - 36.0);
+                }
                 add(ui)
             });
         super::note_card(ui, shown.response.rect);

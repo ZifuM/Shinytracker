@@ -374,68 +374,18 @@ impl App {
     /// Pokémon into XP. Only reads the log text; the first time, it starts
     /// from where the logs are now (no XP for older play).
     fn cards_read_logs(&mut self) {
-        let root = self.cfg.game_dir_setting().map(|d| crate::gamemap::game_dir(Some(d.as_path())));
-        let Some(dir) = crate::gamelog::log_dir(root.as_deref()) else {
+        let Some(dir) = self.game_log_dir() else {
             self.setup.cards.reads_logs = false;
             return;
         };
-        let Ok(rd) = std::fs::read_dir(&dir) else {
+        let mut cursors = std::mem::take(&mut self.setup.cards.file().logs);
+        let read = crate::gamelog::read_new_wild(&dir, &mut cursors);
+        self.setup.cards.file().logs = cursors;
+        let Some((found, moved)) = read else {
             self.setup.cards.reads_logs = false;
             return;
         };
         self.setup.cards.reads_logs = true;
-        let mut files: Vec<(String, std::path::PathBuf, u64)> = rd
-            .filter_map(|e| e.ok())
-            .filter_map(|e| {
-                let n = e.file_name().to_string_lossy().to_string();
-                (n.starts_with("session-") && n.ends_with(".log")).then(|| Some((n, e.path(), e.metadata().ok()?.len())))?
-            })
-            .collect();
-        files.sort_by(|a, b| a.0.cmp(&b.0));
-        let first = self.setup.cards.file().logs.is_empty();
-        let mut found: Vec<(u32, bool)> = Vec::new();
-        let mut moved = false;
-        for (name, path, len) in &files {
-            let at = self.setup.cards.file().logs.get(name).copied();
-            let from = match at {
-                // the very first read: start from the end of every log
-                None if first => *len,
-                // a log that turned up since (a new game session): from the top
-                None => 0,
-                Some(p) if p > *len => 0,
-                Some(p) => p,
-            };
-            if from >= *len {
-                if at != Some(*len) {
-                    self.setup.cards.file().logs.insert(name.clone(), *len);
-                    moved = true;
-                }
-                continue;
-            }
-            use std::io::{Read, Seek, SeekFrom};
-            let Ok(mut f) = std::fs::File::open(path) else { continue };
-            if f.seek(SeekFrom::Start(from)).is_err() {
-                continue;
-            }
-            let mut buf = Vec::new();
-            if f.take(len - from).read_to_end(&mut buf).is_err() {
-                continue;
-            }
-            // only whole lines; a half-written one waits for next time
-            let upto = buf.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
-            for line in String::from_utf8_lossy(&buf[..upto]).lines() {
-                if let Some(w) = crate::gamelog::parse_wild(line) {
-                    found.push((w.species, w.method.contains("rare grass")));
-                }
-            }
-            self.setup.cards.file().logs.insert(name.clone(), from + upto as u64);
-            moved = true;
-        }
-        // forget logs that are gone (the game tidies old ones away)
-        let names: Vec<&String> = files.iter().map(|f| &f.0).collect();
-        let before = self.setup.cards.file().logs.len();
-        self.setup.cards.file().logs.retain(|k, _| names.contains(&k));
-        moved |= self.setup.cards.file().logs.len() != before;
         if moved {
             self.setup.cards.touch();
         }
@@ -455,6 +405,12 @@ impl App {
             self.play(crate::sound::Sfx::Goal);
         }
         self.setup.cards.touch();
+    }
+
+    /// The folder with the game's session logs (None: not found).
+    pub(super) fn game_log_dir(&self) -> Option<std::path::PathBuf> {
+        let root = self.cfg.game_dir_setting().map(|d| crate::gamemap::game_dir(Some(d.as_path())));
+        crate::gamelog::log_dir(root.as_deref())
     }
 
     /// A shiny logged (once per hunt and Pokémon, so Undo can't repeat it).

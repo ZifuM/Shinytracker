@@ -20,9 +20,10 @@ pub enum AppId {
     Breed,
     Calc,
     Cards,
+    Gotchi,
 }
 
-pub const ALL: [AppId; 9] = [AppId::Shiny, AppId::Pokedex, AppId::Map, AppId::Info, AppId::Team, AppId::Sim, AppId::Breed, AppId::Calc, AppId::Cards];
+pub const ALL: [AppId; 10] = [AppId::Shiny, AppId::Pokedex, AppId::Map, AppId::Info, AppId::Team, AppId::Sim, AppId::Breed, AppId::Calc, AppId::Cards, AppId::Gotchi];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Cat {
@@ -58,6 +59,8 @@ pub struct Meta {
     pub core: bool,
     /// Still being built (the sidebar's warning triangle).
     pub beta: bool,
+    /// Puts something on top of the game while you play (the OVERLAY tag).
+    pub overlay: bool,
     pub tagline: &'static str,
     pub about: &'static [&'static str],
     pub can_do: &'static [&'static str],
@@ -80,6 +83,7 @@ const SHINY: Meta = Meta {
     cat: Cat::Hunting,
     core: true,
     beta: false,
+    overlay: true,
     tagline: "Count encounters and catch shinies, with an overlay on top of the game.",
     about: &[
         "The heart of the companion. Pick a target and a method, and Shiny Hunter counts every encounter for you, from the game log or by reading your screen. When the shiny shows up it flashes before you can run.",
@@ -110,6 +114,7 @@ const POKEDEX: Meta = Meta {
     cat: Cat::Explore,
     core: false,
     beta: false,
+    overlay: false,
     tagline: "Every Pokémon in Platinum Together, and where to catch it.",
     about: &[
         "Every Pokémon in Platinum Together, straight from the Platinum Together Wiki. Filter by type, by what you've caught and by where you are in the game.",
@@ -136,6 +141,7 @@ const MAP: Meta = Meta {
     cat: Cat::Explore,
     core: false,
     beta: false,
+    overlay: false,
     tagline: "Sinnoh's map with every area, and today's rare grass spots.",
     about: &[
         "The whole Sinnoh map with every route, cave and side area. Click a place to see what lives there.",
@@ -162,6 +168,7 @@ const INFO: Meta = Meta {
     cat: Cat::Explore,
     core: false,
     beta: false,
+    overlay: false,
     tagline: "What's in the game, where to find it, and how it works.",
     about: &[
         "A searchable guide to Platinum Together: Pokémon, moves, items, places and guides, with what changed in each game patch.",
@@ -187,6 +194,7 @@ const TEAM: Meta = Meta {
     cat: Cat::Battle,
     core: false,
     beta: false,
+    overlay: false,
     tagline: "Build a team, see what it covers, and plan how to get it.",
     about: &[
         "Pick up to six Pokémon, give them moves, items and EVs, and the planner works out the rest: type coverage, what hits you hardest, and how to get every part in the game.",
@@ -208,6 +216,7 @@ const SIM: Meta = Meta {
     cat: Cat::Battle,
     core: false,
     beta: true,
+    overlay: false,
     tagline: "Put your teams up against wild Pokémon and trainers.",
     about: &[
         "Battle your Team Planner teams against wild Pokémon by the game's real odds, or against any trainer in the game, in singles or doubles.",
@@ -229,6 +238,7 @@ const BREED: Meta = Meta {
     cat: Cat::Breed,
     core: false,
     beta: true,
+    overlay: false,
     tagline: "Plan an Egg: parents, items, egg moves and how many Eggs it takes.",
     about: &[
         "Pair two Pokémon at the Day Care and see what the Egg will be like, how many Eggs it takes to get the one you want, and what would make it quicker.",
@@ -250,6 +260,7 @@ const CALC: Meta = Meta {
     cat: Cat::Battle,
     core: false,
     beta: false,
+    overlay: false,
     tagline: "Platinum's own damage maths: any Pokémon against any other.",
     about: &[
         "Platinum's own damage formula: any Pokémon against any other, with every item, ability, nature, boost and field effect.",
@@ -271,6 +282,7 @@ const CARDS: Meta = Meta {
     cat: Cat::Games,
     core: false,
     beta: true,
+    overlay: true,
     tagline: "Hunt, fill the bar, open booster packs and collect the original cards.",
     about: &[
         "Every Pokémon you meet earns XP. Fill the bar and you get a booster pack of the original Base Set or Base Set 2 to open.",
@@ -286,6 +298,35 @@ const CARDS: Meta = Meta {
     works_with: &[(AppId::Shiny, "XP from your hunts, and the overlay bar")],
 };
 
+const GOTCHI: Meta = Meta {
+    id: AppId::Gotchi,
+    slug: "gotchi",
+    name: "Pokégotchi",
+    cat: Cat::Games,
+    core: false,
+    beta: true,
+    overlay: true,
+    tagline: "Adopt a shiny you caught as a pocket pet that keeps you company while you hunt.",
+    about: &[
+        "Pick a shiny you've caught and it moves into a little device of its own. Feed it, play with it, keep it clean and let it nap. It never runs away or faints: left alone it just gets hungry or grumpy, and a bit of care brings it back.",
+        "Hunting feeds it. Every 10 Pokémon you meet earns a berry, rare grass drops treats, and it cheers when you find a shiny. It sits on your overlay while you play, so you never have to leave the game.",
+    ],
+    can_do: &[
+        "Adopt any shiny you've caught, up to 6 in the Box",
+        "Feed, play, clean, pat and lights out",
+        "Berries from your hunting, read from the game's log",
+        "Higher or Lower, played on the device",
+        "Three frames: Sinnoh Pearl (four more colours in the battle pass), Distortion and Rare Grass",
+        "On the overlay as a mini device, on the bar, or a needs strip",
+    ],
+    whats_new: "New: your shinies can come home with you.",
+    updated: "14 Nov 2026",
+    uses: "Your caught shinies, and the game's session log (read only)",
+    shots: &[("gotchi", "Your Pokégotchi and its Box"), ("gotchi_play", "Higher or Lower, on the device"), ("gotchi_frames", "Three frames, and three looks on the overlay")],
+    requires: &[],
+    works_with: &[(AppId::Shiny, "Berries from your hunts, and the overlay")],
+};
+
 pub fn meta(id: AppId) -> &'static Meta {
     match id {
         AppId::Shiny => &SHINY,
@@ -297,6 +338,7 @@ pub fn meta(id: AppId) -> &'static Meta {
         AppId::Breed => &BREED,
         AppId::Calc => &CALC,
         AppId::Cards => &CARDS,
+        AppId::Gotchi => &GOTCHI,
     }
 }
 
@@ -522,6 +564,10 @@ pub struct WidgetCfg {
     /// The widget's own settings (a Pokémon it shows, a type, your notes…).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub data: Vec<String>,
+    /// Its place on the Dashboard's grid of squares: [column, row, width,
+    /// height]. None: from before the grid (placed in order the first time).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pos: Option<[u8; 4]>,
 }
 
 /// The Dashboard's widgets, in order. None: the default layout, which is
@@ -536,6 +582,9 @@ pub struct HomeCfg {
     pub map_recent: Vec<u16>,
     /// Calculations kept from the Quick calc widget: "attacker|defender".
     pub saved_calcs: Vec<String>,
+    /// Which grid the widgets' places are in: 0 the first (6 columns),
+    /// 2 the finer one (12 columns, half-size squares).
+    pub grid: u8,
 }
 
 #[cfg(test)]

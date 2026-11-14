@@ -40,6 +40,7 @@ pub(super) fn tab_meta(t: Tab) -> (&'static str, &'static str, Color32) {
         Tab::Breed => ("🐣", "Breeding", kit::C_PINK),
         Tab::Calc => ("💥", "Damage Calculator", kit::C_INDIGO),
         Tab::Cards => ("🃏", "Card Collector", kit::C_GOLD),
+        Tab::Gotchi => ("🐾", "Pokégotchi", kit::C_PINK),
         Tab::Appearance => ("🎨", "Appearance", kit::C_PINK),
         Tab::Hotkeys => ("⌨", "Hotkeys", kit::C_SLATE),
         Tab::Advanced => ("⚙", "Advanced", kit::C_SLATE),
@@ -48,7 +49,7 @@ pub(super) fn tab_meta(t: Tab) -> (&'static str, &'static str, Color32) {
 
 /// Pages that are still experimental (marked in the sidebar).
 pub(super) fn is_experimental(t: Tab) -> bool {
-    matches!(t, Tab::Sim | Tab::Breed | Tab::Cards)
+    matches!(t, Tab::Sim | Tab::Breed | Tab::Cards | Tab::Gotchi)
 }
 
 /// The App Store's and the Library's colours.
@@ -70,6 +71,7 @@ pub(super) fn app_of(t: Tab) -> Option<AppId> {
         Tab::Breed => AppId::Breed,
         Tab::Calc => AppId::Calc,
         Tab::Cards => AppId::Cards,
+        Tab::Gotchi => AppId::Gotchi,
         _ => return None,
     })
 }
@@ -86,6 +88,7 @@ pub(super) fn app_tab(a: AppId) -> Tab {
         AppId::Breed => Tab::Breed,
         AppId::Calc => Tab::Calc,
         AppId::Cards => Tab::Cards,
+        AppId::Gotchi => Tab::Gotchi,
     }
 }
 
@@ -342,6 +345,8 @@ impl App {
                             (theme::HP_YELLOW, "Minimised, still counting")
                         } else if self.overlay_on {
                             (theme::GREEN, "Overlay running")
+                        } else if self.setup.gotchi.shown {
+                            (theme::GREEN, "Pokégotchi out")
                         } else {
                             (MUTED(), "Overlay stopped")
                         };

@@ -39,12 +39,14 @@ pub struct Season {
     /// Local day number of its first day.
     pub start_day: i64,
     pub rewards: &'static [Reward],
+    /// Second rewards at some milestone tiers.
+    pub extras: &'static [Reward],
 }
 
 /// Every season, oldest first.
 pub static SEASONS: [Season; 1] = [
     // Two Worlds: Friday 13 Nov 2026 to Thursday 4 Feb 2027.
-    Season { num: 1, name: "Two Worlds", start_day: 20_770, rewards: &REWARDS },
+    Season { num: 1, name: "Two Worlds", start_day: 20_770, rewards: &REWARDS, extras: &EXTRAS },
 ];
 
 /// The season the pass shows: the newest that has started (it stays the
@@ -68,9 +70,25 @@ pub fn title_theme(name: &str) -> Option<Theme> {
     all_rewards().find(|r| r.kind == Kind2::Title && r.name == name).map(|r| r.theme)
 }
 
-/// Every reward of every season.
+/// Every reward of every season (second rewards included).
 pub fn all_rewards() -> impl Iterator<Item = &'static Reward> {
-    SEASONS.iter().flat_map(|s| s.rewards.iter())
+    SEASONS.iter().flat_map(|s| s.rewards.iter().chain(s.extras.iter()))
+}
+
+impl Season {
+    /// The tier's rewards: its own, then any second reward.
+    pub fn at(&self, tier: u32) -> impl Iterator<Item = &'static Reward> + '_ {
+        self.rewards.iter().chain(self.extras.iter()).filter(move |r| r.tier == tier)
+    }
+    /// Every reward of the season, second rewards included.
+    pub fn all(&self) -> impl Iterator<Item = &'static Reward> + '_ {
+        self.rewards.iter().chain(self.extras.iter())
+    }
+}
+
+/// The battle pass reward that unlocks a Pokégotchi colour (None: free).
+pub fn tint_reward(t: crate::gotchi::Tint) -> Option<&'static Reward> {
+    all_rewards().find(|r| r.kind == Kind2::Colour(t))
 }
 
 impl Season {
@@ -342,6 +360,8 @@ pub enum Kind2 {
     Title,
     /// A hunt share image style (animated or not).
     Style(crate::card::CardStyle),
+    /// A colour for Pokégotchi's Sinnoh frame.
+    Colour(crate::gotchi::Tint),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -395,6 +415,16 @@ pub static REWARDS: [Reward; 30] = [
     rw(30, "style_aurora_live", "Snowpoint Aurora · Animated", Style(S::AuroraLive), A),
 ];
 
+use crate::gotchi::Tint;
+
+/// Season 1's second rewards: Pokégotchi colours at milestone tiers.
+pub static EXTRAS: [Reward; 4] = [
+    rw(5, "gotchi_diamond", "Sinnoh Diamond", Kind2::Colour(Tint::Sky), A),
+    rw(15, "gotchi_emerald", "Sinnoh Emerald", Kind2::Colour(Tint::Mint), A),
+    rw(25, "gotchi_onyx", "Sinnoh Onyx", Kind2::Colour(Tint::Midnight), D),
+    rw(30, "gotchi_platinum", "Sinnoh Platinum", Kind2::Colour(Tint::Platinum), B),
+];
+
 /// The share image styles that come from the pass (locked until claimed).
 pub fn style_reward(s: crate::card::CardStyle) -> Option<&'static Reward> {
     all_rewards().find(|r| r.kind == Kind2::Style(s))
@@ -437,6 +467,14 @@ mod tests {
         // every reward tier once, in order
         for (i, r) in REWARDS.iter().enumerate() {
             assert_eq!(r.tier, i as u32 + 1);
+        }
+        // the colours: every one but the free Pearl, each once, on real tiers
+        for t in crate::gotchi::Tint::ALL {
+            assert_eq!(tint_reward(t).is_none(), t == crate::gotchi::Tint::Pink, "{t:?}");
+        }
+        for r in EXTRAS.iter() {
+            assert!((1..=TIERS).contains(&r.tier));
+            assert_eq!(s1.at(r.tier).count(), 2);
         }
     }
 

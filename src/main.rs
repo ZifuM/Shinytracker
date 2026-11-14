@@ -20,6 +20,7 @@ mod engine;
 mod fonts;
 mod gamemap;
 mod gamelog;
+mod gotchi;
 mod goals;
 mod hotkeys;
 mod icon;

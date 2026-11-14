@@ -1,8 +1,10 @@
-//! The Dashboard's widgets: under the hunt banner, cards you pick in a
-//! waterfall grid (each goes into the highest open space). "Customize" lets
-//! you drag them into a new order, make them 1, 2 or full width and remove
-//! them; "Add widget" opens the gallery, with a live preview of each one.
-//! The Dashboard starts empty, with a big "Add your first widget".
+//! The Dashboard's widgets: under the hunt banner, on a grid of squares 12
+//! columns wide (the squares grow and shrink with the window, so the layout
+//! never rearranges itself). In Customize you drag a widget to move it (it
+//! snaps to the squares and pushes anything in the way down), drag its
+//! corner to resize it (whole squares, up to 8×8, never below the
+//! widget's smallest size), remove it, and add more from the gallery, with
+//! a live preview of each one. Each widget fills its box.
 //!
 //! Each widget is a `DEFS` entry plus an arm in `draw_widget`; the widgets
 //! themselves live in `w_hunt` (Shiny Hunter and general), `w_explore`
@@ -17,11 +19,93 @@ use crate::theme;
 use eframe::egui::{self, pos2, vec2, Align2, Color32, Rect, Sense, Stroke};
 use std::collections::HashMap;
 
-/// Full width (wider than any grid has columns).
+/// Full width (wider than any grid has columns). Widgets made for the full
+/// width before the grid.
 pub(super) const FULL: u8 = 9;
-const GAP: f32 = 18.0;
-const MIN_COL: f32 = 330.0;
-const MAX_COLS: usize = 3;
+const GAP: f32 = 12.0;
+/// The grid's columns, and the biggest a widget gets (squares each way).
+pub(super) const COLS: i32 = 12;
+pub(super) const MAX_SIDE: i32 = 8;
+/// Narrower squares than this: the widgets just stack (window too narrow).
+const MIN_CELL: f32 = 46.0;
+/// The grid the places are saved in (see `HomeCfg::grid`).
+const GRID_VERSION: u8 = 2;
+
+/// A place on the grid, in squares.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Cell {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+}
+
+impl Cell {
+    fn of(p: [u8; 4]) -> Cell {
+        Cell { x: p[0] as i32, y: p[1] as i32, w: (p[2] as i32).max(1), h: (p[3] as i32).max(1) }
+    }
+    fn save(self) -> [u8; 4] {
+        [self.x.clamp(0, 250) as u8, self.y.clamp(0, 250) as u8, self.w as u8, self.h as u8]
+    }
+    fn overlaps(self, o: Cell) -> bool {
+        self.x < o.x + o.w && o.x < self.x + self.w && self.y < o.y + o.h && o.y < self.y + self.h
+    }
+}
+
+/// The smallest a widget can be (wider ones need the room).
+pub(super) fn min_size(d: &WidgetDef) -> (i32, i32) {
+    if d.kind == "minimap" {
+        return (3, 3);
+    }
+    match d.span {
+        1 => (2, 2),
+        2 => (4, 2),
+        _ => (6, 2),
+    }
+}
+
+/// The size a widget gets when added.
+pub(super) fn start_size(d: &WidgetDef) -> (i32, i32) {
+    // a map starts square
+    if d.kind == "minimap" {
+        return (6, 6);
+    }
+    match d.span {
+        1 => (4, 3),
+        2 => (6, 3),
+        _ => (8, 3),
+    }
+}
+
+/// Keep `fixed` where it is and push anything it overlaps down (and what
+/// that then overlaps, and so on), keeping everything's order. Nothing
+/// moves up or sideways.
+pub(super) fn settle(items: &mut [(u64, Cell)], fixed: Option<u64>) {
+    let mut order: Vec<usize> = (0..items.len()).collect();
+    order.sort_by_key(|i| (Some(items[*i].0) != fixed, items[*i].1.y, items[*i].1.x));
+    let mut placed: Vec<Cell> = Vec::new();
+    for i in order {
+        let mut c = items[i].1;
+        while let Some(o) = placed.iter().filter(|p| p.overlaps(c)).map(|p| p.y + p.h).max() {
+            c.y = o;
+        }
+        items[i].1 = c;
+        placed.push(c);
+    }
+}
+
+/// The first spot (top to bottom, left to right) a w × h widget fits.
+pub(super) fn first_free(items: &[(u64, Cell)], w: i32, h: i32) -> Cell {
+    for y in 0..1000 {
+        for x in 0..=(COLS - w).max(0) {
+            let c = Cell { x, y, w, h };
+            if !items.iter().any(|(_, o)| o.overlaps(c)) {
+                return c;
+            }
+        }
+    }
+    Cell { x: 0, y: 0, w, h }
+}
 
 /// A kind of widget.
 pub(super) struct WidgetDef {
@@ -41,7 +125,7 @@ const fn wd(kind: &'static str, name: &'static str, about: &'static str, icon: &
     WidgetDef { kind, name, about, icon, app, span, multi }
 }
 
-use AppId::{Breed, Calc, Cards, Info, Map, Pokedex, Shiny, Sim, Team};
+use AppId::{Breed, Calc, Cards, Gotchi, Info, Map, Pokedex, Shiny, Sim, Team};
 
 pub(super) const DEFS: &[WidgetDef] = &[
     // the Dashboard's own
@@ -66,7 +150,7 @@ pub(super) const DEFS: &[WidgetDef] = &[
     wd("typematch", "Type matchup", "What a type hits hard, and what hits it hard", "⚔", Some(Pokedex), 1, true),
     // Map
     wd("rare", "Rare grass today", "Today's rare grass spots", "🌾", Some(Map), 2, false),
-    wd("minimap", "Mini map", "Sinnoh at a glance; click to open the Map", "🗺", Some(Map), 2, false),
+    wd("minimap", "Mini map", "Sinnoh at a glance, with today's rare grass. Scroll to zoom, drag to look around", "🗺", Some(Map), 2, false),
     wd("mapfavs", "Favourite places", "Places you pick, with what lives there", "📍", Some(Map), 1, true),
     wd("huntwhere", "Where's my hunt", "Where your current target can be found", "🔭", Some(Map), 1, false),
     wd("maprecent", "Recent places", "The places you looked at last on the Map", "🕘", Some(Map), 1, false),
@@ -106,6 +190,12 @@ pub(super) const DEFS: &[WidgetDef] = &[
     wd("cards_pulls", "Latest pulls", "The best cards from your last packs", "🃏", Some(Cards), 2, false),
     wd("cards_sets", "Set completion", "How much of each set is in your binder", "📚", Some(Cards), 1, false),
     wd("cards_missions", "Card missions", "Today's missions for more XP", "🎯", Some(Cards), 1, false),
+    // Pokégotchi
+    wd("gotchi_pet", "Your Pokégotchi", "Your pet in its device, and how it's feeling", "🐾", Some(Gotchi), 1, false),
+    wd("gotchi_needs", "Pet needs", "Full, Happy, Energy and Clean at a glance", "💗", Some(Gotchi), 1, false),
+    wd("gotchi_care", "Quick care", "Feed, treat, clean or pat without opening the app", "🍓", Some(Gotchi), 1, false),
+    wd("gotchi_pantry", "Pantry", "Berries and treats, and what hunting earned today", "🎒", Some(Gotchi), 1, false),
+    wd("gotchi_box", "The Box", "Every Pokégotchi you have; click one to bring it out", "📦", Some(Gotchi), 2, false),
 ];
 
 pub(super) fn def(kind: &str) -> Option<&'static WidgetDef> {
@@ -141,19 +231,19 @@ pub(super) struct Gallery {
 #[derive(Default)]
 pub(super) struct HomeState {
     pub edit: bool,
-    /// Each widget's height at each width (columns) last time it was drawn.
-    pub heights: HashMap<(u64, usize), f32>,
-    /// The widget being dragged, where it was grabbed (from its corner),
-    /// and where it would land: (place in the order, width in columns).
+    /// The widget being moved, and where it was grabbed (from its corner).
     pub drag: Option<u64>,
     pub grab: egui::Vec2,
-    pub target: Option<(usize, usize)>,
+    /// The widget being resized.
+    pub resize: Option<u64>,
+    /// The grid while moving or resizing (where everything would go).
+    pub preview: Option<Vec<(u64, Cell)>>,
+    /// An empty square was clicked: the next widget added goes there.
+    pub add_at: Option<(i32, i32)>,
     /// The "Add widgets" gallery.
     pub gallery: Gallery,
     /// "Clear all" was pressed once (press again to confirm), and when.
     pub clear_armed: Option<std::time::Instant>,
-    /// How many columns the grid has (as of the last frame).
-    pub cols: usize,
     /// Widgets' working state (search boxes and the like), by widget id.
     pub text: HashMap<(u64, &'static str), String>,
     /// The breeding plan the Next step widget shows, and what it was made from.
@@ -172,17 +262,36 @@ impl App {
         self.dirty = true;
     }
 
-    /// Put a widget at the end of the Dashboard.
+    /// Put a widget in the first space it fits.
     fn add_widget(&mut self, d: &'static WidgetDef) {
         let mut w = self.home_widgets();
+        let mut cells = place_all(&w);
         let id = w.iter().map(|x| x.id).max().unwrap_or(0) + 1;
-        w.push(WidgetCfg { id, kind: d.kind.to_string(), span: d.span, data: Vec::new() });
+        let (sw, sh) = start_size(d);
+        let c = match self.setup.home.add_at.take() {
+            // where you clicked (anything in the way moves down), and back
+            // to the Dashboard to see it
+            Some((x, y)) => {
+                self.setup.home.gallery.open = false;
+                Cell { x: x.min(COLS - sw).max(0), y, w: sw, h: sh }
+            }
+            None => first_free(&cells, sw, sh),
+        };
+        cells.push((id, c));
+        settle(&mut cells, Some(id));
+        for x in w.iter_mut() {
+            if let Some((_, nc)) = cells.iter().find(|(i, _)| *i == x.id) {
+                x.pos = Some(nc.save());
+            }
+        }
+        let c = cells.iter().find(|(i, _)| *i == id).map_or(c, |x| x.1);
+        w.push(WidgetCfg { id, kind: d.kind.to_string(), span: d.span, data: Vec::new(), pos: Some(c.save()) });
         self.set_home_widgets(w);
         self.app_toast(format!("Added {} to your Dashboard", d.name));
     }
 
-    /// The edit bar: Customize / Done, Add, Clear all. (An empty Dashboard
-    /// has its own big start instead.)
+    /// The edit bar: Customize; in Customize, Add widget, Clear all, Done.
+    /// (An empty Dashboard has its own big start instead.)
     pub(super) fn home_widgets_bar(&mut self, ui: &mut egui::Ui) {
         let edit = self.setup.home.edit;
         let none = self.home_widgets().is_empty();
@@ -192,19 +301,26 @@ impl App {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(if edit { "Customize your Dashboard" } else { "Your widgets" }).font(crate::fonts::sans_bold_font(16.0)).color(TEXT()));
             if edit {
-                ui.label(egui::RichText::new("Drag to move · pick a width · × to remove").size(kit::fs(12.5)).color(MUTED()));
+                ui.label(egui::RichText::new("Drag to move · drag the corner to resize · click an empty square to add · × to remove").size(kit::fs(12.5)).color(MUTED()));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let (r, _) = ui.allocate_exact_size(vec2(if edit { 84.0 } else { 116.0 }, 32.0), Sense::hover());
                 if pill_button(ui, r, if edit { "Done" } else { "✏  Customize" }, edit, "home-edit").clicked() {
                     self.setup.home.edit = !edit;
                     self.setup.home.clear_armed = None;
+                    self.setup.home.drag = None;
+                    self.setup.home.resize = None;
+                    self.setup.home.preview = None;
+                }
+                if !edit {
+                    return;
                 }
                 let (r, _) = ui.allocate_exact_size(vec2(118.0, 32.0), Sense::hover());
-                if pill_button(ui, r, "+  Add widget", !edit, "home-add").on_hover_text("Open the widget gallery").clicked() {
+                if pill_button(ui, r, "+  Add widget", false, "home-add").on_hover_text("Open the widget gallery").clicked() {
+                    self.setup.home.add_at = None;
                     self.setup.home.gallery.open = true;
                 }
-                if edit && !none {
+                if !none {
                     let armed = self.setup.home.clear_armed.is_some_and(|t| t.elapsed().as_secs_f32() < 3.0);
                     let (r, _) = ui.allocate_exact_size(vec2(if armed { 118.0 } else { 86.0 }, 32.0), Sense::hover());
                     let resp = pill_button(ui, r, if armed { "Sure? Clear all" } else { "Clear all" }, false, "home-clear").on_hover_text("Take every widget off the Dashboard");
@@ -212,7 +328,6 @@ impl App {
                         if armed {
                             self.set_home_widgets(Vec::new());
                             self.setup.home.clear_armed = None;
-                            self.setup.home.edit = false;
                         } else {
                             self.setup.home.clear_armed = Some(std::time::Instant::now());
                         }
@@ -249,11 +364,25 @@ impl App {
             p.rect_filled(Rect::from_min_size(br.min + vec2(8.0, 8.0), vec2((br.width() * 0.45).min(60.0), 6.0)), 3.0, theme::blend(CARD(), col, 0.45));
         }
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(60));
+        let edit = self.setup.home.edit;
         p.text(pos2(r.center().x, r.min.y + 178.0), Align2::CENTER_CENTER, "Your Dashboard is empty", crate::fonts::sans_bold_font(20.0), TEXT());
-        p.text(pos2(r.center().x, r.min.y + 204.0), Align2::CENTER_CENTER, "Add widgets from any of your apps and arrange them how you like.", crate::fonts::sans_font(13.0), MUTED());
+        p.text(
+            pos2(r.center().x, r.min.y + 204.0),
+            Align2::CENTER_CENTER,
+            if edit { "Add widgets from any of your apps, then drag them where you like." } else { "Press Customize to add widgets from any of your apps and arrange them." },
+            crate::fonts::sans_font(13.0),
+            MUTED(),
+        );
         let br = Rect::from_center_size(pos2(r.center().x, r.min.y + 248.0), vec2(230.0, 44.0));
-        if pill_button(ui, br, "+  Add your first widget", true, "home-first").clicked() {
-            self.setup.home.gallery.open = true;
+        if edit {
+            if pill_button(ui, br, "+  Add your first widget", true, "home-first").clicked() {
+                self.setup.home.gallery.open = true;
+            }
+        } else if pill_button(ui, br, "✏  Customize", true, "home-first").clicked() {
+            self.setup.home.edit = true;
+        }
+        if !edit {
+            return;
         }
         // one-click suggestions
         let picks: Vec<&'static WidgetDef> = ["hunt_ctrl", "today", "rare", "shinies"].iter().filter_map(|k| def(k)).filter(|d| d.app.map_or(true, |a| self.has_app(a))).take(3).collect();
@@ -407,7 +536,7 @@ impl App {
                             // the live preview, clipped and faded at the bottom
                             let pr = Rect::from_min_size(r.min + vec2(10.0, 10.0), vec2(tw - 20.0, PREVIEW_H));
                             p.rect_filled(pr, 12.0, theme::blend(kit::PAGE(), col, 0.05));
-                            let fake = WidgetCfg { id: 9_000_000 + (row_i * 16 + c) as u64, kind: d.kind.to_string(), span: d.span, data: Vec::new() };
+                            let fake = WidgetCfg { id: 9_000_000 + (row_i * 16 + c) as u64, kind: d.kind.to_string(), span: d.span, data: Vec::new(), pos: None };
                             let inner = pr.shrink(8.0);
                             // drawn in a child that takes no room in the grid
                             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(inner.min, vec2(inner.width(), 2000.0))).layout(egui::Layout::top_down(egui::Align::Min)));
@@ -422,12 +551,10 @@ impl App {
                             ui.interact(pr, ui.id().with(("gal-shield", d.kind)), Sense::click());
                             fade_bottom(&p, Rect::from_min_max(pos2(pr.min.x, pr.max.y - 46.0), pr.max), theme::blend(kit::sunken(), CARD_HOVER(), 0.4 * ht));
                             // size tag on the preview
-                            let size = match d.span {
-                                1 => "⅓ width",
-                                2 => "⅔ width",
-                                _ => "Full width",
-                            };
-                            let sg = p.layout_no_wrap(size.into(), crate::fonts::sans_bold_font(10.5), TEXT());
+                            let (sw, sh) = start_size(d);
+                            let (mw, mh) = min_size(d);
+                            let size = if (mw, mh) == (1, 1) { format!("{sw}×{sh}") } else { format!("{sw}×{sh} · smallest {mw}×{mh}") };
+                            let sg = p.layout_no_wrap(size, crate::fonts::sans_bold_font(10.5), TEXT());
                             let sr = Rect::from_min_size(pos2(pr.max.x - sg.size().x - 22.0, pr.min.y + 8.0), sg.size() + vec2(14.0, 6.0));
                             p.rect_filled(sr, 8.0, CARD().gamma_multiply(0.92));
                             p.rect_stroke(sr, 8.0, Stroke::new(1.0f32, LINE()));
@@ -471,20 +598,13 @@ impl App {
         }
         if close {
             self.setup.home.gallery.open = false;
+            self.setup.home.add_at = None;
         }
     }
 
-    /// A widget's height at `span` columns: measured, or its height at
-    /// another width, or a guess.
-    fn widget_h(&self, id: u64, span: usize) -> f32 {
-        let hs = &self.setup.home.heights;
-        hs.get(&(id, span)).copied().or_else(|| hs.iter().find(|((i, _), _)| *i == id).map(|(_, h)| *h)).unwrap_or(160.0)
-    }
-
-    /// The waterfall grid of widgets. Each goes into the highest open space
-    /// it fits (gaps fill themselves). While one is dragged, the rest slide
-    /// to show where it would land, and it takes the width that best fits
-    /// the space under the pointer.
+    /// The grid: every widget in its box. In Customize, drag one to move it
+    /// (it snaps to the squares; anything in the way is pushed down) or drag
+    /// its corner to resize it.
     pub(super) fn home_widget_grid(&mut self, ui: &mut egui::Ui) {
         let edit = self.setup.home.edit;
         let all = self.home_widgets();
@@ -492,164 +612,210 @@ impl App {
             self.home_empty(ui);
             return;
         }
+        // places from the first grid (squares twice the size): doubled
+        if self.cfg.home.grid < GRID_VERSION {
+            let mut fixed = all.clone();
+            for w in fixed.iter_mut() {
+                if let Some(p) = w.pos {
+                    w.pos = Some([p[0].saturating_mul(2), p[1].saturating_mul(2), p[2].saturating_mul(2), p[3].saturating_mul(2)]);
+                }
+            }
+            self.cfg.home.grid = GRID_VERSION;
+            self.set_home_widgets(fixed);
+            return self.home_widget_grid(ui);
+        }
+        // widgets from before the grid get their places once
+        if all.iter().any(|w| w.pos.is_none()) {
+            let cells = place_all(&all);
+            let mut fixed = all.clone();
+            for (w, (_, c)) in fixed.iter_mut().zip(cells.iter()) {
+                w.pos = Some(c.save());
+            }
+            self.set_home_widgets(fixed);
+            return self.home_widget_grid(ui);
+        }
+        let width = ui.available_width();
+        let cell = ((width - GAP * (COLS as f32 - 1.0)) / COLS as f32).floor();
+        if cell < MIN_CELL {
+            return self.home_widget_stack(ui, &all);
+        }
+        let pitch = cell + GAP;
+        let origin = ui.cursor().min;
+        let rect_of = |c: Cell| Rect::from_min_size(origin + vec2(c.x as f32 * pitch, c.y as f32 * pitch), vec2(c.w as f32 * pitch - GAP, c.h as f32 * pitch - GAP));
         // Widgets whose app isn't installed hide (they show, locked, while
         // customising; they come back when the app does).
         let shown: Vec<WidgetCfg> = all.iter().filter(|w| def(&w.kind).is_some_and(|d| edit || d.app.map_or(true, |a| self.has_app(a)))).cloned().collect();
-        let width = ui.available_width();
-        let cols = crate::masonry::columns(width, MIN_COL, GAP, MAX_COLS);
-        let col_w = (width - GAP * (cols as f32 - 1.0)) / cols as f32;
-        self.setup.home.cols = cols;
-        let origin = ui.cursor().min;
-        let pointer = ui.ctx().pointer_interact_pos();
-        if !edit || !shown.iter().any(|w| Some(w.id) == self.setup.home.drag) {
+        let saved: Vec<(u64, Cell)> = shown.iter().map(|w| (w.id, Cell::of(w.pos.unwrap_or([0, 0, 2, 2])))).collect();
+        if !edit {
             self.setup.home.drag = None;
-            self.setup.home.target = None;
+            self.setup.home.resize = None;
+            self.setup.home.preview = None;
         }
-        let dragged = self.setup.home.drag;
-
-        // This frame's order and widths.
-        let mut order: Vec<(WidgetCfg, usize)> = shown.iter().map(|w| (w.clone(), (w.span as usize).clamp(1, cols))).collect();
-        if let (Some(id), Some(pp)) = (dragged, pointer) {
-            let others: Vec<(WidgetCfg, usize)> = order.iter().filter(|(w, _)| w.id != id).cloned().collect();
-            let me = order.iter().find(|(w, _)| w.id == id).cloned().expect("dragged is shown");
-            let grab = self.setup.home.grab;
-            // where the card's corner would be, by the pointer
-            let want = pp - grab;
-            let mut best: Option<(f32, usize, usize)> = None;
-            for i in 0..=others.len() {
-                for s in 1..=cols {
-                    let mut test = others.clone();
-                    test.insert(i, (me.0.clone(), s));
-                    let spans: Vec<usize> = test.iter().map(|t| t.1).collect();
-                    let hs: Vec<f32> = test.iter().map(|(w, sp)| self.widget_h(w.id, *sp)).collect();
-                    let (pl, total) = crate::masonry::pack(&spans, &hs, cols, GAP);
-                    let p = pl[i];
-                    let r = Rect::from_min_size(pos2(origin.x + p.col as f32 * (col_w + GAP), origin.y + p.y), vec2(col_w * s as f32 + GAP * (s as f32 - 1.0), hs[i]));
-                    // close to where the pointer holds it, inside if possible;
-                    // keep its own width unless another fits clearly better;
-                    // and prefer layouts with fewer holes
-                    let mut score = (r.min - want).length() + if r.contains(pp) { 0.0 } else { r.distance_to_pos(pp) * 2.0 };
-                    if s != me.1 {
-                        score += 40.0;
+        let pointer = ui.ctx().pointer_interact_pos();
+        let released = ui.input(|i| i.pointer.any_released());
+        // moving or resizing: where everything would go
+        let busy = self.setup.home.drag.or(self.setup.home.resize);
+        if let (Some(id), Some(pp)) = (busy, pointer) {
+            if let Some(me) = saved.iter().find(|(i, _)| *i == id).map(|x| x.1) {
+                let d = shown.iter().find(|w| w.id == id).and_then(|w| def(&w.kind));
+                let (mw, mh) = d.map_or((1, 1), min_size);
+                let mut want = me;
+                if self.setup.home.drag.is_some() {
+                    let at = pp - self.setup.home.grab - origin;
+                    want.x = ((at.x / pitch).round() as i32).clamp(0, COLS - me.w);
+                    want.y = ((at.y / pitch).round() as i32).max(0);
+                } else {
+                    let r = rect_of(me);
+                    want.w = (((pp.x - r.min.x + GAP / 2.0) / pitch).round() as i32).clamp(mw, MAX_SIDE.min(COLS - me.x));
+                    want.h = (((pp.y - r.min.y + GAP / 2.0) / pitch).round() as i32).clamp(mh, MAX_SIDE);
+                }
+                let mut next = saved.clone();
+                if let Some(x) = next.iter_mut().find(|(i, _)| *i == id) {
+                    x.1 = want;
+                }
+                settle(&mut next, Some(id));
+                self.setup.home.preview = Some(next);
+            }
+        }
+        let layout = self.setup.home.preview.clone().unwrap_or_else(|| saved.clone());
+        let rows = layout.iter().map(|(_, c)| c.y + c.h).max().unwrap_or(0) + if edit { 2 } else { 0 };
+        let full = Rect::from_min_size(origin, vec2(width, (rows as f32 * pitch - GAP).max(0.0)));
+        // in Customize: the squares, faintly; click an empty one to add a
+        // widget there
+        if edit {
+            let p = ui.painter().clone();
+            let free = busy.is_none();
+            for y in 0..rows {
+                for x in 0..COLS {
+                    let sq = Cell { x, y, w: 1, h: 1 };
+                    let r = rect_of(sq);
+                    let empty = !layout.iter().any(|(_, c)| c.overlaps(sq));
+                    let picked = self.setup.home.add_at == Some((x, y)) && self.setup.home.gallery.open;
+                    if empty && free {
+                        let resp = ui.interact(r, ui.id().with(("w-sq", x, y)), Sense::click());
+                        let ht = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered() || picked, kit::QUICK);
+                        if ht > 0.0 {
+                            p.rect_filled(r, 8.0, kit::primary().gamma_multiply(0.08 * ht));
+                            p.text(r.center(), Align2::CENTER_CENTER, "+", crate::fonts::sans_bold_font(22.0), kit::primary().gamma_multiply(0.4 + 0.5 * ht));
+                        }
+                        if resp.on_hover_text("Add a widget here").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                            self.setup.home.add_at = Some((x, y));
+                            self.setup.home.gallery.open = true;
+                        }
                     }
-                    score += total * 0.02;
-                    if best.map_or(true, |b| score < b.0) {
-                        best = Some((score, i, s));
-                    }
+                    p.rect_stroke(r, 8.0, Stroke::new(1.0f32, if picked { kit::primary() } else { theme::blend(kit::PAGE(), LINE(), 0.45) }));
                 }
             }
-            if let Some((_, i, s)) = best {
-                self.setup.home.target = Some((i, s));
-                order = others;
-                order.insert(i, (me.0, s));
-            }
         }
-        let spans: Vec<usize> = order.iter().map(|o| o.1).collect();
-        let heights: Vec<f32> = order.iter().map(|(w, s)| self.widget_h(w.id, *s)).collect();
-        let (places, total) = crate::masonry::pack(&spans, &heights, cols, GAP);
-        let rect_of = |i: usize| {
-            let pl = places[i];
-            let w = col_w * pl.span as f32 + GAP * (pl.span as f32 - 1.0);
-            Rect::from_min_size(pos2(origin.x + pl.col as f32 * (col_w + GAP), origin.y + pl.y), vec2(w, heights[i]))
-        };
-        let mut new_heights: Vec<((u64, usize), f32)> = Vec::new();
         let mut action: Option<Action> = None;
-        let mut floating: Option<(usize, Rect)> = None;
-        for (i, (w, span)) in order.iter().enumerate() {
-            let target = rect_of(i);
-            if Some(w.id) == dragged {
-                // where it would land: a dashed space with its width
+        let mut lifted: Option<(WidgetCfg, Rect)> = None;
+        for w in &shown {
+            let Some(c) = layout.iter().find(|(i, _)| *i == w.id).map(|x| x.1) else { continue };
+            let target = rect_of(c);
+            if self.setup.home.drag == Some(w.id) {
+                // where it would land, and the widget following the pointer
                 let p = ui.painter();
                 p.rect_filled(target, 16.0, kit::primary().gamma_multiply(0.08));
                 dashed(p, target, kit::primary());
-                let label = match (*span, cols) {
-                    (s, c) if s >= c => "Full width".to_string(),
-                    (1, 3) => "⅓ width".to_string(),
-                    (2, 3) => "⅔ width".to_string(),
-                    _ => "½ width".to_string(),
-                };
-                p.text(target.center(), Align2::CENTER_CENTER, label, crate::fonts::sans_bold_font(13.0), kit::primary());
                 let at = pointer.map_or(target.min, |pp| pp - self.setup.home.grab);
-                floating = Some((i, Rect::from_min_size(at, target.size())));
+                lifted = Some((w.clone(), Rect::from_min_size(at, rect_of(saved.iter().find(|(i, _)| *i == w.id).map_or(c, |x| x.1)).size())));
                 continue;
             }
             // others glide to their new places
             let r = if edit { kit::glide_rect(ui.ctx(), egui::Id::new(("w-pos", w.id)), target, origin, kit::BASE) } else { target };
-            let h = self.draw_widget_at(ui, w, r, *span, cols, edit, false, &mut action);
-            new_heights.push(((w.id, *span), h));
+            self.draw_widget_in(ui, w, r, c, edit, false, &mut action);
         }
-        // the dragged card, last so it's on top, following the pointer
-        if let Some((i, r)) = floating {
-            let (w, span) = order[i].clone();
+        if let Some((w, r)) = lifted {
             ui.painter().add(kit::shadow_tier(3).as_shape(r, 16.0));
-            let h = self.draw_widget_at(ui, &w, r, span, cols, edit, true, &mut action);
-            new_heights.push(((w.id, span), h));
-            if ui.input(|inp| inp.pointer.any_released()) {
-                if let Some((to, s)) = self.setup.home.target {
-                    action = Some(Action::Place { id: w.id, to, span: s });
-                }
-                self.setup.home.drag = None;
-                self.setup.home.target = None;
-            }
+            let c = layout.iter().find(|(i, _)| *i == w.id).map_or(Cell { x: 0, y: 0, w: 1, h: 1 }, |x| x.1);
+            self.draw_widget_in(ui, &w, r, c, edit, true, &mut action);
         }
-        for (k, h) in new_heights {
-            let old = self.setup.home.heights.insert(k, h);
-            if old.map_or(true, |o| (o - h).abs() > 0.5) {
-                ui.ctx().request_repaint();
+        if busy.is_some() && released {
+            if let Some(next) = self.setup.home.preview.take() {
+                action = Some(Action::Layout(next));
             }
+            self.setup.home.drag = None;
+            self.setup.home.resize = None;
         }
-        ui.allocate_rect(Rect::from_min_size(origin, vec2(width, total.max(0.0))), Sense::hover());
+        if busy.is_some() {
+            ui.ctx().request_repaint();
+        }
+        ui.allocate_rect(full, Sense::hover());
         if let Some(a) = action {
-            self.apply_widget_action(a, &order.iter().map(|o| o.0.clone()).collect::<Vec<_>>());
+            self.apply_widget_action(a);
         }
     }
 
-    /// Draw one widget at `r` (top-left and width; it grows to its height),
-    /// with its Customize bar when editing. Returns its height.
-    #[allow(clippy::too_many_arguments)]
-    fn draw_widget_at(&mut self, ui: &mut egui::Ui, w: &WidgetCfg, r: Rect, span: usize, cols: usize, edit: bool, lifted: bool, action: &mut Option<Action>) -> f32 {
-        let Some(d) = def(&w.kind) else { return 0.0 };
-        let locked = d.app.is_some_and(|a| !self.has_app(a));
-        kit::note_card(ui, Rect::NOTHING);
-        let resp = ui.allocate_new_ui(egui::UiBuilder::new().max_rect(Rect::from_min_size(r.min, vec2(r.width(), 4000.0))).layout(egui::Layout::top_down(egui::Align::Min)), |ui| {
-            ui.set_width(r.width());
-            if locked {
-                let (lr, _) = ui.allocate_exact_size(vec2(r.width(), 150.0), Sense::hover());
-                card_bg(ui.painter(), lr, false);
-                ui.painter().text(lr.min + vec2(20.0, 22.0), Align2::LEFT_TOP, format!("{}  {}", d.icon, d.name), crate::fonts::sans_bold_font(15.0), TEXT());
-                if let (Some(a), false) = (d.app, edit) {
-                    self.lock_veil(ui, lr, a, d.name);
-                }
-            } else if let Some(data) = self.draw_widget(ui, w, false) {
-                *action = Some(Action::Data(w.id, data));
+    /// A window too narrow for the grid: the widgets one under another.
+    fn home_widget_stack(&mut self, ui: &mut egui::Ui, all: &[WidgetCfg]) {
+        let mut list: Vec<&WidgetCfg> = all.iter().filter(|w| def(&w.kind).is_some_and(|d| d.app.map_or(true, |a| self.has_app(a)))).collect();
+        list.sort_by_key(|w| w.pos.map_or((0, 0), |p| (p[1], p[0])));
+        if self.setup.home.edit {
+            ui.label(egui::RichText::new("Make the window wider to move and resize widgets.").size(kit::fs(12.5)).color(MUTED()));
+            ui.add_space(8.0);
+        }
+        let mut action = None;
+        for w in list {
+            if let Some(data) = self.draw_widget(ui, w, false) {
+                action = Some(Action::Data(w.id, data));
             }
-        });
-        // the card's own bottom edge (cards add space after themselves)
-        let drawn = resp.response.rect;
-        let h = match kit::last_card_rect(ui) {
-            Some(c) if c.is_positive() && c.min.y >= drawn.min.y - 1.0 && c.max.y <= drawn.max.y + 1.0 => c.max.y - drawn.min.y,
-            _ => drawn.height(),
-        };
+        }
+        if let Some(a) = action {
+            self.apply_widget_action(a);
+        }
+    }
+
+    /// Draw one widget filling `r` (cut off with a fade if it has more to
+    /// show), with its Customize chrome when editing.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_widget_in(&mut self, ui: &mut egui::Ui, w: &WidgetCfg, r: Rect, c: Cell, edit: bool, lifted: bool, action: &mut Option<Action>) {
+        let Some(d) = def(&w.kind) else { return };
+        let locked = d.app.is_some_and(|a| !self.has_app(a));
+        let round = kit::card_rounding();
+        // the box itself, so a widget shorter than it still fills it
+        card_bg(ui.painter(), r, false);
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r).layout(egui::Layout::top_down(egui::Align::Min)));
+        let clip = Rect::from_min_max(r.min - vec2(18.0, 18.0), pos2(r.max.x + 18.0, r.max.y)).intersect(ui.clip_rect());
+        child.set_clip_rect(clip);
+        child.set_width(r.width());
+        kit::set_card_fill(Some(r.height()));
+        if locked {
+            let p = child.painter().clone();
+            p.text(r.min + vec2(20.0, 22.0), Align2::LEFT_TOP, format!("{}  {}", d.icon, d.name), crate::fonts::sans_bold_font(15.0), TEXT());
+            if let (Some(a), false) = (d.app, edit) {
+                self.lock_veil(&mut child, r, a, d.name);
+            }
+        } else if let Some(data) = self.draw_widget(&mut child, w, false) {
+            *action = Some(Action::Data(w.id, data));
+        }
+        kit::set_card_fill(None);
+        // more than fits: fade out at the bottom and close the box neatly
+        let used = child.min_rect();
+        if used.max.y > r.max.y + 1.0 {
+            let p = ui.painter().with_clip_rect(ui.clip_rect());
+            let foot = Rect::from_min_max(pos2(r.min.x, r.max.y - round - 2.0), r.max);
+            p.rect_filled(foot, egui::Rounding { sw: round, se: round, ..Default::default() }, CARD());
+            fade_bottom(&p, Rect::from_min_max(pos2(r.min.x + 1.0, foot.min.y - 34.0), pos2(r.max.x - 1.0, foot.min.y)), CARD());
+            p.rect_stroke(r, round, Stroke::new(1.0f32, LINE()));
+        }
         if edit {
-            let r = Rect::from_min_size(r.min, vec2(r.width(), h));
-            if let Some(a) = self.widget_edit_chrome(ui, r, w, d, span, cols, lifted) {
+            if let Some(a) = self.widget_edit_chrome(ui, r, w, d, c, lifted) {
                 *action = Some(a);
             }
         }
-        h
     }
 
-    /// In Customize: the dashed edge, the bar on top (widths, remove), and
-    /// picking the card up to drag it. Returns what to change.
-    #[allow(clippy::too_many_arguments)]
-    fn widget_edit_chrome(&mut self, ui: &mut egui::Ui, r: Rect, w: &WidgetCfg, d: &WidgetDef, span: usize, cols: usize, lifted: bool) -> Option<Action> {
+    /// In Customize: the dashed edge, the bar on top (name, size, remove),
+    /// picking the card up to move it, and the corner to resize it.
+    fn widget_edit_chrome(&mut self, ui: &mut egui::Ui, r: Rect, w: &WidgetCfg, d: &WidgetDef, c: Cell, lifted: bool) -> Option<Action> {
         let mut out = None;
         // The whole card is the handle (and nothing inside it clicks).
         let body = ui.interact(r, ui.id().with(("w-body", w.id)), Sense::click_and_drag());
         let p = ui.painter().clone();
+        let busy = self.setup.home.drag == Some(w.id) || self.setup.home.resize == Some(w.id);
         p.rect_filled(r, 16.0, theme::blend(kit::PAGE(), CARD(), 0.3).gamma_multiply(if lifted { 0.1 } else { 0.25 }));
-        dashed(&p, r.expand(4.0), if lifted || body.hovered() { kit::primary() } else { kit::CONTROL() });
-        if body.drag_started() {
+        dashed(&p, r.expand(4.0), if busy || body.hovered() { kit::primary() } else { kit::CONTROL() });
+        if body.drag_started() && self.setup.home.resize.is_none() {
             if let Some(pp) = ui.ctx().pointer_interact_pos() {
                 self.setup.home.drag = Some(w.id);
                 self.setup.home.grab = pp - r.min;
@@ -658,52 +824,45 @@ impl App {
         if body.hovered() || body.dragged() {
             ui.ctx().set_cursor_icon(if body.dragged() { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab });
         }
-        // the bar: name, widths, ×
+        // the bar: name, size, ×
         let bar = Rect::from_min_size(pos2(r.min.x + 10.0, r.min.y + 10.0), vec2(r.width() - 20.0, 34.0));
         p.rect_filled(bar, 12.0, CARD_HOVER());
         p.rect_stroke(bar, 12.0, Stroke::new(1.0f32, LINE()));
-        p.with_clip_rect(bar.shrink(2.0)).text(pos2(bar.min.x + 12.0, bar.center().y), Align2::LEFT_CENTER, format!("☰  {}", d.name), crate::fonts::sans_bold_font(12.5), TEXT());
+        let size = format!("{}×{}", c.w, c.h);
+        let sg = p.layout_no_wrap(size, crate::fonts::sans_bold_font(11.5), if busy { kit::primary() } else { MUTED() });
+        let name_room = Rect::from_min_max(bar.min + vec2(2.0, 2.0), pos2(bar.max.x - 46.0 - sg.size().x, bar.max.y - 2.0));
+        p.with_clip_rect(name_room).text(pos2(bar.min.x + 12.0, bar.center().y), Align2::LEFT_CENTER, format!("☰  {}", d.name), crate::fonts::sans_bold_font(12.5), TEXT());
+        p.galley(pos2(bar.max.x - 40.0 - sg.size().x, bar.center().y - sg.size().y / 2.0), sg, MUTED());
         if lifted {
             return None;
         }
-        let mut x = bar.max.x - 6.0;
-        let xr = Rect::from_min_size(pos2(x - 26.0, bar.min.y + 4.0), vec2(26.0, 26.0));
+        let xr = Rect::from_min_size(pos2(bar.max.x - 32.0, bar.min.y + 4.0), vec2(26.0, 26.0));
         if pill_button(ui, xr, "×", false, ("w-x", w.id)).on_hover_text("Remove this widget").clicked() {
             out = Some(Action::Remove(w.id));
         }
-        x = xr.min.x - 8.0;
-        let opts: Vec<(u8, &str)> = match cols {
-            1 => vec![],
-            2 => vec![(1, "½"), (FULL, "Full")],
-            _ => vec![(1, "⅓"), (2, "⅔"), (FULL, "Full")],
-        };
-        for (sp, label) in opts.iter().rev() {
-            let on = span == (*sp as usize).clamp(1, cols);
-            let g = p.layout_no_wrap(label.to_string(), crate::fonts::sans_bold_font(11.5), TEXT());
-            let br = Rect::from_min_size(pos2(x - g.size().x - 18.0, bar.min.y + 5.0), vec2(g.size().x + 18.0, 24.0));
-            if br.min.x < bar.min.x + 40.0 {
-                break;
-            }
-            let resp = ui.interact(br, ui.id().with(("w-span", w.id, *sp)), Sense::click());
-            p.rect_filled(br, 12.0, if on { kit::primary() } else if resp.hovered() { CARD() } else { Color32::TRANSPARENT });
-            p.galley(br.center() - g.size() / 2.0, g, if on { kit::on_primary() } else { MUTED() });
-            if resp.on_hover_text("Width (dragging picks one for you too)").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() && !on {
-                out = Some(Action::Span(w.id, *sp));
-            }
-            x = br.min.x - 4.0;
+        // the corner: drag to resize
+        let corner = Rect::from_min_max(r.max - vec2(26.0, 26.0), r.max);
+        let cresp = ui.interact(corner, ui.id().with(("w-size", w.id)), Sense::drag());
+        let hot = cresp.hovered() || self.setup.home.resize == Some(w.id);
+        let cc = if hot { kit::primary() } else { kit::CONTROL() };
+        for k in 0..3 {
+            let o = 6.0 + k as f32 * 5.0;
+            p.line_segment([r.max - vec2(o, 5.0), r.max - vec2(5.0, o)], Stroke::new(2.0f32, cc));
         }
+        if cresp.hovered() || cresp.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
+        }
+        if cresp.drag_started() {
+            self.setup.home.resize = Some(w.id);
+            self.setup.home.drag = None;
+        }
+        let (mw, mh) = min_size(d);
+        let _ = cresp.on_hover_text(format!("Drag to resize ({mw}×{mh} up to {MAX_SIDE}×{MAX_SIDE})"));
         out
     }
 
-    fn apply_widget_action(&mut self, a: Action, shown: &[WidgetCfg]) {
+    fn apply_widget_action(&mut self, a: Action) {
         let mut all = self.home_widgets();
-        let cols_full = |s: usize| -> u8 {
-            if s >= MAX_COLS {
-                FULL
-            } else {
-                s as u8
-            }
-        };
         match a {
             Action::Remove(id) => all.retain(|w| w.id != id),
             Action::Data(id, data) => {
@@ -711,33 +870,15 @@ impl App {
                     w.data = data;
                 }
             }
-            Action::Span(id, s) => {
-                if let Some(w) = all.iter_mut().find(|w| w.id == id) {
-                    w.span = s;
+            Action::Layout(cells) => {
+                for (id, c) in cells {
+                    if let Some(w) = all.iter_mut().find(|w| w.id == id) {
+                        w.pos = Some(c.save());
+                    }
                 }
-            }
-            Action::Place { id, to, span } => {
-                // `to` is its place among the widgets on show; hidden ones
-                // keep their spots in the full list
-                let Some(from) = all.iter().position(|w| w.id == id) else { return };
-                let mut item = all.remove(from);
-                // a width as wide as the grid means full width (so it stays
-                // full on a wider window)
-                item.span = if span >= self.home_cols_last() { FULL } else { cols_full(span) };
-                let after: Vec<&WidgetCfg> = shown.iter().filter(|w| w.id != id).collect();
-                let at = match after.get(to) {
-                    Some(b) => all.iter().position(|w| w.id == b.id).unwrap_or(all.len()),
-                    None => after.last().and_then(|l| all.iter().position(|w| w.id == l.id)).map_or(all.len(), |p| p + 1),
-                };
-                all.insert(at.min(all.len()), item);
             }
         }
         self.set_home_widgets(all);
-    }
-
-    /// How many columns the grid had last time (for "full width").
-    fn home_cols_last(&self) -> usize {
-        self.setup.home.cols.max(1)
     }
 
     /// Draw one widget's card. `preview`: in the gallery (no settings of
@@ -806,6 +947,11 @@ impl App {
             "cards_pulls" => self.w_cards_pulls(ui),
             "cards_sets" => self.w_cards_sets(ui),
             "cards_missions" => self.w_cards_missions(ui),
+            "gotchi_pet" => self.w_gotchi_pet(ui),
+            "gotchi_needs" => self.w_gotchi_needs(ui),
+            "gotchi_care" => self.w_gotchi_care(ui),
+            "gotchi_pantry" => self.w_gotchi_pantry(ui),
+            "gotchi_box" => self.w_gotchi_box(ui),
             _ => {}
         }
         out
@@ -816,15 +962,32 @@ enum Action {
     Remove(u64),
     /// A widget changed its own settings.
     Data(u64, Vec<String>),
-    Span(u64, u8),
-    /// Put a widget at a place in the order, at a width (in columns).
-    Place { id: u64, to: usize, span: usize },
+    /// Moved or resized: everyone's new place.
+    Layout(Vec<(u64, Cell)>),
+}
+
+/// Every widget's place: its own, or (from before the grid) the first space
+/// that fits it, in order, sized from its old width.
+fn place_all(all: &[WidgetCfg]) -> Vec<(u64, Cell)> {
+    let mut out: Vec<(u64, Cell)> = all.iter().filter_map(|w| w.pos.map(|p| (w.id, Cell::of(p)))).collect();
+    for w in all.iter().filter(|w| w.pos.is_none()) {
+        let (cw, ch) = match w.span {
+            1 => (4, 4),
+            _ => (8, 4),
+        };
+        let c = first_free(&out, cw, ch);
+        out.push((w.id, c));
+    }
+    // back in the widgets' own order
+    all.iter().filter_map(|w| out.iter().find(|(i, _)| *i == w.id).copied()).collect()
 }
 
 /// A placeholder card for a widget with nothing to show yet.
 pub(super) fn empty_card(ui: &mut egui::Ui, icon: &str, title: &str, text: &str) {
     let w = ui.available_width();
-    let (r, _) = ui.allocate_exact_size(vec2(w, 130.0), Sense::hover());
+    // in a Dashboard box: as tall as the box
+    let h = kit::take_card_fill().unwrap_or(130.0).max(100.0);
+    let (r, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
     let p = ui.painter();
     card_bg(p, r, false);
     p.text(r.min + vec2(20.0, 22.0), Align2::LEFT_TOP, format!("{icon}  {title}"), crate::fonts::sans_bold_font(15.0), TEXT());
@@ -889,5 +1052,63 @@ mod tests {
         assert!(default_widgets().is_empty());
         let w: WidgetCfg = serde_json::from_str(r#"{"id":1,"kind":"today","span":9}"#).unwrap();
         assert!(w.data.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod grid_tests {
+    use super::*;
+
+    fn c(x: i32, y: i32, w: i32, h: i32) -> Cell {
+        Cell { x, y, w, h }
+    }
+
+    #[test]
+    fn moving_pushes_down_and_keeps_order() {
+        let mut items = vec![(1, c(0, 0, 2, 2)), (2, c(2, 0, 2, 2)), (3, c(2, 2, 2, 1))];
+        // widget 1 moved onto widget 2's spot
+        items[0].1 = c(2, 0, 2, 2);
+        settle(&mut items, Some(1));
+        assert_eq!(items[0].1, c(2, 0, 2, 2));
+        assert_eq!(items[1].1, c(2, 2, 2, 2));
+        assert_eq!(items[2].1, c(2, 4, 2, 1));
+        // nothing overlaps
+        for i in 0..items.len() {
+            for j in i + 1..items.len() {
+                assert!(!items[i].1.overlaps(items[j].1));
+            }
+        }
+    }
+
+    #[test]
+    fn gaps_stay_and_new_ones_fill_the_first_space() {
+        let mut items = vec![(1, c(0, 3, 2, 2))];
+        settle(&mut items, None);
+        assert_eq!(items[0].1, c(0, 3, 2, 2), "nothing floats up");
+        assert_eq!(first_free(&items, 2, 2), c(0, 0, 2, 2));
+        let full = vec![(1, c(0, 0, COLS, 1))];
+        assert_eq!(first_free(&full, 3, 2), c(0, 1, 3, 2));
+    }
+
+    #[test]
+    fn adding_where_clicked_pushes_down() {
+        let mut items = vec![(1, c(0, 0, 2, 2)), (2, c(2, 1, 2, 2))];
+        items.push((3, c(2, 0, 3, 2)));
+        settle(&mut items, Some(3));
+        assert_eq!(items[2].1, c(2, 0, 3, 2));
+        assert_eq!(items[1].1, c(2, 2, 2, 2));
+        assert_eq!(items[0].1, c(0, 0, 2, 2));
+    }
+
+    #[test]
+    fn old_layouts_get_places_once() {
+        let old: Vec<WidgetCfg> = serde_json::from_str(r#"[{"id":1,"kind":"today","span":9},{"id":2,"kind":"rare","span":1},{"id":3,"kind":"shinies","span":1}]"#).unwrap();
+        let cells = place_all(&old);
+        assert_eq!(cells, vec![(1, c(0, 0, 8, 4)), (2, c(8, 0, 4, 4)), (3, c(0, 4, 4, 4))]);
+        for d in DEFS {
+            let (mw, mh) = min_size(d);
+            let (sw, sh) = start_size(d);
+            assert!(mw <= sw && mh <= sh && sw <= MAX_SIDE && sh <= MAX_SIDE, "{}", d.kind);
+        }
     }
 }

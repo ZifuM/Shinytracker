@@ -467,8 +467,11 @@ impl App {
         kit::icon_chip(&p, ic, app_icon(a), col, false);
         let mut y = ic.max.y + 10.0;
         let ng = p.text(pos2(rect.min.x + 14.0, y), Align2::LEFT_TOP, m.name, crate::fonts::sans_bold_font(14.5), TEXT());
-        if m.beta {
-            tag(&p, pos2(ng.max.x + 8.0, y + 1.0), "BETA", kit::C_GOLD);
+        let mut tx = ng.max.x + 8.0;
+        for (on, t, c) in [(m.beta, "BETA", kit::C_GOLD), (m.overlay, "OVERLAY", OVERLAY_COL)] {
+            if on {
+                tx = tag(&p, pos2(tx, y + 1.0), t, c).max.x + 5.0;
+            }
         }
         y += 24.0;
         let g = p.layout(m.tagline.to_string(), crate::fonts::sans_font(12.0), MUTED(), w - 28.0);
@@ -575,6 +578,7 @@ impl App {
             .into_iter()
             .chain(m.core.then(|| ("CORE".to_string(), kit::C_BLUE)))
             .chain(m.beta.then(|| ("BETA".to_string(), kit::C_GOLD)))
+            .chain(m.overlay.then(|| ("OVERLAY".to_string(), OVERLAY_COL)))
         {
             let r = tag(&p, pos2(tx, rect.center().y - 50.0), &t, c);
             tx = r.max.x + 6.0;
@@ -797,6 +801,9 @@ pub(super) fn card_bg(p: &egui::Painter, rect: Rect, hov: bool) {
     p.rect_stroke(rect, 16.0, Stroke::new(1.0f32, if hov { kit::CONTROL() } else { LINE() }));
 }
 
+/// The OVERLAY tag's colour (apps that put something on top of the game).
+pub(super) const OVERLAY_COL: Color32 = Color32::from_rgb(110, 196, 255);
+
 /// A small coloured label (CATEGORY, BETA…). Returns its rect.
 pub(super) fn tag(p: &egui::Painter, at: egui::Pos2, text: &str, col: Color32) -> Rect {
     let g = p.layout_no_wrap(text.to_string(), crate::fonts::sans_bold_font(10.5), col);
@@ -912,6 +919,9 @@ fn local_shot(name: &str) -> Option<&'static [u8]> {
         "cards_open" => include_bytes!("../../store/cards_open.png"),
         "cards_missions" => include_bytes!("../../store/cards_missions.png"),
         "calc_res" => include_bytes!("../../store/calc_res.png"),
+        "gotchi" => include_bytes!("../../store/gotchi.png"),
+        "gotchi_play" => include_bytes!("../../store/gotchi_play.png"),
+        "gotchi_frames" => include_bytes!("../../store/gotchi_frames.png"),
         "info" => include_bytes!("../../store/info.png"),
         "info_adv" => include_bytes!("../../store/info_adv.png"),
         "map" => include_bytes!("../../store/map.png"),

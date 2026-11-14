@@ -61,6 +61,7 @@ fn kind_label(k: Kind2) -> &'static str {
         Kind2::Title => "Title",
         Kind2::Style(s) if s.live() => "Animated hunt image",
         Kind2::Style(_) => "Hunt image",
+        Kind2::Colour(_) => "Pokégotchi colour",
     }
 }
 
@@ -141,6 +142,15 @@ impl App {
         }
     }
 
+    /// Whether a Pokégotchi colour can be used (Pearl always; the others
+    /// once claimed from the battle pass).
+    pub(super) fn tint_owned(&self, t: crate::gotchi::Tint) -> bool {
+        match pass::tint_reward(t) {
+            Some(r) => self.owns_reward(r.id),
+            None => true,
+        }
+    }
+
     fn claim(&mut self, r: &Reward) {
         if !self.cfg.pass_claimed.iter().any(|c| c == r.id) {
             self.cfg.pass_claimed.push(r.id.to_string());
@@ -174,6 +184,15 @@ impl App {
                 changed = true;
             }
         }
+        // a Pokégotchi colour that isn't claimed goes back to Sinnoh Pearl
+        if let Some(t) = self.setup.gotchi.file.as_ref().map(|f| f.tint) {
+            if !self.tint_owned(t) {
+                if let Some(f) = self.setup.gotchi.file.as_mut() {
+                    f.tint = crate::gotchi::Tint::Pink;
+                }
+                self.setup.gotchi.touch();
+            }
+        }
         if changed {
             self.dirty = true;
         }
@@ -186,6 +205,17 @@ impl App {
             Kind2::Frame => self.cfg.frame = if self.cfg.frame == r.id { String::new() } else { r.id.to_string() },
             Kind2::Title => self.cfg.title_choice = if self.cfg.title_choice == r.name { String::new() } else { r.name.to_string() },
             Kind2::Style(_) => return,
+            Kind2::Colour(t) => {
+                // put it on your Pokégotchi (the Sinnoh frame, in this colour)
+                if self.has_app(crate::apps::AppId::Gotchi) {
+                    let f = self.setup.gotchi.file();
+                    f.tint = t;
+                    f.frame = crate::gotchi::Frame::Pearl;
+                    super::gotchi_app::set_tint(t);
+                    self.setup.gotchi.touch();
+                }
+                return;
+            }
         }
         self.dirty = true;
     }
@@ -196,6 +226,10 @@ impl App {
             Kind2::Frame => self.cfg.frame == r.id,
             Kind2::Title => self.cfg.title_choice == r.name,
             Kind2::Style(_) => false,
+            Kind2::Colour(t) => {
+                self.has_app(crate::apps::AppId::Gotchi)
+                    && self.setup.gotchi.file.as_ref().is_some_and(|f| f.tint == t && f.frame == crate::gotchi::Frame::Pearl)
+            }
         }
     }
 
@@ -342,6 +376,16 @@ impl App {
                     p.galley(br.min + vec2(5.0, 3.0), g, Color32::WHITE);
                 }
             }
+            Kind2::Colour(t) => {
+                // the device in that colour (drawn in it just for this)
+                let now = self.setup.gotchi.file.as_ref().map(|f| f.tint).unwrap_or_default();
+                super::gotchi_app::set_tint(t);
+                let dh = r.height() - 10.0;
+                let dr = Rect::from_center_size(r.center(), vec2(dh * 236.0 / 290.0, dh));
+                let time = ctx.input(|i| i.time) as f32;
+                super::gotchi_app::paint_device(p, dr, crate::gotchi::Frame::Pearl, time, None, None, false);
+                super::gotchi_app::set_tint(now);
+            }
         }
         if state == State::Locked {
             p.rect_filled(r, 12.0, Color32::from_black_alpha(110));
@@ -363,17 +407,27 @@ impl App {
             }
             // an image style isn't worn: once claimed it's simply one of the
             // looks in the share image style picker
+            State::Claimed if matches!(rw.kind, Kind2::Colour(_)) && !self.has_app(crate::apps::AppId::Gotchi) => {
+                let b = egui::Button::new(RichText::new("✔ Waiting in Pokégotchi").size(12.0).color(theme::blend(TEXT(), GREEN, 0.6))).fill(theme::blend(CARD(), GREEN, 0.14)).min_size(vec2(w, 28.0));
+                ui.add_enabled(false, b).on_disabled_hover_text("Get Pokégotchi in the App Store to use it");
+            }
             State::Claimed if matches!(rw.kind, Kind2::Style(_)) => {
                 let b = egui::Button::new(RichText::new("✔ In your image styles").size(12.0).color(theme::blend(TEXT(), GREEN, 0.6))).fill(theme::blend(CARD(), GREEN, 0.14)).min_size(vec2(w, 28.0));
                 ui.add_enabled(false, b).on_disabled_hover_text("Pick it in Share image › Style for any hunt");
             }
             State::Claimed => {
                 let on = self.equipped(rw);
-                let (l, tip) = if on { ("✔ Wearing", "Click to take it off") } else { ("Wear", "Show it on your profile and share images") };
+                let colour = matches!(rw.kind, Kind2::Colour(_));
+                let (l, tip) = match (on, colour) {
+                    (true, true) => ("✔ On your Pokégotchi", "Your Pokégotchi is in this colour"),
+                    (false, true) => ("Use", "Put your Pokégotchi in this colour"),
+                    (true, false) => ("✔ Wearing", "Click to take it off"),
+                    (false, false) => ("Wear", "Show it on your profile and share images"),
+                };
                 let b = egui::Button::new(RichText::new(l).size(12.5).color(if on { Color32::WHITE } else { TEXT() }))
                     .fill(if on { theme::blend(CARD(), GREEN, 0.55) } else { kit::btn_fill() })
                     .min_size(vec2(w, 28.0));
-                if ui.add(b).on_hover_text(tip).clicked() {
+                if ui.add(b).on_hover_text(tip).clicked() && !(on && colour) {
                     self.equip(rw);
                 }
             }
@@ -658,7 +712,7 @@ impl App {
         let label = if tier >= pass::TIERS { "Every tier reached!".to_string() } else { format!("{} / {} XP to tier {}", theme::thousands(into), theme::thousands(pass::TIER_XP), tier + 1) };
         p.text(pos2(bx, r.min.y + 86.0), Align2::LEFT_CENTER, label, crate::fonts::sans_bold_font(12.0), TEXT());
         p.text(pos2(bar.max.x, r.min.y + 86.0), Align2::RIGHT_CENTER, format!("{} / {} season XP", theme::thousands(xp), theme::thousands(pass::SEASON_XP)), crate::fonts::sans_font(12.0), MUTED());
-        let ready = season.rewards.iter().filter(|rw| self.reward_state(rw, tier) == State::Ready).count();
+        let ready = season.all().filter(|rw| self.reward_state(rw, tier) == State::Ready).count();
         if ready > 0 {
             let t = format!("🎁  {ready} reward{} to claim", if ready == 1 { "" } else { "s" });
             let g = p.layout_no_wrap(t, crate::fonts::sans_bold_font(12.0), Color32::BLACK);
@@ -734,8 +788,28 @@ impl App {
         egui::ScrollArea::horizontal().id_salt("pass-track").show(ui, |ui| {
             ui.horizontal_top(|ui| {
                 ui.spacing_mut().item_spacing.x = 10.0;
-                for rw in season.rewards.iter() {
-                    ui.vertical(|ui| self.reward_tile(ui, rw, tier, 168.0, 110.0));
+                for t in 1..=pass::TIERS {
+                    let list: Vec<&Reward> = season.at(t).collect();
+                    if list.len() > 1 {
+                        // a milestone tier with a second reward: both together
+                        egui::Frame::none()
+                            .fill(theme::blend(CARD(), GOLD, 0.05))
+                            .stroke(Stroke::new(1.0f32, theme::blend(LINE(), GOLD, 0.35)))
+                            .rounding(18.0)
+                            .inner_margin(egui::Margin::same(5.0))
+                            .show(ui, |ui| {
+                                ui.horizontal_top(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 6.0;
+                                    for rw in list {
+                                        ui.vertical(|ui| self.reward_tile(ui, rw, tier, 168.0, 100.0));
+                                    }
+                                });
+                            });
+                    } else {
+                        for rw in list {
+                            ui.vertical(|ui| self.reward_tile(ui, rw, tier, 168.0, 110.0));
+                        }
+                    }
                 }
             });
             ui.add_space(6.0);
@@ -815,6 +889,26 @@ impl App {
                                 ui.spacing_mut().item_spacing.x = gap;
                                 for rw in row {
                                     ui.vertical(|ui| app.reward_tile(ui, rw, tier, w, 84.0));
+                                }
+                            });
+                            ui.add_space(gap);
+                        }
+                    });
+                    ui.add_space(10.0);
+                }
+                let colours: Vec<Reward> = season.extras.iter().filter(|r| matches!(r.kind, Kind2::Colour(_))).copied().collect();
+                if !colours.is_empty() {
+                    kit::card(ui, |ui| {
+                        ui.label(caps("POKÉGOTCHI COLOURS"));
+                        ui.add_space(6.0);
+                        let gap = 10.0;
+                        let cols = 4usize;
+                        let w = ((ui.available_width() - gap * (cols as f32 - 1.0)) / cols as f32).floor();
+                        for row in colours.chunks(cols) {
+                            ui.horizontal_top(|ui| {
+                                ui.spacing_mut().item_spacing.x = gap;
+                                for rw in row {
+                                    ui.vertical(|ui| app.reward_tile(ui, rw, tier, w, 110.0));
                                 }
                             });
                             ui.add_space(gap);

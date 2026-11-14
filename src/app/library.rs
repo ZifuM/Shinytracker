@@ -301,8 +301,11 @@ impl App {
                 let cy = r.center().y;
                 kit::icon_chip(&p, Rect::from_center_size(pos2(r.min.x + 26.0, cy), vec2(30.0, 30.0)), app_icon(a), app_col(a), false);
                 let g = p.text(pos2(r.min.x + 50.0, cy), Align2::LEFT_CENTER, a.name(), crate::fonts::sans_bold_font(13.5), TEXT());
-                if a.meta().beta {
-                    super::store::tag(&p, pos2(g.max.x + 8.0, cy - 10.0), "BETA", kit::C_GOLD);
+                let mut tx = g.max.x + 8.0;
+                for (on, t, c) in [(a.meta().beta, "BETA", kit::C_GOLD), (a.meta().overlay, "OVERLAY", super::store::OVERLAY_COL)] {
+                    if on {
+                        tx = super::store::tag(&p, pos2(tx, cy - 10.0), t, c).max.x + 5.0;
+                    }
                 }
                 p.text(pos2(r.min.x + xs[1], cy), Align2::LEFT_CENTER, a.meta().cat.name(), crate::fonts::sans_font(12.5), MUTED());
                 let is_open = self.cfg.apps.is_open(a);
