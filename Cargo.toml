@@ -1,6 +1,6 @@
 [package]
 name = "shiny-tracker"
-version = "0.7.2-a"
+version = "0.7.2-1"
 edition = "2021"
 description = "Always-on-top shiny hunting counter that reads foe name plates from the screen"
 
