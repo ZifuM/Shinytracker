@@ -62,6 +62,8 @@ fn kind_label(k: Kind2) -> &'static str {
         Kind2::Style(s) if s.live() => "Animated hunt image",
         Kind2::Style(_) => "Hunt image",
         Kind2::Colour(_) => "Pokégotchi colour",
+        Kind2::Packs(1) => "Card Collector booster",
+        Kind2::Packs(_) => "Card Collector boosters",
     }
 }
 
@@ -156,6 +158,16 @@ impl App {
             self.cfg.pass_claimed.push(r.id.to_string());
             self.dirty = true;
         }
+        // booster packs go straight into the Card Collector's save (once per
+        // reward, even if the claim is somehow made twice), and wait there
+        // if the Card Collector isn't installed yet
+        if let Kind2::Packs(n) = r.kind {
+            if self.setup.cards.file().pass_gift(r.id, n) {
+                self.setup.cards.pack_at = Some(std::time::Instant::now());
+                self.setup.cards.touch();
+                self.setup.cards.save_tick(true);
+            }
+        }
     }
 
     /// Take off anything worn that isn't really claimed (a plate, a frame, a
@@ -204,7 +216,7 @@ impl App {
             Kind2::Plate => self.cfg.plate = if self.cfg.plate == r.id { String::new() } else { r.id.to_string() },
             Kind2::Frame => self.cfg.frame = if self.cfg.frame == r.id { String::new() } else { r.id.to_string() },
             Kind2::Title => self.cfg.title_choice = if self.cfg.title_choice == r.name { String::new() } else { r.name.to_string() },
-            Kind2::Style(_) => return,
+            Kind2::Style(_) | Kind2::Packs(_) => return,
             Kind2::Colour(t) => {
                 // put it on your Pokégotchi (the Sinnoh frame, in this colour)
                 if self.has_app(crate::apps::AppId::Gotchi) {
@@ -225,7 +237,7 @@ impl App {
             Kind2::Plate => self.cfg.plate == r.id,
             Kind2::Frame => self.cfg.frame == r.id,
             Kind2::Title => self.cfg.title_choice == r.name,
-            Kind2::Style(_) => false,
+            Kind2::Style(_) | Kind2::Packs(_) => false,
             Kind2::Colour(t) => {
                 self.has_app(crate::apps::AppId::Gotchi)
                     && self.setup.gotchi.file.as_ref().is_some_and(|f| f.tint == t && f.frame == crate::gotchi::Frame::Pearl)
@@ -386,6 +398,24 @@ impl App {
                 super::gotchi_app::paint_device(p, dr, crate::gotchi::Frame::Pearl, time, None, None, false);
                 super::gotchi_app::set_tint(now);
             }
+            Kind2::Packs(n) => {
+                // a booster (Base Set or Base Set 2, by tier), with "×n" for more than one
+                let set = &crate::cards::SETS[rw.tier as usize % crate::cards::SETS.len()];
+                let bh = r.height() - 12.0;
+                let br = Rect::from_center_size(r.center(), vec2(bh * 170.0 / 295.0, bh));
+                p.add(kit::shadow_tier(2).as_shape(br, 4.0));
+                match self.setup.cards.pics.get(ctx, &format!("pack:{}", set.packs[rw.tier as usize % set.packs.len()]), true) {
+                    Some(t) => super::store::paint_image(p, &t, br, egui::Rounding::same(3.0), 1.0, false),
+                    None => self.draw_booster_painted(p, br, set),
+                }
+                if n > 1 {
+                    let f = crate::fonts::sans_bold_font(12.0);
+                    let g = p.layout_no_wrap(format!("×{n}"), f, Color32::WHITE);
+                    let tr = Rect::from_min_size(pos2(br.max.x - g.size().x * 0.5 - 6.0, br.max.y - g.size().y - 10.0), g.size() + vec2(12.0, 6.0));
+                    p.rect_filled(tr, tr.height() / 2.0, GOLD);
+                    p.galley(tr.min + vec2(6.0, 3.0), g, Color32::WHITE);
+                }
+            }
         }
         if state == State::Locked {
             p.rect_filled(r, 12.0, Color32::from_black_alpha(110));
@@ -410,6 +440,17 @@ impl App {
             State::Claimed if matches!(rw.kind, Kind2::Colour(_)) && !self.has_app(crate::apps::AppId::Gotchi) => {
                 let b = egui::Button::new(RichText::new("✔ Waiting in Pokégotchi").size(12.0).color(theme::blend(TEXT(), GREEN, 0.6))).fill(theme::blend(CARD(), GREEN, 0.14)).min_size(vec2(w, 28.0));
                 ui.add_enabled(false, b).on_disabled_hover_text("Get Pokégotchi in the App Store to use it");
+            }
+            State::Claimed if matches!(rw.kind, Kind2::Packs(_)) && !self.has_app(crate::apps::AppId::Cards) => {
+                let b = egui::Button::new(RichText::new("✔ Saved for later").size(12.0).color(theme::blend(TEXT(), GREEN, 0.6))).fill(theme::blend(CARD(), GREEN, 0.14)).min_size(vec2(w, 28.0));
+                ui.add_enabled(false, b).on_disabled_hover_text("It's waiting in the Card Collector: get it from the App Store to open it");
+            }
+            State::Claimed if matches!(rw.kind, Kind2::Packs(_)) => {
+                let b = egui::Button::new(RichText::new("✔ Open packs").size(12.0).color(theme::blend(TEXT(), GREEN, 0.6))).fill(theme::blend(CARD(), GREEN, 0.14)).min_size(vec2(w, 28.0));
+                if ui.add(b).on_hover_text("It's with your packs in the Card Collector").clicked() {
+                    self.setup.cards.view = super::cards_app::View::Packs;
+                    self.open_app(crate::apps::AppId::Cards);
+                }
             }
             State::Claimed if matches!(rw.kind, Kind2::Style(_)) => {
                 let b = egui::Button::new(RichText::new("✔ In your image styles").size(12.0).color(theme::blend(TEXT(), GREEN, 0.6))).fill(theme::blend(CARD(), GREEN, 0.14)).min_size(vec2(w, 28.0));
@@ -905,6 +946,26 @@ impl App {
                         let cols = 4usize;
                         let w = ((ui.available_width() - gap * (cols as f32 - 1.0)) / cols as f32).floor();
                         for row in colours.chunks(cols) {
+                            ui.horizontal_top(|ui| {
+                                ui.spacing_mut().item_spacing.x = gap;
+                                for rw in row {
+                                    ui.vertical(|ui| app.reward_tile(ui, rw, tier, w, 110.0));
+                                }
+                            });
+                            ui.add_space(gap);
+                        }
+                    });
+                    ui.add_space(10.0);
+                }
+                let packs: Vec<Reward> = season.extras.iter().filter(|r| matches!(r.kind, Kind2::Packs(_))).copied().collect();
+                if !packs.is_empty() {
+                    kit::card(ui, |ui| {
+                        ui.label(caps("BOOSTER PACKS"));
+                        ui.add_space(6.0);
+                        let gap = 10.0;
+                        let cols = 3usize;
+                        let w = ((ui.available_width() - gap * (cols as f32 - 1.0)) / cols as f32).floor();
+                        for row in packs.chunks(cols) {
                             ui.horizontal_top(|ui| {
                                 ui.spacing_mut().item_spacing.x = gap;
                                 for rw in row {

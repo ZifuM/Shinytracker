@@ -70,6 +70,7 @@ impl App {
         let has_cards = self.has_app(AppId::Cards);
         let has_gotchi = self.has_app(AppId::Gotchi);
         let mut shiny = self.cfg.ov_pick_shiny;
+        let mut toasts_on = self.cfg.all_toasts;
         let mut bar = if has_cards { Some(self.setup.cards.file().bar.clone()) } else { None };
         let mut gov = if has_gotchi { Some(self.setup.gotchi.file().overlay.clone()) } else { None };
         let pet = has_gotchi && self.setup.gotchi.file().partner().is_some();
@@ -262,6 +263,19 @@ impl App {
             if pill_button(ui, cb, "Cancel", false, "ov-cancel").clicked() {
                 close = true;
             }
+            // Master switch for every pop-up, just left of Cancel.
+            let tr = Rect::from_min_max(pos2(cb.min.x - 150.0, fy - 21.0), pos2(cb.min.x - 16.0, fy + 21.0));
+            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(tr).layout(egui::Layout::right_to_left(egui::Align::Center)), |ui| {
+                kit::toggle(ui, &mut toasts_on).on_hover_text(
+                    "Every pop-up: achievement, level-up and goal toasts, notices on the overlay, and the app's little messages. On by default.",
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new(if toasts_on { "Toasts on" } else { "Toasts off" })
+                        .font(crate::fonts::sans_bold_font(12.5))
+                        .color(if toasts_on { TEXT() } else { MUTED() }),
+                );
+            });
             if picked > 0 {
                 if pill_button(ui, gb, "▶  Go", true, "ov-go").clicked() {
                     go = true;
@@ -275,6 +289,16 @@ impl App {
             }
         });
         // keep the picks
+        if toasts_on != self.cfg.all_toasts {
+            self.cfg.all_toasts = toasts_on;
+            self.dirty = true;
+            if !toasts_on {
+                // anything already up goes away too
+                self.toasts.clear();
+                self.notices.retain(|n| matches!(n.action, Some((_, super::notices::NoticeAction::Preview))));
+                self.setup.store.toast = None;
+            }
+        }
         if shiny != self.cfg.ov_pick_shiny {
             self.cfg.ov_pick_shiny = shiny;
             self.dirty = true;

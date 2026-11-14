@@ -14,7 +14,7 @@
 
 use eframe::egui::{Color32, ColorImage};
 use serde::Deserialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
@@ -26,7 +26,7 @@ pub const PX: usize = 8;
 /// Pixels a tile in the zoomed-out overview picture.
 pub const OVERVIEW_PX: usize = 2;
 
-const ZONES_JSON: &str = include_str!("zones.json");
+pub const ZONES_JSON: &str = include_str!("zones.json");
 
 // ───────────────────────────── zone table ─────────────────────────────
 
@@ -999,6 +999,7 @@ pub struct Rare {
 }
 
 /// Days since 1970-01-01 for a calendar date.
+#[cfg(test)]
 fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
     let era = if y >= 0 { y } else { y - 399 } / 400;
@@ -1028,93 +1029,25 @@ pub fn next_reset(now_unix: i64) -> i64 {
     server_midnight((now_unix + off).div_euclid(86400) + 1)
 }
 
-/// "session-20261111-110446.log" → unix time as if that local time were UTC.
-fn session_local(name: &str) -> Option<i64> {
-    let s = name.strip_prefix("session-")?.strip_suffix(".log")?;
-    let (d, t) = s.split_once('-')?;
-    let n = |a: &str| a.parse::<i64>().ok();
-    let (y, mo, da) = (n(&d[0..4])?, n(&d[4..6])?, n(&d[6..8])?);
-    let (h, mi, se) = (n(&t[0..2])?, n(&t[2..4])?, n(&t[4..6])?);
-    Some(days_from_civil(y, mo, da) * 86400 + h * 3600 + mi * 60 + se)
-}
 
 fn unix(t: std::time::SystemTime) -> Option<i64> {
     t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs() as i64)
 }
 
-/// Rare grass seen since the last daily reset, from the game's logs.
-/// Only spots outdoors (in the outdoor map) are returned.
-pub fn read_rare_today(dir: &Path, map: &GameMap) -> Vec<Rare> {
-    let logs = dir.join("logs");
-    let Ok(rd) = std::fs::read_dir(&logs) else { return Vec::new() };
+/// Today's rare grass: every patch, worked out with the game's own formula
+/// for the date on the player's clock (no game files read). `_dir` and
+/// `_map` are kept for the callers.
+pub fn read_rare_today(_dir: &Path, _map: &GameMap) -> Vec<Rare> {
+    rare_today()
+}
+
+/// Today's rare grass without the map (see `read_rare_today`).
+pub fn rare_today() -> Vec<Rare> {
     let now = unix(std::time::SystemTime::now()).unwrap_or(0);
-    let reset = last_reset(now);
-    let mut files: Vec<(String, PathBuf, i64)> = rd
-        .flatten()
-        .filter_map(|e| {
-            let name = e.file_name().to_string_lossy().to_string();
-            let modified = e.metadata().ok().and_then(|m| m.modified().ok()).and_then(unix)?;
-            (name.starts_with("session-") && name.ends_with(".log") && modified >= reset).then(|| (name, e.path(), modified))
-        })
-        .collect();
-    files.sort();
-    // The player's UTC offset: a log is created when its name's local time was now.
-    let offset = files
-        .iter()
-        .rev()
-        .find_map(|(name, path, _)| {
-            let local = session_local(name)?;
-            let created = std::fs::metadata(path).ok()?.created().ok().and_then(unix)?;
-            let off = local - created;
-            Some(((off as f64 / 900.0).round() as i64) * 900)
-        })
-        .unwrap_or(0);
-    let mut out: Vec<Rare> = Vec::new();
-    for (name, path, _) in &files {
-        let Some(start_local) = session_local(name) else { continue };
-        let Ok(text) = std::fs::read_to_string(path) else { continue };
-        let day0 = start_local.div_euclid(86400) * 86400;
-        let mut prev = start_local - day0;
-        let mut days = 0i64;
-        for line in text.lines() {
-            if !line.contains(" RARE ") {
-                continue;
-            }
-            let Some(secs) = line.get(0..8).and_then(|t| {
-                let p: Vec<i64> = t.split(':').filter_map(|v| v.parse().ok()).collect();
-                (p.len() == 3).then(|| p[0] * 3600 + p[1] * 60 + p[2])
-            }) else {
-                continue;
-            };
-            if secs + 3600 < prev {
-                days += 1;
-            }
-            prev = secs;
-            let when = day0 + days * 86400 + secs - offset;
-            if when < reset {
-                continue;
-            }
-            if let Some(r) = parse_rare(line) {
-                out.push(r);
-            }
-        }
-    }
-    // Today's spots shared by the dev (bundled with the app, or the newer
-    // copy on GitHub), so nobody has to find every patch themselves.
-    for (x, y, sp) in shared_rare(reset) {
-        out.push(Rare {
-            matrix: 0,
-            x,
-            y,
-            species: Some(sp),
-            tiles: 0,
-        });
-    }
-    let out = map.place_rare(out);
-    // Only spots where a Pokémon was actually met count: the "N rare grass
-    // tiles around x,y" scan lines also fire where there's no rare grass.
-    let mut seen = std::collections::HashSet::new();
-    out.into_iter().filter(|r| r.species.is_some() && seen.insert((r.matrix, r.x, r.y, r.species))).collect()
+    crate::rare_calc::spots_on(crate::rare_calc::today(now), crate::rare_calc::modern())
+        .into_iter()
+        .map(|s| Rare { matrix: s.tile.matrix, x: s.tile.x as usize, y: s.tile.y as usize, species: Some(s.species as u32), tiles: 1 })
+        .collect()
 }
 
 impl GameMap {
@@ -1130,146 +1063,13 @@ impl GameMap {
         }
     }
 
-    /// Tall grass (or snowy grass) at a tile of a map.
-    fn grassy(&self, matrix: usize, x: usize, y: usize) -> bool {
-        matches!(self.ground(matrix, x, y), Ground::Grass | Ground::Snow)
-    }
 
-    /// Work out which map each rare grass spot is on: outdoors when
-    /// there's grass there, else the side area (lake, forest…) that has
-    /// grass on that tile, preferring places other spots are already on.
-    /// Spots on no map at all are dropped.
-    fn place_rare(&self, spots: Vec<Rare>) -> Vec<Rare> {
-        let mut out: Vec<Rare> = Vec::new();
-        let mut open: Vec<(Rare, Vec<u16>)> = Vec::new();
-        for mut r in spots {
-            let land = self.world().land_at(r.x / CHUNK, r.y / CHUNK).is_some();
-            if r.species.is_none() || (land && self.grassy(0, r.x, r.y)) {
-                if land {
-                    r.matrix = 0;
-                    out.push(r);
-                }
-                continue;
-            }
-            let mut seen = HashSet::new();
-            let cands: Vec<u16> = self
-                .overlays
-                .iter()
-                .filter(|o| seen.insert(o.matrix) && self.grassy(o.matrix as usize, r.x, r.y))
-                .map(|o| o.matrix)
-                .collect();
-            match cands.len() {
-                0 if land => out.push(r),
-                0 => {}
-                1 => {
-                    r.matrix = cands[0];
-                    out.push(r);
-                }
-                _ => open.push((r, cands)),
-            }
-        }
-        // Several maps fit: take the one whose place has the most other spots.
-        let group = |m: u16| self.overlays.iter().find(|o| o.matrix == m).map(|o| o.group.clone()).unwrap_or_default();
-        let mut count: HashMap<String, usize> = HashMap::new();
-        for r in &out {
-            if r.matrix != 0 {
-                *count.entry(group(r.matrix)).or_default() += 1;
-            }
-        }
-        for (mut r, cands) in open {
-            let best = cands
-                .iter()
-                .copied()
-                .max_by_key(|m| (count.get(&group(*m)).copied().unwrap_or(0), std::cmp::Reverse(*m)))
-                .unwrap_or(cands[0]);
-            r.matrix = best;
-            out.push(r);
-        }
-        out
-    }
 }
 
-/// Rare grass shipped with this version (for the day it was made).
-const SHARED_RARE: &str = include_str!("rare_today.json");
-/// The latest shared list, updated on GitHub without a new release.
-const SHARED_RARE_URL: &str = "https://raw.githubusercontent.com/ZifuM/Shinytracker/main/data/rare-today.json";
 
-#[derive(Deserialize)]
-struct SharedRare {
-    reset: i64,
-    spots: Vec<(usize, usize, u32)>,
-}
 
-/// Shared rare grass for the day that started at `reset` (empty when the
-/// shared lists are for another day). GitHub is asked at most every 20 minutes.
-fn shared_rare(reset: i64) -> Vec<(usize, usize, u32)> {
-    use std::sync::Mutex;
-    use std::time::{Duration, Instant};
-    static REMOTE: Mutex<Option<(Instant, Option<SharedRare>)>> = Mutex::new(None);
-    let mut out = Vec::new();
-    if let Ok(b) = serde_json::from_str::<SharedRare>(SHARED_RARE) {
-        if b.reset == reset {
-            out.extend(b.spots);
-        }
-    }
-    let Ok(mut g) = REMOTE.lock() else { return out };
-    let stale = g.as_ref().map_or(true, |(t, _)| t.elapsed() > Duration::from_secs(20 * 60));
-    if stale {
-        // Fetch on its own thread (this one also loads the map pictures);
-        // the result is used from the next look onwards.
-        let keep = g.take().and_then(|(_, r)| r);
-        *g = Some((Instant::now(), keep));
-        std::thread::spawn(|| {
-            if let Some(got) = crate::sprites::fetch(SHARED_RARE_URL).ok().and_then(|b| serde_json::from_slice::<SharedRare>(&b).ok()) {
-                if let Ok(mut g) = REMOTE.lock() {
-                    *g = Some((Instant::now(), Some(got)));
-                }
-            }
-        });
-    }
-    if let Some((_, Some(r))) = g.as_ref() {
-        if r.reset == reset {
-            out.extend(r.spots.iter().copied());
-        }
-    }
-    out
-}
 
-fn nums(s: &str) -> Vec<u64> {
-    s.split(|c: char| !c.is_ascii_digit()).filter(|p| !p.is_empty()).filter_map(|p| p.parse().ok()).collect()
-}
 
-/// "RARE 5 rare grass tiles around 120,840 on 11-11-2026" or
-/// "RARE rare grass at 121,842: species 371 from 6 choices (route level 30)".
-fn parse_rare(line: &str) -> Option<Rare> {
-    if let Some(i) = line.find("rare grass tiles around ") {
-        let head = nums(&line[..i]);
-        let n = *head.last()? as u32;
-        let rest = &line[i + 24..];
-        let xy = nums(rest.split(" on ").next()?);
-        return Some(Rare {
-            matrix: 0,
-            x: *xy.first()? as usize,
-            y: *xy.get(1)? as usize,
-            species: None,
-            tiles: n,
-        });
-    }
-    if let Some(i) = line.find("rare grass at ") {
-        let rest = &line[i + 14..];
-        let (xy, sp) = rest.split_once(": species ")?;
-        let xy = nums(xy);
-        let species = *nums(sp).first()? as u32;
-        return Some(Rare {
-            matrix: 0,
-            x: *xy.first()? as usize,
-            y: *xy.get(1)? as usize,
-            species: Some(species),
-            tiles: 1,
-        });
-    }
-    None
-}
 
 #[cfg(test)]
 mod tests {
@@ -1291,16 +1091,6 @@ mod tests {
         // the day before it ends: next midnight is still CEST
         let t = days_from_civil(2026, 10, 24) * 86400 + 12 * 3600;
         assert_eq!(next_reset(t), days_from_civil(2026, 10, 24) * 86400 + 22 * 3600);
-    }
-
-    #[test]
-    fn parses_rare_lines() {
-        let a = parse_rare("10:12:01 INFO RARE 5 rare grass tiles around 120,840 on 11-11-2026").unwrap();
-        assert_eq!((a.x, a.y, a.species, a.tiles), (120, 840, None, 5));
-        let b = parse_rare("10:12:09 INFO RARE rare grass at 121,842: species 371 from 6 choices (route level 30)").unwrap();
-        assert_eq!((b.x, b.y, b.species), (121, 842, Some(371)));
-        assert!(parse_rare("10:12:09 INFO RARE sweet scent: evolve roll 1 of 4, species 371 becomes 372").is_none());
-        assert_eq!(session_local("session-19700102-000001.log"), Some(86401));
     }
 
     #[test]

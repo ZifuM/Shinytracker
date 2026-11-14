@@ -20,6 +20,12 @@ mod engine;
 mod fonts;
 mod gamemap;
 mod gamelog;
+mod bingo;
+mod rare_calc;
+mod rare_log;
+mod replay;
+#[cfg(all(windows, feature = "replay-rec"))]
+mod replay_win;
 mod gotchi;
 mod goals;
 mod hotkeys;

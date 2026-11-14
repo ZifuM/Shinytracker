@@ -152,8 +152,17 @@ impl Season {
         format!("week:s{}w{week}:{}", self.num, m.key)
     }
 
+    /// The key for a Shiny Bingo daily reward taken as pass XP (`n` makes
+    /// each one its own: the time it was taken). Only while the season's on.
+    pub fn bingo_key(&self, n: u64) -> String {
+        format!("bingo:{}:{n}", self.num)
+    }
+
     /// Pass XP a done-mission key is worth in this season (0 for anything else).
     pub fn xp_of(&self, key: &str) -> u64 {
+        if key.starts_with(&format!("bingo:{}:", self.num)) {
+            return crate::bingo::DAILY_PASS_XP;
+        }
         if let Some(rest) = key.strip_prefix(&format!("week:s{}w", self.num)) {
             return if rest.contains(':') { WEEKLY_PASS_XP } else { 0 };
         }
@@ -362,6 +371,8 @@ pub enum Kind2 {
     Style(crate::card::CardStyle),
     /// A colour for Pokégotchi's Sinnoh frame.
     Colour(crate::gotchi::Tint),
+    /// Booster packs for the Card Collector (this many).
+    Packs(u32),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -417,12 +428,19 @@ pub static REWARDS: [Reward; 30] = [
 
 use crate::gotchi::Tint;
 
-/// Season 1's second rewards: Pokégotchi colours at milestone tiers.
-pub static EXTRAS: [Reward; 4] = [
+/// Season 1's second rewards: Pokégotchi colours at milestone tiers, and a
+/// Card Collector booster pack about every 5 tiers in between.
+pub static EXTRAS: [Reward; 10] = [
     rw(5, "gotchi_diamond", "Sinnoh Diamond", Kind2::Colour(Tint::Sky), A),
     rw(15, "gotchi_emerald", "Sinnoh Emerald", Kind2::Colour(Tint::Mint), A),
     rw(25, "gotchi_onyx", "Sinnoh Onyx", Kind2::Colour(Tint::Midnight), D),
     rw(30, "gotchi_platinum", "Sinnoh Platinum", Kind2::Colour(Tint::Platinum), B),
+    rw(3, "s1_pack_t3", "Booster Pack", Kind2::Packs(1), D),
+    rw(8, "s1_pack_t8", "Booster Pack", Kind2::Packs(1), A),
+    rw(13, "s1_pack_t13", "Booster Pack", Kind2::Packs(1), D),
+    rw(18, "s1_pack_t18", "Booster Pack", Kind2::Packs(1), A),
+    rw(23, "s1_pack_t23", "Booster Pack", Kind2::Packs(1), D),
+    rw(28, "s1_pack_t28", "Booster Pack", Kind2::Packs(1), A),
 ];
 
 /// The share image styles that come from the pass (locked until claimed).
@@ -474,8 +492,11 @@ mod tests {
         }
         for r in EXTRAS.iter() {
             assert!((1..=TIERS).contains(&r.tier));
-            assert_eq!(s1.at(r.tier).count(), 2);
+            assert_eq!(s1.at(r.tier).count(), 2, "tier {} has one second reward", r.tier);
         }
+        // booster packs: one each on tiers 3, 8, 13, 18, 23 and 28
+        let packs: Vec<(u32, u32)> = EXTRAS.iter().filter_map(|r| if let Kind2::Packs(n) = r.kind { Some((r.tier, n)) } else { None }).collect();
+        assert_eq!(packs, vec![(3, 1), (8, 1), (13, 1), (18, 1), (23, 1), (28, 1)]);
     }
 
     #[test]
@@ -509,6 +530,8 @@ mod tests {
         let w = s1.weekly(0);
         assert_eq!(s1.xp_of(&s1.weekly_key(0, &w[0])), WEEKLY_PASS_XP);
         assert_eq!(s1.xp_of("week:2967:enc3k"), 0);
+        assert_eq!(s1.xp_of(&s1.bingo_key(1_794_620_000)), crate::bingo::DAILY_PASS_XP);
+        assert_eq!(s1.xp_of("bingo:2:20771"), 0, "another season's bingo XP");
         // the keys season 1 has always used
         assert_eq!(s1.weekly_key(0, &w[0]), format!("week:s1w0:{}", w[0].key));
         assert_eq!(s1.daily_key(sd, &d[1]), format!("pass:1:d{sd}:{}", d[1].key));

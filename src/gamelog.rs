@@ -384,6 +384,108 @@ pub fn read_new_wild(dir: &Path, cursors: &mut std::collections::BTreeMap<String
     Some((found, moved))
 }
 
+/// What Shiny Bingo reads from the logs.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LogEvent {
+    /// One battle's wild Pokémon (two lines for a double), with the hour on
+    /// the line's clock.
+    Battle { mons: Vec<WildLine>, hour: u8 },
+    /// "RARE sweet scent: evolve roll …, species X becomes Y".
+    Evolve,
+}
+
+/// The hour at the start of a log line ("07:07:16 INFO …" → 7).
+fn line_hour(line: &str) -> Option<u8> {
+    let h: u8 = line.get(..2)?.parse().ok()?;
+    (line.as_bytes().get(2) == Some(&b':') && h < 24).then_some(h)
+}
+
+/// Like `read_new_wild`, but grouped into battles (with the hour) plus
+/// Sweet Scent evolutions, each with the session (log file) it came from.
+/// A battle's lines still being written at the end of a file are left for
+/// the next read, so a double is never split in two.
+pub fn read_new_events(dir: &Path, cursors: &mut std::collections::BTreeMap<String, u64>) -> Option<(Vec<(String, LogEvent)>, bool)> {
+    let rd = std::fs::read_dir(dir).ok()?;
+    let mut files: Vec<(String, PathBuf, u64)> = rd
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let n = e.file_name().to_string_lossy().to_string();
+            (n.starts_with("session-") && n.ends_with(".log")).then(|| Some((n, e.path(), e.metadata().ok()?.len())))?
+        })
+        .collect();
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    let first = cursors.is_empty();
+    let mut found = Vec::new();
+    let mut moved = false;
+    for (name, path, len) in &files {
+        let at = cursors.get(name).copied();
+        let from = match at {
+            None if first => *len,
+            None => 0,
+            Some(p) if p > *len => 0,
+            Some(p) => p,
+        };
+        if from >= *len {
+            if at != Some(*len) {
+                cursors.insert(name.clone(), *len);
+                moved = true;
+            }
+            continue;
+        }
+        let Ok(mut f) = File::open(path) else { continue };
+        if f.seek(SeekFrom::Start(from)).is_err() {
+            continue;
+        }
+        let mut buf = Vec::new();
+        if f.take(len - from).read_to_end(&mut buf).is_err() {
+            continue;
+        }
+        let upto = buf.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
+        // whole lines, keeping where each one starts (in bytes)
+        let mut pos = 0usize;
+        let mut battle: Vec<WildLine> = Vec::new();
+        let mut battle_hour = 0u8;
+        let mut battle_from = 0usize;
+        for raw in buf[..upto].split_inclusive(|b| *b == b'\n') {
+            let start = pos;
+            pos += raw.len();
+            let text = String::from_utf8_lossy(raw);
+            let line = text.trim_end();
+            if let Some(w) = parse_wild(line) {
+                if battle.is_empty() {
+                    battle_from = start;
+                    battle_hour = line_hour(line).unwrap_or(12);
+                }
+                battle.push(w);
+                continue;
+            }
+            if !battle.is_empty() {
+                found.push((name.clone(), LogEvent::Battle { mons: std::mem::take(&mut battle), hour: battle_hour }));
+            }
+            if line.contains(" RARE ") && line.contains("evolve roll") && line.contains("becomes") {
+                found.push((name.clone(), LogEvent::Evolve));
+            }
+        }
+        // a battle still being written in the newest log: read it again next
+        // time (an older log is finished, so it counts now)
+        let newest = files.last().is_some_and(|f| &f.0 == name);
+        let keep = if !battle.is_empty() && newest {
+            battle_from
+        } else {
+            if !battle.is_empty() {
+                found.push((name.clone(), LogEvent::Battle { mons: std::mem::take(&mut battle), hour: battle_hour }));
+            }
+            upto
+        };
+        cursors.insert(name.clone(), from + keep as u64);
+        moved = true;
+    }
+    let before = cursors.len();
+    cursors.retain(|k, _| files.iter().any(|f| &f.0 == k));
+    moved |= cursors.len() != before;
+    Some((found, moved))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -490,6 +592,34 @@ mod tests {
             .flush_stale(t0 + Duration::from_secs(2), Duration::from_millis(1500))
             .unwrap();
         assert_eq!(late.len(), 1);
+    }
+
+    #[test]
+    fn events_group_doubles_and_wait_for_a_battle_being_written() {
+        let dir = std::env::temp_dir().join(format!("st-ev-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("session-1.log");
+        std::fs::write(&p, "06:00:00 INFO  DISPLAY  context field\n").unwrap();
+        let mut cur = std::collections::BTreeMap::new();
+        let (ev, _) = read_new_events(&dir, &mut cur).unwrap();
+        assert!(ev.is_empty(), "the first read starts at the end");
+        let mut f = std::fs::OpenOptions::new().append(true).open(&p).unwrap();
+        write!(f, "{SAMPLE}").unwrap();
+        // then a double still being written (no BATTLE line yet)
+        writeln!(f, "21:10:00 INFO  WILD     shiny chance 4 in 8192 for species 399 at level 9 (grass)").unwrap();
+        writeln!(f, "21:10:00 INFO  WILD     shiny chance 4 in 8192 for species 399 at level 9 (grass)").unwrap();
+        let (ev, _) = read_new_events(&dir, &mut cur).unwrap();
+        let battles: Vec<&LogEvent> = ev.iter().map(|e| &e.1).filter(|e| matches!(e, LogEvent::Battle { .. })).collect();
+        assert_eq!(battles.len(), 2, "the half-written one waits");
+        assert!(battles.iter().all(|b| matches!(b, LogEvent::Battle { mons, hour: 7 } if mons.len() == 2)));
+        assert_eq!(ev.iter().filter(|e| e.1 == LogEvent::Evolve).count(), 1);
+        writeln!(f, "07:07:32 INFO  BATTLE   encounter effect took 705 ms").unwrap();
+        let (ev, _) = read_new_events(&dir, &mut cur).unwrap();
+        assert!(matches!(&ev[..], [(_, LogEvent::Battle { mons, hour: 21 })] if mons.len() == 2 && mons[0].species == 399), "{ev:?}");
+        let (ev, _) = read_new_events(&dir, &mut cur).unwrap();
+        assert!(ev.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -21,9 +21,12 @@ pub enum AppId {
     Calc,
     Cards,
     Gotchi,
+    Bingo,
+    Rare,
+    Replay,
 }
 
-pub const ALL: [AppId; 10] = [AppId::Shiny, AppId::Pokedex, AppId::Map, AppId::Info, AppId::Team, AppId::Sim, AppId::Breed, AppId::Calc, AppId::Cards, AppId::Gotchi];
+pub const ALL: [AppId; 13] = [AppId::Shiny, AppId::Pokedex, AppId::Map, AppId::Info, AppId::Team, AppId::Sim, AppId::Breed, AppId::Calc, AppId::Cards, AppId::Gotchi, AppId::Bingo, AppId::Rare, AppId::Replay];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Cat {
@@ -327,6 +330,91 @@ const GOTCHI: Meta = Meta {
     works_with: &[(AppId::Shiny, "Berries from your hunts, and the overlay")],
 };
 
+const RARE: Meta = Meta {
+    id: AppId::Rare,
+    slug: "rare",
+    name: "Rare Grass",
+    cat: Cat::Hunting,
+    core: false,
+    beta: true,
+    overlay: false,
+    tagline: "What's on rare grass today, and every Pokémon that's been on it before.",
+    about: &[
+        "Every Pokémon on rare grass today gets a card: where it is, how many tiles, and whether it's the first time it's been seen. The rarest come first, so the special ones are easy to spot. One click shows it on the Map or makes it your target.",
+        "The glossary remembers every Pokémon that's been on rare grass and on which days, so you can see what turns up often, what's rare, and plan what to hunt next. It never guesses what comes next: it only remembers what was there.",
+    ],
+    can_do: &[
+        "Today's rare grass, a card per Pokémon, rarest first",
+        "Where each one is, with tile counts, one click to the Map",
+        "A glossary of every Pokémon seen on rare grass, with the days",
+        "Search and filters: out today, seen only once, all seen",
+        "Five Dashboard widgets",
+    ],
+    whats_new: "New: today's rare grass and its history in one place.",
+    updated: "14 Nov 2026",
+    uses: "The shared daily rare grass list and the game's session log (read only), like the Map",
+    shots: &[("rare", "Today's rare grass and the glossary")],
+    requires: &[],
+    works_with: &[(AppId::Map, "Show on Map"), (AppId::Shiny, "Hunt it on rare grass"), (AppId::Pokedex, "Open a Pokémon's entry")],
+};
+
+const REPLAY: Meta = Meta {
+    id: AppId::Replay,
+    slug: "replay",
+    name: "Shiny Replay",
+    cat: Cat::Hunting,
+    core: false,
+    beta: true,
+    overlay: false,
+    tagline: "The moment you found it, saved as a video clip.",
+    about: &[
+        "While the overlay runs, Shiny Replay keeps the last 15 seconds of the game window ready. When the shiny alert fires it records 5 seconds more and saves the whole moment as an MP4: the encounter, the sparkle, all of it. Nothing to start, nothing to remember.",
+        "Watch it, show it in its folder, or copy the file straight into Discord. Save replay now (a button and a hotkey) keeps near misses and funny moments too. It only ever looks at the game window, like a screenshot: never the rest of your screen, and never the game's files or memory.",
+    ],
+    can_do: &[
+        "Saves the 15 s before every shiny alert and the 5 s after, as an MP4",
+        "Resolution up to 1080p, 30 or 60 fps, bitrate presets or your own",
+        "A big player with a moving preview, and every clip on a shelf",
+        "Save replay now: a button and a hotkey",
+        "Copy a clip for Discord, and a Dashboard widget",
+    ],
+    whats_new: "New: your shinies on video, saved by themselves.",
+    updated: "14 Nov 2026",
+    uses: "The game window's picture while the overlay runs (never your files or the game's memory), and Windows' built-in video encoder",
+    shots: &[("replay", "The newest shiny in the big player, and the recorder")],
+    requires: &[AppId::Shiny],
+    works_with: &[(AppId::Shiny, "Saves a clip when the shiny alert fires")],
+};
+
+const BINGO: Meta = Meta {
+    id: AppId::Bingo,
+    slug: "bingo",
+    name: "Shiny Bingo",
+    cat: Cat::Games,
+    core: false,
+    beta: true,
+    overlay: false,
+    tagline: "A new bingo card every day that fills itself in while you hunt.",
+    about: &[
+        "Every day at the game's reset there's a new 5×5 card, the same for everyone, so you and your friends can race on it. Squares ask for things like meeting a Bidoof, a double battle, 300 encounters in one session or an hour of hunting.",
+        "You don't tick anything yourself: squares fill in from the game's log while you play. Your first line each day wins the daily reward: a booster pack or battle pass XP, you pick. Every line also gives Card Collector XP and a Pokégotchi treat, and the whole card a booster pack.",
+    ],
+    can_do: &[
+        "A new card every day at the reset, with S H I N Y columns and a free middle",
+        "Squares that tick themselves from the game's log",
+        "A daily reward for your first bingo: a booster pack or battle pass XP",
+        "Rewards for every line, and a booster pack for a blackout",
+        "Shows which lines are closest, and your past cards",
+        "Five Dashboard widgets, including the card itself",
+    ],
+    whats_new: "New: the third mini game.",
+    updated: "14 Nov 2026",
+    uses: "The game's session log (read only), your hunting time and battle pass missions",
+    shots: &[("bingo", "Today's card")],
+    requires: &[],
+    works_with: &[(AppId::Cards, "Card Collector XP and booster packs as rewards"), (AppId::Gotchi, "Pokégotchi treats as rewards")],
+};
+
 pub fn meta(id: AppId) -> &'static Meta {
     match id {
         AppId::Shiny => &SHINY,
@@ -339,6 +427,9 @@ pub fn meta(id: AppId) -> &'static Meta {
         AppId::Calc => &CALC,
         AppId::Cards => &CARDS,
         AppId::Gotchi => &GOTCHI,
+        AppId::Bingo => &BINGO,
+        AppId::Rare => &RARE,
+        AppId::Replay => &REPLAY,
     }
 }
 

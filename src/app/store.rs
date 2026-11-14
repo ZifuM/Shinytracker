@@ -179,6 +179,9 @@ impl App {
     }
 
     pub(super) fn app_toast(&mut self, msg: String) {
+        if !self.cfg.all_toasts {
+            return;
+        }
         self.setup.store.toast = Some((Instant::now(), msg));
     }
 
@@ -920,6 +923,9 @@ fn local_shot(name: &str) -> Option<&'static [u8]> {
         "cards_missions" => include_bytes!("../../store/cards_missions.png"),
         "calc_res" => include_bytes!("../../store/calc_res.png"),
         "gotchi" => include_bytes!("../../store/gotchi.png"),
+        "bingo" => include_bytes!("../../store/bingo.png"),
+        "rare" => include_bytes!("../../store/rare.png"),
+        "replay" => include_bytes!("../../store/replay.png"),
         "gotchi_play" => include_bytes!("../../store/gotchi_play.png"),
         "gotchi_frames" => include_bytes!("../../store/gotchi_frames.png"),
         "info" => include_bytes!("../../store/info.png"),

@@ -1604,7 +1604,7 @@ impl App {
     }
 
     /// A booster drawn by the app (before the art downloads).
-    fn draw_booster_painted(&mut self, p: &egui::Painter, r: Rect, s: &cards::Set) {
+    pub(super) fn draw_booster_painted(&mut self, p: &egui::Painter, r: Rect, s: &cards::Set) {
         let col = Color32::from_rgb(s.col[0], s.col[1], s.col[2]);
         p.add(theme::gradient_rect(r, [6.0; 4], theme::blend(col, Color32::WHITE, 0.15), theme::blend(col, Color32::BLACK, 0.45)));
         for y in [r.min.y + r.height() * 0.06, r.max.y - r.height() * 0.04] {

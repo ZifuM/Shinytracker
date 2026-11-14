@@ -758,12 +758,12 @@ impl App {
     }
 }
 
-fn chip(ui: &mut egui::Ui, text: &str) {
+pub(super) fn chip(ui: &mut egui::Ui, text: &str) {
     chip_col(ui, text, TEXT());
 }
 
 /// A Cirrus chip: Cloud pill with a hairline.
-fn chip_col(ui: &mut egui::Ui, text: &str, col: Color32) {
+pub(super) fn chip_col(ui: &mut egui::Ui, text: &str, col: Color32) {
     egui::Frame::none()
         .fill(kit::CARD())
         .stroke(Stroke::new(1.0f32, kit::LINE()))
@@ -773,7 +773,7 @@ fn chip_col(ui: &mut egui::Ui, text: &str, col: Color32) {
 }
 
 /// A Cirrus secondary button: Cloud pill with a hairline; Sunken on hover.
-fn sec_button(ui: &mut egui::Ui, text: &str, tip: &str) -> bool {
+pub(super) fn sec_button(ui: &mut egui::Ui, text: &str, tip: &str) -> bool {
     ui.add(
         egui::Button::new(RichText::new(text).size(13.0).color(TEXT()))
             .fill(kit::CARD())

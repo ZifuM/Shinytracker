@@ -39,6 +39,10 @@ mod cards_app;
 mod dex_tcg;
 mod cards_bar;
 mod cards_trade;
+mod bingo_app;
+mod rare_app;
+mod replay_app;
+mod app_settings;
 mod gotchi_app;
 mod gotchi_bar;
 mod gotchi_words;
@@ -80,6 +84,9 @@ mod w_hunt;
 mod w_explore;
 mod w_battle;
 mod w_games;
+mod w_bingo;
+mod w_rare;
+mod w_replay;
 mod w_gotchi;
 mod pins;
 mod map;
@@ -137,6 +144,9 @@ enum Tab {
     Calc,
     Cards,
     Gotchi,
+    Bingo,
+    RareGrass,
+    Replay,
     Profile,
     Stats,
     Dex,
@@ -234,10 +244,17 @@ struct Setup {
     breed: breed_home::BreedState,
     cards: cards_app::CardsState,
     gotchi: gotchi_app::GotchiState,
+    bingo: bingo_app::BingoState,
+    rare: rare_app::RareState,
+    replay: replay_app::ReplayState,
     /// The Start overlay picker is open.
     ov_picker: bool,
     /// "Hunt it on rare grass?" after picking a target that's there today.
     rare_offer: Option<rare::RareOffer>,
+    /// Today's rare grass, worked out (key: date, modern option, wiki and
+    /// map loaded), with when.
+    #[allow(clippy::type_complexity)]
+    rare_cache: Option<((i64, bool, bool, bool), std::time::Instant, Vec<rare::RareSpot>)>,
     /// Apps in the sidebar whose pages are folded away.
     nav_collapsed: Vec<Tab>,
     /// Advanced page: scroll to this section once.
@@ -617,8 +634,12 @@ impl App {
                 breed: Default::default(),
                 cards: Default::default(),
                 gotchi: Default::default(),
+                bingo: Default::default(),
+                rare: Default::default(),
+                replay: Default::default(),
                 ov_picker: false,
                 rare_offer: None,
+                rare_cache: None,
                 // Apps start folded; clicking one opens its pages.
                 nav_collapsed: vec![Tab::Shiny],
                 adv_jump: None,
@@ -934,6 +955,7 @@ impl App {
                 // Its own fanfare, once per alert (not again while it's showing).
                 if self.shiny_alert.is_none() {
                     self.shiny_fanfare();
+                    self.replay_on_shiny(plate);
                 }
                 self.shiny_alert = Some(plate);
                 if self.cfg.mini {
@@ -944,6 +966,7 @@ impl App {
             WorkerMsg::ShinyGift => {
                 if self.shiny_alert.is_none() {
                     self.shiny_fanfare();
+                    self.replay_on_shiny(GIFT_PLATE);
                 }
                 self.shiny_alert = Some(GIFT_PLATE);
                 if self.cfg.mini {
@@ -1032,6 +1055,7 @@ impl App {
                     self.hotkey_notice("⌨", "Hotkeys on", "");
                 }
             }
+            HotAction::SaveReplay => self.replay_save_now(),
         }
     }
 
@@ -2146,6 +2170,7 @@ impl App {
         let id = self.cfg.run_id;
         self.cards_shiny(format!("{id}:{}", slug.as_deref().unwrap_or("")));
         self.gotchi_shiny(format!("{id}:{}", slug.as_deref().unwrap_or("")));
+        self.bingo_shiny();
         self.cfg.saved_runs.retain(|r| r.id != id);
         self.start_fresh(self.cfg.target.clone());
         self.add_event("caught_it");
@@ -2895,6 +2920,9 @@ impl eframe::App for App {
         self.breed_save_tick(false);
         self.cards_tick(ctx);
         self.gotchi_tick(ctx);
+        self.bingo_tick(ctx);
+        self.rare_tick();
+        self.replay_tick(ctx);
         self.hotkeys_guard();
         while let Ok(msg) = self.rx.try_recv() {
             self.on_msg(msg);
@@ -3031,6 +3059,9 @@ impl eframe::App for App {
         self.breed_save_tick(true);
         self.setup.cards.save_tick(true);
         self.setup.gotchi.save_tick(true);
+        self.setup.bingo.save_tick(true);
+        self.setup.rare.save_tick(true);
+        self.setup.replay.save_tick(true);
     }
 }
 
@@ -3042,5 +3073,8 @@ impl Drop for App {
         self.breed_save_tick(true);
         self.setup.cards.save_tick(true);
         self.setup.gotchi.save_tick(true);
+        self.setup.bingo.save_tick(true);
+        self.setup.rare.save_tick(true);
+        self.setup.replay.save_tick(true);
     }
 }

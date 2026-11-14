@@ -227,6 +227,7 @@ impl App {
                 }
                 NoticeAction::UseRunningGame => self.use_running_game_folder(),
                 NoticeAction::Preview => self.clear_notice(id),
+                NoticeAction::WatchReplay => self.replay_watch_latest(),
             }
         }
     }

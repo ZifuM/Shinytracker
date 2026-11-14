@@ -1360,7 +1360,7 @@ impl App {
         }
         let showing = self.mapui.highlight.as_ref().map(|h| h.title.clone());
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
-        let left = (gamemap::next_reset(now) - now).max(0);
+        let left = (crate::rare_calc::next_change(now) - now).max(0);
 
         // ── keys (when nothing is being typed in)
         let sid = egui::Id::new("map-search-id");
@@ -2495,7 +2495,7 @@ impl App {
                 });
             };
             let reset = format!(
-                "Today's rare grass, from your game log plus the shared list. New patches in {}h {:02}m (midnight, Central European time).",
+                "Every rare grass patch today, worked out from the game's own formula. New patches in {}h {:02}m (midnight, Central European time).",
                 left / 3600,
                 left % 3600 / 60
             );

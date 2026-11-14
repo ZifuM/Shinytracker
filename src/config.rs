@@ -679,6 +679,15 @@ pub struct Config {
     /// The Start overlay picker: open the Shiny Hunter overlay (the other
     /// overlays keep their pick in their own app's file).
     pub ov_pick_shiny: bool,
+    /// Master switch for every pop-up: overlay toasts (achievements, level
+    /// ups, goals, milestones), overlay notices and the app's little toasts.
+    /// Set from the Start overlay picker.
+    pub all_toasts: bool,
+    /// Shiny Replay's recording settings.
+    pub replay: crate::replay::ReplaySettings,
+    /// The MODERN POKéMON world option is on in the player's game (rare
+    /// grass then has newer Pokémon too).
+    pub rare_modern: bool,
     /// Game Info: how far into the story you are (index into the wiki's
     /// badge stages: 0 = before Roark … 9 = after the League). None: not set.
     pub info_stage: Option<u8>,
@@ -785,6 +794,9 @@ impl Default for Config {
             info_pins: Vec::new(),
             cards_shiny_keys: Vec::new(),
             ov_pick_shiny: true,
+            all_toasts: true,
+            replay: Default::default(),
+            rare_modern: true,
             info_stage: None,
             info_more: true,
             info_modern: false,

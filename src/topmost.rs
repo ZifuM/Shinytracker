@@ -372,6 +372,11 @@ mod imp {
         find_game().is_some()
     }
 
+    /// The game window's handle (for Shiny Replay's window capture).
+    pub fn game_hwnd() -> Option<isize> {
+        find_game().map(|h| h as isize)
+    }
+
     #[link(name = "kernel32")]
     extern "system" {
         fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut c_void;
@@ -709,6 +714,9 @@ mod imp {
     pub fn game_running() -> bool {
         true
     }
+    pub fn game_hwnd() -> Option<isize> {
+        None
+    }
     pub fn game_exe() -> Option<std::path::PathBuf> {
         None
     }
@@ -807,6 +815,12 @@ pub fn point_on_screen(pos: [f32; 2], ppp: f32) -> bool {
 /// Whether the Platinum Together game window is open.
 pub fn game_running() -> bool {
     imp::game_running()
+}
+
+/// The game window, if it's open (its handle as a number).
+#[allow(dead_code)]
+pub fn game_hwnd() -> Option<isize> {
+    imp::game_hwnd()
 }
 
 /// Where the running game's Platinum.exe is, if the game is open.

@@ -21,6 +21,7 @@ pub enum HotAction {
     ShowApp,
     CycleSize,
     HotkeysToggle,
+    SaveReplay,
 }
 
 /// The groups the Hotkeys page shows them in.
@@ -45,7 +46,7 @@ impl HotGroup {
 }
 
 impl HotAction {
-    pub const ALL: [HotAction; 14] = [
+    pub const ALL: [HotAction; 15] = [
         HotAction::Plus,
         HotAction::Minus,
         HotAction::AddMany,
@@ -57,6 +58,7 @@ impl HotAction {
         HotAction::CycleSize,
         HotAction::Caught,
         HotAction::DismissAlert,
+        HotAction::SaveReplay,
         HotAction::MuteSounds,
         HotAction::ShowApp,
         HotAction::HotkeysToggle,
@@ -78,6 +80,7 @@ impl HotAction {
             HotAction::ShowApp => "Open the Companion",
             HotAction::CycleSize => "Next overlay size",
             HotAction::HotkeysToggle => "All hotkeys off / on",
+            HotAction::SaveReplay => "Save Shiny Replay now",
         }
     }
 
@@ -98,6 +101,7 @@ impl HotAction {
             HotAction::ShowApp => "Brings this window to the front, even from the game.",
             HotAction::CycleSize => "Switches the overlay between Full, Compact and Bar.",
             HotAction::HotkeysToggle => "Turns every other hotkey off (when you're typing in chat) and back on. This one keeps working.",
+            HotAction::SaveReplay => "Saves the last seconds of the game as a clip (with the Shiny Replay app).",
         }
     }
 
@@ -117,6 +121,7 @@ impl HotAction {
             HotAction::ShowApp => "🏠",
             HotAction::CycleSize => "↔",
             HotAction::HotkeysToggle => "⌨",
+            HotAction::SaveReplay => "🎬",
         }
     }
 
@@ -124,7 +129,7 @@ impl HotAction {
         match self {
             HotAction::Plus | HotAction::Minus | HotAction::AddMany | HotAction::Undo | HotAction::Pause => HotGroup::Counting,
             HotAction::ToggleHide | HotAction::StartStop | HotAction::ClickThrough | HotAction::CycleSize => HotGroup::Overlay,
-            HotAction::Caught | HotAction::DismissAlert => HotGroup::Hunt,
+            HotAction::Caught | HotAction::DismissAlert | HotAction::SaveReplay => HotGroup::Hunt,
             HotAction::MuteSounds | HotAction::ShowApp | HotAction::HotkeysToggle => HotGroup::App,
         }
     }
@@ -133,7 +138,7 @@ impl HotAction {
     pub fn is_new(self) -> bool {
         matches!(
             self,
-            HotAction::StartStop | HotAction::AddMany | HotAction::MuteSounds | HotAction::DismissAlert | HotAction::ShowApp | HotAction::CycleSize | HotAction::HotkeysToggle
+            HotAction::StartStop | HotAction::AddMany | HotAction::MuteSounds | HotAction::DismissAlert | HotAction::ShowApp | HotAction::CycleSize | HotAction::HotkeysToggle | HotAction::SaveReplay
         )
     }
 
@@ -155,6 +160,7 @@ impl HotAction {
             HotAction::ShowApp => cs("Home"),
             HotAction::CycleSize => cs("L"),
             HotAction::HotkeysToggle => KeyBind { ctrl: true, shift: true, alt: true, key: "H".into() },
+            HotAction::SaveReplay => cs("R"),
         }
     }
 }
@@ -246,6 +252,7 @@ pub struct KeyBinds {
     pub show_app: Option<KeyBind>,
     pub cycle_size: Option<KeyBind>,
     pub toggle_all: Option<KeyBind>,
+    pub save_replay: Option<KeyBind>,
     /// How many "Add several" adds.
     pub add_many_n: u64,
     /// Every hotkey but "All hotkeys off / on" is switched off.
@@ -271,6 +278,7 @@ impl Default for KeyBinds {
             show_app: None,
             cycle_size: None,
             toggle_all: None,
+            save_replay: None,
             add_many_n: 5,
             paused: false,
         }
@@ -294,6 +302,7 @@ impl KeyBinds {
             HotAction::ShowApp => self.show_app.as_ref(),
             HotAction::CycleSize => self.cycle_size.as_ref(),
             HotAction::HotkeysToggle => self.toggle_all.as_ref(),
+            HotAction::SaveReplay => self.save_replay.as_ref(),
         }
     }
 
@@ -313,6 +322,7 @@ impl KeyBinds {
             HotAction::ShowApp => &mut self.show_app,
             HotAction::CycleSize => &mut self.cycle_size,
             HotAction::HotkeysToggle => &mut self.toggle_all,
+            HotAction::SaveReplay => &mut self.save_replay,
         };
         *slot = b;
     }

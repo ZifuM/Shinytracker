@@ -18,6 +18,8 @@ pub(super) enum NoticeAction {
     UseRunningGame,
     /// A preview from Settings: the button just closes it.
     Preview,
+    /// Shiny Replay saved a clip: open it.
+    WatchReplay,
 }
 
 pub(super) struct Notice {
@@ -42,6 +44,11 @@ const STUCK_AFTER: Duration = Duration::from_secs(5 * 60);
 impl App {
     /// Show a notice (one with the same id is replaced).
     pub(super) fn notify(&mut self, n: Notice) {
+        // All pop-ups switched off (Start overlay picker): only Settings'
+        // previews still come through.
+        if !self.cfg.all_toasts && !matches!(n.action, Some((_, NoticeAction::Preview))) {
+            return;
+        }
         if let Some(x) = self.notices.iter_mut().find(|x| x.id == n.id) {
             *x = n;
         } else {
@@ -293,6 +300,7 @@ impl App {
                     }
                     NoticeAction::UseRunningGame => self.use_running_game_folder(),
                     NoticeAction::Preview => self.clear_notice(id),
+                    NoticeAction::WatchReplay => self.replay_watch_latest(),
                 }
             }
         }
@@ -344,6 +352,7 @@ impl App {
                     }
                     NoticeAction::UseRunningGame => self.use_running_game_folder(),
                     NoticeAction::Preview => self.clear_notice(id),
+                    NoticeAction::WatchReplay => self.replay_watch_latest(),
                 }
             }
         }

@@ -41,6 +41,9 @@ pub(super) fn tab_meta(t: Tab) -> (&'static str, &'static str, Color32) {
         Tab::Calc => ("💥", "Damage Calculator", kit::C_INDIGO),
         Tab::Cards => ("🃏", "Card Collector", kit::C_GOLD),
         Tab::Gotchi => ("🐾", "Pokégotchi", kit::C_PINK),
+        Tab::Bingo => ("🎯", "Shiny Bingo", kit::C_VIOLET),
+        Tab::RareGrass => ("✨", "Rare Grass", kit::C_GREEN),
+        Tab::Replay => ("🎬", "Shiny Replay", super::replay_app::ROSE),
         Tab::Appearance => ("🎨", "Appearance", kit::C_PINK),
         Tab::Hotkeys => ("⌨", "Hotkeys", kit::C_SLATE),
         Tab::Advanced => ("⚙", "Advanced", kit::C_SLATE),
@@ -49,7 +52,7 @@ pub(super) fn tab_meta(t: Tab) -> (&'static str, &'static str, Color32) {
 
 /// Pages that are still experimental (marked in the sidebar).
 pub(super) fn is_experimental(t: Tab) -> bool {
-    matches!(t, Tab::Sim | Tab::Breed | Tab::Cards | Tab::Gotchi)
+    matches!(t, Tab::Sim | Tab::Breed | Tab::Cards | Tab::Gotchi | Tab::Bingo | Tab::RareGrass | Tab::Replay)
 }
 
 /// The App Store's and the Library's colours.
@@ -72,6 +75,9 @@ pub(super) fn app_of(t: Tab) -> Option<AppId> {
         Tab::Calc => AppId::Calc,
         Tab::Cards => AppId::Cards,
         Tab::Gotchi => AppId::Gotchi,
+        Tab::Bingo => AppId::Bingo,
+        Tab::RareGrass => AppId::Rare,
+        Tab::Replay => AppId::Replay,
         _ => return None,
     })
 }
@@ -89,6 +95,9 @@ pub(super) fn app_tab(a: AppId) -> Tab {
         AppId::Calc => Tab::Calc,
         AppId::Cards => Tab::Cards,
         AppId::Gotchi => Tab::Gotchi,
+        AppId::Bingo => Tab::Bingo,
+        AppId::Rare => Tab::RareGrass,
+        AppId::Replay => Tab::Replay,
     }
 }
 

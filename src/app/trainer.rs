@@ -295,6 +295,9 @@ impl App {
 
     /// A milestone pop-up, shown like the others, just under the overlay.
     pub(super) fn push_milestone(&mut self, text: String) {
+        if !self.cfg.all_toasts {
+            return;
+        }
         if self.toasts.len() < 8 {
             self.toasts.push_back(Toast { kind: ToastKind::Milestone { text }, shown_at: None });
         }
@@ -320,7 +323,7 @@ impl App {
     }
 
     pub(super) fn push_toast(&mut self, kind: ToastKind) {
-        if !self.cfg.toasts {
+        if !self.cfg.toasts || !self.cfg.all_toasts {
             return;
         }
         if self.toasts.len() < 8 {

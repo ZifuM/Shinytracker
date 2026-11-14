@@ -1,6 +1,6 @@
 # ✨ Poke Together Companion
 
-A free companion app for **Pokémon Platinum Together**: an always-on-top shiny hunting counter, plus a set of apps you pick yourself (Pokédex, map, team planning, breeding, battles and two mini games).
+A free companion app for **Pokémon Platinum Together**: an always-on-top shiny hunting counter, plus a set of apps you pick yourself (Pokédex, map, rare grass, team planning, breeding, battles, shiny replays and three mini games).
 
 ## Download
 
@@ -18,8 +18,11 @@ Windows 10/11, nothing else to install. It updates itself, and can opt in to pre
 - **Breeding** *(beta)*: plan eggs, keep your breeders, find egg moves
 - **Card Collector** *(beta)*: hunting earns booster packs of the original Base Set cards; open them, collect them all and trade with friends
 - **Pokégotchi** *(beta)*: adopt a shiny you caught as a pocket pet; hunting feeds it, and it keeps you company on the overlay
+- **Shiny Bingo**: a new card every day that ticks itself off as you play, with a daily reward
+- **Rare Grass** *(beta)*: every Pokémon on rare grass today, and every one that's been out before
+- **Shiny Replay** *(beta)*: saves the 15 seconds before your shiny alert and 5 after as an MP4
 
-The **Dashboard** is yours to build from 55+ widgets on a grid you arrange and size yourself.
+The **Dashboard** is yours to build from 70+ widgets on a grid you arrange and size yourself.
 
 <p>
   <img src="docs/overlay.png" alt="The shiny overlay" width="49%">
@@ -31,7 +34,7 @@ Install [Rust](https://rustup.rs), then run `build.bat`. It builds the app and m
 
 ---
 
-Fan-made and not affiliated with Nintendo, Game Freak or The Pokémon Company. It only reads the game's log and map files; it never changes them or the game's memory.
+Fan-made and not affiliated with Nintendo, Game Freak or The Pokémon Company. It only reads the game's log and map files (and Shiny Replay records the game window's picture); it never changes them or the game's memory.
 
 ## Credits
 

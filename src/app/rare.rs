@@ -39,27 +39,47 @@ impl App {
         self.gamemap.as_ref()?.as_ref().ok().cloned()
     }
 
-    /// Everything met on rare grass today, one entry per Pokémon and area.
+    /// Every Pokémon on rare grass today, one entry per Pokémon and area:
+    /// worked out with the game's formula for the server's date (cached for
+    /// the minute). Place names come from the loaded map
+    /// when there is one, else the bundled area list.
     pub(super) fn rare_spots_today(&mut self) -> Vec<RareSpot> {
-        let Some(map) = self.game_map() else { return Vec::new() };
-        self.mapui.refresh_rare();
-        let rare = self.mapui.rare.clone();
+        let now = crate::stats::now_unix() as i64;
+        let key = (crate::rare_calc::today(now), crate::rare_calc::modern(), self.wiki.is_some(), self.game_map().is_some());
+        if let Some((k, at, list)) = &self.setup.rare_cache {
+            if *k == key && at.elapsed() < Duration::from_secs(60) {
+                return list.clone();
+            }
+        }
+        let out = self.rare_spots_on(key.0);
+        self.setup.rare_cache = Some((key, Instant::now(), out.clone()));
+        out
+    }
+
+    /// Every rare grass patch on a date (days since 1970, the server's
+    /// calendar), grouped by Pokémon and place.
+    pub(super) fn rare_spots_on(&mut self, day: i64) -> Vec<RareSpot> {
+        let map = self.game_map();
         let mut out: Vec<RareSpot> = Vec::new();
-        for r in &rare {
-            let Some(sp) = r.species else { continue };
-            let Some(species) = self.rare_species(&map, sp) else { continue };
-            let zone = map.rare_zone(r.matrix, r.x, r.y);
+        for s in crate::rare_calc::spots_on(day, crate::rare_calc::modern()) {
+            let sp = s.species as u32;
+            let Some(species) = self.rare_species_any(sp) else { continue };
+            let zone = s.tile.zone;
             if let Some(o) = out.iter_mut().find(|o| o.species.slug == species.slug && o.zone == zone) {
                 o.tiles += 1;
                 continue;
             }
-            let place = zone.map(|z| self.zone_label(&map, z)).unwrap_or_else(|| "Outdoors".into());
+            let place = match (zone, &map) {
+                (Some(z), Some(m)) => self.zone_label(m, z),
+                (Some(z), None) => crate::rare_calc::zone_name(z).unwrap_or("Outdoors").to_string(),
+                _ => "Outdoors".into(),
+            };
             out.push(RareSpot {
-                wiki_id: self.rare_wiki_id(&map, sp),
+                wiki_id: self.rare_wiki_any(sp),
                 species,
-                matrix: r.matrix,
-                x: r.x,
-                y: r.y,
+                matrix: s.tile.matrix,
+                x: s.tile.x as usize,
+                y: s.tile.y as usize,
                 zone,
                 place,
                 tiles: 1,
@@ -67,6 +87,26 @@ impl App {
         }
         out.sort_by(|a, b| a.species.dex.cmp(&b.species.dex).then(a.place.cmp(&b.place)));
         out
+    }
+
+    /// A game species number as a Pokémon (the newer ones by the bundled list).
+    fn rare_species_any(&self, sp: u32) -> Option<crate::species::Species> {
+        let dex = if sp <= 493 {
+            sp
+        } else {
+            let id = crate::rare_calc::game_species_id(sp)?;
+            self.wiki.as_ref()?.mon(id)?.dex
+        };
+        self.species.get((dex as usize).wrapping_sub(1)).cloned()
+    }
+
+    /// The wiki id for a game species number.
+    fn rare_wiki_any(&self, sp: u32) -> Option<String> {
+        if sp <= 493 {
+            Some(self.wiki.as_ref()?.by_dex(sp)?.id.clone())
+        } else {
+            crate::rare_calc::game_species_id(sp).map(|s| s.to_string())
+        }
     }
 
     /// Where a Pokémon (by species slug) is on rare grass today.

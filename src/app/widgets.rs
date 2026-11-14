@@ -57,6 +57,9 @@ pub(super) fn min_size(d: &WidgetDef) -> (i32, i32) {
     if d.kind == "minimap" {
         return (3, 3);
     }
+    if d.kind == "bingo_card" {
+        return (3, 4);
+    }
     match d.span {
         1 => (2, 2),
         2 => (4, 2),
@@ -69,6 +72,13 @@ pub(super) fn start_size(d: &WidgetDef) -> (i32, i32) {
     // a map starts square
     if d.kind == "minimap" {
         return (6, 6);
+    }
+    // the bingo card starts about square
+    if d.kind == "bingo_card" {
+        return (4, 5);
+    }
+    if d.kind == "bingo_meet" {
+        return (4, 4);
     }
     match d.span {
         1 => (4, 3),
@@ -125,7 +135,7 @@ const fn wd(kind: &'static str, name: &'static str, about: &'static str, icon: &
     WidgetDef { kind, name, about, icon, app, span, multi }
 }
 
-use AppId::{Breed, Calc, Cards, Gotchi, Info, Map, Pokedex, Shiny, Sim, Team};
+use AppId::{Bingo, Breed, Calc, Cards, Gotchi, Info, Map, Pokedex, Rare, Replay, Shiny, Sim, Team};
 
 pub(super) const DEFS: &[WidgetDef] = &[
     // the Dashboard's own
@@ -196,6 +206,21 @@ pub(super) const DEFS: &[WidgetDef] = &[
     wd("gotchi_care", "Quick care", "Feed, treat, clean or pat without opening the app", "🍓", Some(Gotchi), 1, false),
     wd("gotchi_pantry", "Pantry", "Berries and treats, and what hunting earned today", "🎒", Some(Gotchi), 1, false),
     wd("gotchi_box", "The Box", "Every Pokégotchi you have; click one to bring it out", "📦", Some(Gotchi), 2, false),
+    wd("bingo_card", "Bingo card", "Today's Shiny Bingo card, ticking itself as you hunt", "🎯", Some(Bingo), 1, false),
+    wd("bingo_week", "Bingo today", "Squares and lines done, and when the next card comes", "📅", Some(Bingo), 1, false),
+    wd("bingo_next", "Closest to a line", "The lines nearest to done, and what each still needs", "📌", Some(Bingo), 1, false),
+    wd("bingo_meet", "Bingo Pokémon", "Today's Pokémon to meet, ticked when you do", "🔍", Some(Bingo), 1, false),
+    wd("rare_out", "Rare grass today", "The rarest Pokémon on rare grass today, and where", "✨", Some(Rare), 1, false),
+    wd("rare_new", "New on rare grass", "Pokémon on rare grass for the first time today", "🆕", Some(Rare), 1, false),
+    wd("rare_stats", "Rare grass in numbers", "Pokémon and tiles today, everything seen, and the reset", "🌿", Some(Rare), 1, false),
+    wd("rare_places", "Busiest places today", "The places with the most Pokémon on rare grass today", "📍", Some(Rare), 1, false),
+    wd("rare_missing", "Not seen lately", "Pokémon that were on rare grass before but not in the last few days", "⏳", Some(Rare), 1, false),
+    wd("replay_last", "Last Shiny Replay", "Your newest clip, ready to watch, and whether the recorder is on", "🎬", Some(Replay), 1, false),
+    wd("replay_rec", "Replay recorder", "How many seconds are ready to save, with Save replay now", "⏺", Some(Replay), 1, false),
+    wd("replay_recent", "Recent clips", "Your latest clips, one click to watch", "🎞", Some(Replay), 1, false),
+    wd("replay_stats", "Clips in numbers", "Clips, shinies on video, and the space they take", "📼", Some(Replay), 1, false),
+    wd("replay_save", "Save replay now", "One big button that saves the last seconds of the game", "💾", Some(Replay), 1, false),
+    wd("bingo_recent", "Just ticked", "The latest bingo squares you filled in", "✅", Some(Bingo), 1, false),
 ];
 
 pub(super) fn def(kind: &str) -> Option<&'static WidgetDef> {
@@ -952,6 +977,21 @@ impl App {
             "gotchi_care" => self.w_gotchi_care(ui),
             "gotchi_pantry" => self.w_gotchi_pantry(ui),
             "gotchi_box" => self.w_gotchi_box(ui),
+            "bingo_card" => self.w_bingo_card(ui),
+            "bingo_week" => self.w_bingo_week(ui),
+            "bingo_next" => self.w_bingo_next(ui),
+            "bingo_meet" => self.w_bingo_meet(ui),
+            "bingo_recent" => self.w_bingo_recent(ui),
+            "rare_out" => self.w_rare_out(ui),
+            "rare_new" => self.w_rare_new(ui),
+            "rare_stats" => self.w_rare_stats(ui),
+            "rare_places" => self.w_rare_places(ui),
+            "rare_missing" => self.w_rare_missing(ui),
+            "replay_last" => self.w_replay_last(ui),
+            "replay_rec" => self.w_replay_rec(ui),
+            "replay_recent" => self.w_replay_recent(ui),
+            "replay_stats" => self.w_replay_stats(ui),
+            "replay_save" => self.w_replay_save(ui),
             _ => {}
         }
         out

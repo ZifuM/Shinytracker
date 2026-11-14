@@ -5,7 +5,7 @@
 use super::ui_kit::{self as kit, PillKind, MUTED, TEXT};
 use super::App;
 use crate::canvas::{Canvas, Img};
-use crate::gamemap::{self, GameMap, CHUNK};
+use crate::gamemap::{GameMap, CHUNK};
 use crate::poster::{self, PosterArea, PosterData, PosterLabel, PosterMap, PosterMode, PosterMon, PosterStyle};
 use crate::theme;
 use eframe::egui::{self, RichText, TextureHandle, TextureOptions, Vec2};
@@ -169,7 +169,7 @@ impl App {
         let style = if look == crate::card::CardStyle::Classic { PosterStyle::Classic } else { PosterStyle::Anime };
         let theme = self.cfg.card.theme;
         let now = crate::stats::now_unix() as i64;
-        let (reset, next) = (gamemap::last_reset(now), gamemap::next_reset(now));
+        let (reset, next) = (crate::rare_calc::day_start(now), crate::rare_calc::next_change(now));
         let (tx, rx) = channel();
         let ctx2 = ctx.clone();
         std::thread::Builder::new()
@@ -324,7 +324,7 @@ impl App {
                     kit::pill(ui, m, if *ok { PillKind::Ok } else { PillKind::Bad });
                 }
                 ui.add_space(4.0);
-                ui.label(RichText::new("Pokémon from your game log plus the shared list. New patches at midnight Central European time.").size(kit::fs(11.0)).color(TEXT().gamma_multiply(0.7)));
+                ui.label(RichText::new("Every patch today, from the game's own formula. New patches at midnight Central European time.").size(kit::fs(11.0)).color(TEXT().gamma_multiply(0.7)));
             });
 
         if let Some(p) = reveal {
@@ -344,7 +344,7 @@ impl App {
             let asking = self.cfg.share_ask;
             if let Some(v) = self.mapui.poster.as_mut() {
                 if let Some((mode, c)) = v.image.as_ref() {
-                    let name = format!("{}-{}", mode.file_tag(), poster::date_slug(gamemap::last_reset(crate::stats::now_unix() as i64)));
+                    let name = format!("{}-{}", mode.file_tag(), poster::date_slug(crate::rare_calc::day_start(crate::stats::now_unix() as i64)));
                     match crate::share::png_bytes(c) {
                         None => v.msg = Some((false, "Couldn't make the PNG".into())),
                         Some(bytes) if asking => {

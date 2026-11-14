@@ -429,6 +429,9 @@ pub struct CardFile {
     pub traded_in: BTreeMap<String, u32>,
     /// The latest XP earned, newest first: (when, XP, what for).
     pub recent: Vec<(u64, u64, String)>,
+    /// Battle pass pack rewards already put in (by reward id), so a pack
+    /// reward can only ever be added once.
+    pub pass_packs: Vec<String>,
 }
 
 /// Something that earned XP (shown on the bar for a moment).
@@ -452,6 +455,17 @@ impl CardFile {
 
     pub fn count(&self, id: &str) -> u32 {
         self.owned.get(id).copied().unwrap_or(0)
+    }
+
+    /// Put in the packs of battle pass reward `id` (once ever). Returns
+    /// whether they went in now.
+    pub fn pass_gift(&mut self, id: &str, packs: u32) -> bool {
+        if self.pass_packs.iter().any(|p| p == id) {
+            return false;
+        }
+        self.pass_packs.push(id.to_string());
+        self.packs += packs;
+        true
     }
 
     /// Add XP; a full bar becomes a pack.
@@ -726,6 +740,11 @@ mod tests {
 
     #[test]
     fn opening_adds_cards_and_trading_keeps_one() {
+        let mut g = CardFile::default();
+        assert!(g.pass_gift("s1_pack_t3", 1));
+        assert!(!g.pass_gift("s1_pack_t3", 1), "a pass pack only goes in once");
+        assert!(g.pass_gift("s1_pack_t8", 1));
+        assert_eq!(g.packs, 2);
         let mut f = CardFile { packs: 3, ..Default::default() };
         let mut rng = Rng::new(1);
         for _ in 0..3 {

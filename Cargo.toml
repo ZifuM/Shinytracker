@@ -1,6 +1,6 @@
 [package]
 name = "shiny-tracker"
-version = "0.7.1"
+version = "0.7.2"
 edition = "2021"
 description = "Always-on-top shiny hunting counter that reads foe name plates from the screen"
 
@@ -22,6 +22,33 @@ ab_glyph = "0.2"
 gif = "0.13"
 # Colour reduction for GIF frames, so they can be dithered (already used by gif).
 color_quant = "1.1"
+
+[features]
+# Shiny Replay's recorder (captures the game window, writes MP4s with
+# Windows' own video encoder). On in every build; build without it with
+# --no-default-features if it ever needs switching off.
+default = ["replay-rec"]
+replay-rec = [
+    "windows/Graphics",
+    "windows/Graphics_Capture",
+    "windows/Graphics_DirectX",
+    "windows/Graphics_DirectX_Direct3D11",
+    "windows/Win32_Foundation",
+    "windows/Win32_Graphics_Direct3D",
+    "windows/Win32_Graphics_Direct3D11",
+    "windows/Win32_Graphics_Dwm",
+    "windows/Win32_Graphics_Dxgi",
+    "windows/Win32_Graphics_Dxgi_Common",
+    "windows/Win32_Graphics_Gdi",
+    "windows/Win32_Media_MediaFoundation",
+    "windows/Win32_System_Com",
+    "windows/Win32_System_Com_StructuredStorage",
+    "windows/Win32_System_Threading",
+    "windows/Win32_System_WinRT",
+    "windows/Win32_System_WinRT_Direct3D11",
+    "windows/Win32_System_WinRT_Graphics_Capture",
+    "windows/Win32_UI_WindowsAndMessaging",
+]
 
 # Windows' built-in OCR (no extra install needed on Windows 10/11).
 [target.'cfg(windows)'.dependencies]
