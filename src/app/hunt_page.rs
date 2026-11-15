@@ -129,7 +129,9 @@ impl App {
     // ───────────────────────────── target ─────────────────────────────
 
     fn hunt_target(&mut self, ui: &mut egui::Ui) {
+        let mut new_hunt = false;
         let mut open_dex: Option<String> = None;
+        let mut log_slug: Option<String> = None;
         let mut show_rare = false;
         let mut picked: Option<String> = None;
         kit::card(ui, |ui| {
@@ -233,15 +235,39 @@ impl App {
                             if ui.add(egui::Button::new("Cancel").fill(kit::btn_fill())).clicked() {
                                 self.setup.picking_target = false;
                             }
-                        } else if kit::accent_button(ui, egui::Button::new(RichText::new("🔄  Change target").font(ch::bold(13.0)).color(kit::on_primary())), 4.0).clicked() {
-                            self.setup.picking_target = true;
-                            self.setup.picking_also = None;
-                            self.setup.search.clear();
+                        } else {
+                            if kit::accent_button(ui, egui::Button::new(RichText::new("+  New hunt").font(ch::bold(13.0)).color(kit::on_primary())), 4.0).on_hover_text("Set up a new hunt, step by step").clicked() {
+                                new_hunt = true;
+                            }
+                            if ui.add(egui::Button::new("🔄  Change target").fill(kit::btn_fill())).on_hover_text("Just pick a different Pokémon, keeping everything else").clicked() {
+                                self.setup.picking_target = true;
+                                self.setup.picking_also = None;
+                                self.setup.search.clear();
+                            }
                         }
                         if let Some(id) = hab.as_ref().and_then(|h| h.wiki_id.clone()) {
                             if ui.add(egui::Button::new("📖  Pokédex entry").fill(kit::btn_fill())).clicked() {
                                 open_dex = Some(id);
                             }
+                        }
+                        // Log a shiny (the same window as in the Pokédex);
+                        // several targets: pick which one first
+                        let targets: Vec<(String, &'static str)> = self.all_target_idx().into_iter().map(|i| (self.species[i].slug.clone(), self.species[i].name)).collect();
+                        const LOG_TIP: &str = "Log a shiny you caught without tracking it, with its details. (Found one on this hunt? Press Caught instead.)";
+                        if targets.len() > 1 {
+                            ui.menu_button("✨  Log a shiny  ⏷", |ui| {
+                                ui.label(RichText::new("Which Pokémon?").size(11.5).color(MUTED()));
+                                for (slug, name) in &targets {
+                                    if ui.button(*name).clicked() {
+                                        log_slug = Some(slug.clone());
+                                        ui.close_menu();
+                                    }
+                                }
+                            })
+                            .response
+                            .on_hover_text(LOG_TIP);
+                        } else if ui.add(egui::Button::new("✨  Log a shiny").fill(kit::btn_fill())).on_hover_text(LOG_TIP).clicked() {
+                            log_slug = Some(targets.first().map(|t| t.0.clone()).unwrap_or_default());
                         }
                     });
                     if self.setup.picking_target {
@@ -257,6 +283,12 @@ impl App {
                 }
             }
         });
+        if let Some(slug) = log_slug {
+            self.open_log(if slug.is_empty() { None } else { Some(&slug) });
+        }
+        if new_hunt {
+            self.open_hunt_wizard();
+        }
         if let Some(slug) = picked {
             self.set_target(slug);
             self.setup.picking_target = false;
@@ -389,9 +421,11 @@ impl App {
             match self.cfg.hunt_method {
                 HuntMethod::PokeRadar => {
                     ui.add_space(10.0);
-                    setting_row(ui, "Current chain", "Odds stop improving at a chain of 40.", |ui| {
-                        self.dirty |= kit::stepper(ui, &mut self.cfg.radar_chain, 0, 999);
-                    });
+                    self.radar_controls(ui);
+                }
+                HuntMethod::Masuda => {
+                    ui.add_space(10.0);
+                    self.masuda_helper(ui);
                 }
                 HuntMethod::Custom => {
                     ui.add_space(10.0);
@@ -423,15 +457,25 @@ impl App {
                 ui.add_space(10.0);
             }
             if self.cfg.hunt_method.uses_charms() {
-                let charm_help = if self.cfg.hunt_method == HuntMethod::Masuda {
-                    "For Eggs the Shiny Charm gives 2 more tries (8 with the Masuda Method). More than one isn't known to add more."
+                let eggs = self.cfg.hunt_method == HuntMethod::Masuda;
+                let charm_help = if eggs {
+                    "For Eggs the Shiny Charm gives 2 more rolls (out of 8192). More than one doesn't add more."
                 } else {
-                    "Each Shiny Charm gives wild Pokémon one more chance to be shiny."
+                    "Each Shiny Charm gives wild Pokémon one more roll (out of 8192), up to 10 rolls in all."
                 };
                 setting_row(ui, "Shiny Charms in your Bag", charm_help, |ui| {
                     self.dirty |= kit::stepper(ui, &mut self.cfg.shiny_charms, 0, 20);
                 });
                 ui.add_space(12.0);
+                if self.cfg.hunt_method != HuntMethod::PokeRadar {
+                    let lure_help = if eggs {
+                        "While it's lit, Eggs get 2 more rolls. Follows the game's log: on when you use one, off when it wears off."
+                    } else {
+                        "While it's lit, wild Pokémon get 3 more rolls. Follows the game's log: on when you use one, off when it wears off."
+                    };
+                    self.dirty |= kit::toggle_row(ui, "Shiny Lure lit", lure_help, &mut self.cfg.shiny_lure);
+                    ui.add_space(12.0);
+                }
             }
             self.dirty |= kit::toggle_row(
                 ui,
@@ -626,7 +670,7 @@ fn dashed_pill(p: &egui::Painter, r: Rect, c: Color32) {
 }
 
 /// A method choice: icon, name, what it is and its odds.
-fn method_tile(ui: &mut egui::Ui, w: f32, m: HuntMethod, sel: bool, badge: &str) -> bool {
+pub(super) fn method_tile(ui: &mut egui::Ui, w: f32, m: HuntMethod, sel: bool, badge: &str) -> bool {
     let h = 84.0;
     let (rect, resp) = ui.allocate_exact_size(vec2(w, h), Sense::click());
     let hov = resp.hovered();

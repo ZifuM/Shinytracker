@@ -291,5 +291,9 @@ mod tests {
         // v0.7.2.2 (numbers only again: v0.7.2 copies read it too)
         assert!(is_newer("v0.7.2.2", "0.7.2.1"));
         assert!(is_newer("v0.7.2.2", "0.7.2"));
+        // v0.7.3 after the four-number v0.7.2.2
+        assert!(is_newer("v0.7.3", "0.7.2.2"));
+        assert!(is_newer("v0.7.3", "0.7.2"));
+        assert!(!is_newer("v0.7.2.2", "0.7.3"));
     }
 }

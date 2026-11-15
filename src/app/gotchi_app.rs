@@ -552,7 +552,7 @@ impl App {
             .filter_map(|(slug, src)| {
                 let i = self.species.iter().position(|s| s.slug == slug)?;
                 let when = match src {
-                    super::extras::DexSource::Hunt(t, _) => t,
+                    super::extras::DexSource::Hunt(t, _) | super::extras::DexSource::Logged(t, _) => t,
                     _ => 0,
                 };
                 Some((when, i, slug, self.species[i].name.to_string()))
@@ -1145,6 +1145,10 @@ impl App {
         self.gotchi_side(ui, side_r);
         ui.add_space(16.0);
         self.gotchi_journal(ui);
+        // a note and a canvas of your own, beside the journal it keeps
+        ui.add_space(16.0);
+        let pet = self.setup.gotchi.file().partner().cloned().map(|p| self.gotchi_name(&p)).unwrap_or_else(|| "Pokégotchi".into());
+        self.linked_journal(ui, "gotchi", &format!("{pet}'s journal"), "Pokégotchi", "your Pokégotchi");
     }
 
     /// The Box: your pets, the partner first in line; adopt more.

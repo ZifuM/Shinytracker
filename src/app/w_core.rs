@@ -366,7 +366,7 @@ impl App {
                 let st = fit::stack(text_r, 2, 0.0);
                 fit::label(&p, st[0], &name, b.bold(13.0), TEXT(), Align2::LEFT_BOTTOM);
                 let at = fit::hero(&p, st[1], &enc, b.px(22.0), TEXT(), Align2::LEFT_TOP);
-                p.text(pos2(at.max.x + b.px(6.0), at.center().y), Align2::LEFT_CENTER, "encounters", b.font(11.0), MUTED());
+                p.text(pos2(at.max.x + b.px(6.0), at.center().y), Align2::LEFT_CENTER, self.count_word(), b.font(11.0), MUTED());
                 if odds_r.is_positive() {
                     let (mr, tr) = fit::split_top(Rect::from_center_size(odds_r.center(), vec2(odds_r.width(), b.px(30.0))), b.px(7.0), b.px(6.0));
                     fit::meter(&p, mr, mult.min(1.0), odds_col);
@@ -433,7 +433,7 @@ impl App {
                         }
                         "count" => {
                             let at = fit::hero(&p, Rect::from_min_max(r.min, pos2(r.max.x - b.px(80.0), r.max.y)), &enc, r.height() * 1.05, TEXT(), Align2::LEFT_CENTER);
-                            p.text(pos2(at.max.x + b.px(6.0), at.max.y - at.height() * 0.18), Align2::LEFT_BOTTOM, "encounters", b.font(11.5), MUTED());
+                            p.text(pos2(at.max.x + b.px(6.0), at.max.y - at.height() * 0.18), Align2::LEFT_BOTTOM, self.count_word(), b.font(11.5), MUTED());
                         }
                         "time" => {
                             fit::label(&p, *r, &format!("{} on this hunt · {} today", fmt_duration(secs), fmt_duration(self.today_hunt_secs())), b.font(11.0), MUTED(), Align2::LEFT_CENTER);
@@ -448,7 +448,7 @@ impl App {
                 if btns.is_positive() {
                     let parts = if tall || shape == Shape::Strip { fit::stack(Rect::from_center_size(btns.center(), vec2(btns.width(), (btn_h * 2.0 + b.px(6.0)).min(btns.height()))), 2, b.px(6.0)) } else { fit::cols(btns, 2, b.px(8.0)) };
                     self.overlay_pill(ui, parts[0], ("hunt-ov", id));
-                    if fit::button(ui, parts[1], "🎯  Change target", false, ("hunt-change", id)) {
+                    if fit::button(ui, parts[1], "+  New hunt", false, ("hunt-change", id)) {
                         change = true;
                     }
                 }
@@ -469,14 +469,21 @@ impl App {
     /// square); click one for its trophy.
     pub(super) fn f_shinies(&mut self, ui: &mut egui::Ui) {
         let b = wbox(ui, "shinies");
-        let recent: Vec<(Option<usize>, String, u64, u64, Option<String>)> = self
+        // hunts and shinies logged by hand, newest first
+        let mut recent: Vec<(Option<usize>, String, Option<u64>, u64, Option<String>)> = self
             .cfg
             .history
             .iter()
             .rev()
             .take(32)
-            .map(|h| (h.slug.as_deref().and_then(|s| self.species.iter().position(|sp| sp.slug == s)), h.target.clone(), h.encounters, h.when_unix, h.slug.clone()))
+            .map(|h| (h.slug.as_deref().and_then(|s| self.species.iter().position(|sp| sp.slug == s)), h.target.clone(), Some(h.encounters), h.when_unix, h.slug.clone()))
             .collect();
+        for l in self.cfg.logged.iter().filter(|l| !l.slug.is_empty()) {
+            let name = if l.mon.nickname.trim().is_empty() { l.mon.species.clone() } else { l.mon.nickname.trim().to_string() };
+            recent.push((self.species.iter().position(|sp| sp.slug == l.slug), name, l.encounters.filter(|n| *n > 0), l.when_unix, Some(l.slug.clone())));
+        }
+        recent.sort_by(|a, b| b.3.cmp(&a.3));
+        recent.truncate(32);
         let mini = b.shape() == Shape::Mini;
         let (body, dex) = if mini { (b.inner(), false) } else { fit::head(ui, &b, "✨", kit::C_GOLD, "Recent shinies", Some("Shiny Dex ›")) };
         let mut trophy: Option<Option<String>> = None;
@@ -508,10 +515,15 @@ impl App {
                     let (n_r, e_r) = if with_enc { fit::split_top(text_r, text_h * 0.55, 0.0) } else { (text_r, Rect::NOTHING) };
                     fit::label(&p, n_r, name, b.bold(12.0), TEXT(), Align2::CENTER_CENTER);
                     if with_enc {
-                        fit::label(&p, e_r, &format!("{} enc.", theme::thousands(*enc)), b.font(10.5), MUTED(), Align2::CENTER_CENTER);
+                        let t = enc.map_or("Logged".to_string(), |n| format!("{} enc.", theme::thousands(n)));
+                        fit::label(&p, e_r, &t, b.font(10.5), MUTED(), Align2::CENTER_CENTER);
                     }
                 }
-                if resp.on_hover_text(format!("{name}: {} encounters · {}\nClick for its trophy", theme::thousands(*enc), ago(*when))).clicked() {
+                let tip = match enc {
+                    Some(n) => format!("{name}: {} encounters · {}\nClick for its Shiny Dex page", theme::thousands(*n), ago(*when)),
+                    None => format!("{name}: logged by hand · {}\nClick for its Shiny Dex page", ago(*when)),
+                };
+                if resp.on_hover_text(tip).clicked() {
                     trophy = Some(slug.clone());
                 }
             }

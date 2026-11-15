@@ -243,7 +243,7 @@ impl App {
             width,
             liquid,
             title: self.targets_title(),
-            count: self.cfg.count,
+            count: self.ov_count(),
             counter_label,
             counter_col,
             odds: self.ov_odds(),
@@ -426,6 +426,10 @@ impl App {
         // (pop-ups open under the Card Collector's XP bar when it's there)
         let room = self.bar_room();
         self.ov_shape = shapes;
+        // Your Eggs and Poké Balls: strips just under the overlay, in its theme.
+        let p = ui.painter().clone();
+        let (bottom, strips) = self.under_strips(ui, &p, full.min.x, bottom, full.width(), self.cfg.overlay.theme, v.compact);
+        self.ov_shape.extend(strips);
         if below {
             let area = Rect::from_min_max(egui::pos2(full.min.x, bottom + 6.0 + room), egui::pos2(full.max.x, bottom + 6.0 + room + BELOW_H - 8.0));
             if !self.notices.is_empty() {
@@ -875,6 +879,7 @@ impl App {
         self.ov_panel(ctx, |this, ui| {
             let v = this.ov_view();
             let m = v.m.clone();
+            let radar = this.radar_bar();
             let win = ui.max_rect();
             let p = ui.painter().clone();
             let top = win.min.y + 1.0;
@@ -932,12 +937,34 @@ impl App {
                     let y = if m.target { top + 33.0 } else { mid };
                     let r = (lk.big)(&p, egui::pos2(x, y), Align2::LEFT_CENTER, &theme::thousands(v.count), (lk.num)(20.0), lk.text);
                     let mut ww = r.width();
-                    if v.counter_label != "ENCOUNTERS" {
+                    if !super::overlay_mod::plain_counter(v.counter_label) {
                         ww += 8.0 + p.text(egui::pos2(r.max.x + 8.0, y + 1.0), Align2::LEFT_CENTER, v.counter_label, (lk.label)(9.0), (lk.tone)(v.counter_col)).width();
                     }
                     w = w.max(ww);
                 }
+                // Radar hunts: fixed width, so the chain meter never moves
+                if radar.is_some() {
+                    w = w.max(super::radar::BAR_COUNT_W);
+                }
                 x += w + 12.0;
+            }
+            if let (Some(rb), None) = (&radar, &v.alert) {
+                div(&mut x);
+                let (lab_col, fill) = rb.colors(lk.accent, lk.muted);
+                let on = rb.look != super::radar::BarLook::Broken || v.blink;
+                p.text(egui::pos2(x, top + 16.0), Align2::LEFT_CENTER, &rb.label, (lk.label)(10.0), (lk.tone)(lab_col));
+                super::radar::meter(&p, Rect::from_min_size(egui::pos2(x + 1.0, top + 28.0), egui::vec2(super::radar::BAR_CHAIN_W - 12.0, 7.0)), rb.filled, (lk.tone)(fill), fade(lk.muted, 0.3), on);
+                tip(ui, Rect::from_min_size(egui::pos2(x, top + 6.0), egui::vec2(super::radar::BAR_CHAIN_W - 10.0, BAR_H - 12.0)), "tbar-radar", &rb.tip);
+                x += super::radar::BAR_CHAIN_W;
+            }
+            if let (Some(eggs), None) = (this.ov_eggs(), &v.alert) {
+                div(&mut x);
+                x += this.bar_eggs(ui, &p, x, top, BAR_H, &eggs, (lk.label)(10.0), lk.text, lk.muted, (lk.tone)(lk.accent), fade(lk.muted, 0.3)) + 10.0;
+            }
+            let balls = this.ov_balls();
+            if !balls.is_empty() && v.alert.is_none() {
+                div(&mut x);
+                x += this.bar_balls(ui, &p, x, top, BAR_H, &balls, (lk.label)(10.0), (lk.body)(12.5), lk.text, lk.muted, (lk.tone)(theme::HP_RED)) + 10.0;
             }
             if m.odds_bar {
                 div(&mut x);
@@ -945,7 +972,7 @@ impl App {
                 p.text(egui::pos2(x, top + 16.0), Align2::LEFT_CENTER, format!("{} ODDS", v.mult_text()), (lk.label)(10.0), col);
                 (lk.gauge)(&p, Rect::from_min_size(egui::pos2(x + 1.0, top + 28.0), egui::vec2(66.0, 7.0)), v.odds.frac, col);
                 tip(ui, Rect::from_min_size(egui::pos2(x, top + 6.0), egui::vec2(70.0, BAR_H - 12.0)), "tbar-odds", &v.odds.tip);
-                x += 76.0;
+                x += if radar.is_some() { 120.0 } else { 76.0 };
             }
             let stat = |ui: &mut egui::Ui, x: &mut f32, label: &str, value: String, col: Color32, t: &str| {
                 div(x);
@@ -1045,7 +1072,7 @@ impl App {
             }
             let w = if h > BAR_H + 12.0 { width.max(BAR_POPUP_W + 2.0) } else { width + lk.shadow.map_or(0.0, |o| o.x) };
             this.ov_size = Some([w, h]);
-            if v.celebrate.is_some() || v.alert.is_some() {
+            if v.celebrate.is_some() || v.alert.is_some() || radar.as_ref().is_some_and(|r| r.look == super::radar::BarLook::Broken) {
                 ctx.request_repaint();
             }
         });

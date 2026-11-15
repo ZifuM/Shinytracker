@@ -78,6 +78,271 @@ pub fn parse_gift(line: &str) -> Option<GiftLine> {
     (species > 0).then_some(GiftLine { species, shiny })
 }
 
+/// Egg news from the log (game 0.4.0 on).
+#[derive(Debug, Clone, PartialEq)]
+pub enum EggEvent {
+    /// "WISH an Egg is waiting at the Day-Care".
+    Waiting,
+    /// An Egg hatched. The species is only known when the naming page opened
+    /// (or its picture was loaded for the first time this session), e.g.
+    /// "EEVEE"; the log never says whether it's shiny.
+    Hatched { species: Option<String> },
+}
+
+/// "07:02:55 INFO  WISH     an Egg is waiting at the Day-Care"
+pub fn is_egg_waiting(line: &str) -> bool {
+    line.contains(" WISH ") && line.contains("Egg is waiting")
+}
+
+/// Seconds into the day from the clock at the start of a line ("07:07:39 …").
+fn line_secs(line: &str) -> Option<u32> {
+    let b = line.as_bytes();
+    if b.len() < 8 || b[2] != b':' || b[5] != b':' {
+        return None;
+    }
+    let n = |r: std::ops::Range<usize>| line.get(r)?.parse::<u32>().ok();
+    Some(n(0..2)? * 3600 + n(3..5)? * 60 + n(6..8)?)
+}
+
+/// "EEVEE’s nickname?" / "RHYHORN_female/0 ready" → "EEVEE" / "RHYHORN".
+fn log_species_name(s: &str) -> Option<String> {
+    let s = s.trim();
+    let s = s.split('_').next().unwrap_or(s);
+    (!s.is_empty()).then(|| s.to_string())
+}
+
+/// The longest a hatch takes from its scene starting to the new Pokémon
+/// being put in the party (the naming page can sit open a while).
+const HATCH_WINDOW_SECS: u32 = 180;
+
+/// Spots a hatch. The game has no hatch line, but every hatch writes the
+/// same steps, with or without a nickname:
+///
+///   07:07:39 INFO  DISPLAY  scene wide 1 sides 0x8          (the hatch scene)
+///   07:07:40 INFO  GEN5     EEVEE/0 ready …                  (first time only)
+///   07:07:42 INFO  NAMING   the naming page opens: EEVEE’s nickname? …  (only if "Yes")
+///   07:07:44 INFO  ORIGIN   1 Pokemon stamped with origin 1  (it joins you)
+///
+/// A battle in between calls it off, so caught Pokémon never count.
+#[derive(Default)]
+pub struct HatchWatch {
+    /// When the scene started (seconds into the day) and the species so far.
+    open: Option<(u32, Option<String>)>,
+}
+
+impl HatchWatch {
+    pub fn push(&mut self, line: &str) -> Option<EggEvent> {
+        if line.contains(" DISPLAY ") && line.contains("scene wide 1 sides 0x8") {
+            self.open = Some((line_secs(line).unwrap_or(0), None));
+            return None;
+        }
+        let (start, species) = self.open.as_mut()?;
+        if let (Some(now), true) = (line_secs(line), *start > 0) {
+            if (now + 86_400 - *start) % 86_400 > HATCH_WINDOW_SECS {
+                self.open = None;
+                return None;
+            }
+        }
+        if parse_wild(line).is_some() || is_battle_start(line) || line.contains(" CATCH ") {
+            self.open = None;
+            return None;
+        }
+        if let Some(i) = line.find("the naming page opens: ") {
+            let rest = &line[i + "the naming page opens: ".len()..];
+            let end = rest.find(['’', '\'']).unwrap_or(rest.len());
+            if let Some(n) = log_species_name(&rest[..end]) {
+                *species = Some(n);
+            }
+            return None;
+        }
+        if species.is_none() && line.contains(" GEN5 ") && line.contains(" ready in ") {
+            if let Some(i) = line.find(" GEN5 ") {
+                let rest = line[i + 6..].trim_start();
+                if let Some(slash) = rest.find('/') {
+                    *species = log_species_name(&rest[..slash]);
+                }
+            }
+            return None;
+        }
+        if line.contains(" ORIGIN ") && line.contains("Pokemon stamped") {
+            let species = species.take();
+            self.open = None;
+            return Some(EggEvent::Hatched { species });
+        }
+        None
+    }
+}
+
+/// How a wild battle ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BattleEnd {
+    /// The wild Pokémon fainted ("FAINT battler 1 state 0").
+    Knocked,
+    /// It was caught ("CATCH caught battler …").
+    Caught,
+    /// Neither: you ran (or it fled).
+    Ran,
+}
+
+/// What the party is worked out from (with `world-card.ini`, written when
+/// the game opens). The log gives box/party moves as slot numbers only.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PartyEvent {
+    /// "BOXES move 881 -> 3": 0-5 are party slots, bigger numbers box
+    /// places. `seen` = Pokémon pictures the box page loaded since the last
+    /// move (a hint at what came out of a box).
+    Move { from: u32, to: u32, seen: Vec<String> },
+    /// A wild Pokémon was caught (game's species number).
+    Caught { species: u32 },
+    /// The game's own number for a Pokémon, paired with the picture it
+    /// loaded for it (for numbers past #493, which aren't Pokédex numbers).
+    Named { species: u32, name: String },
+}
+
+/// "TALONFLAME/0", "EEVEE_female/0" → "TALONFLAME", "EEVEE".
+pub fn picture_name(raw: &str) -> String {
+    let n = raw.split('/').next().unwrap_or(raw);
+    let n = n.strip_suffix("_female").or_else(|| n.strip_suffix("_male")).unwrap_or(n);
+    n.to_string()
+}
+
+#[derive(Default)]
+pub struct PartyWatch {
+    box_open: bool,
+    seen: Vec<String>,
+    /// A wild Pokémon past #493 waiting for its picture line.
+    wild: Option<u32>,
+}
+
+impl PartyWatch {
+    pub fn push(&mut self, line: &str) -> Option<PartyEvent> {
+        if line.contains(" UI ") && line.contains("box page: open") {
+            self.box_open = true;
+            self.seen.clear();
+            return None;
+        }
+        if line.contains(" UI ") && line.contains("box page: closed") {
+            self.box_open = false;
+            self.seen.clear();
+            return None;
+        }
+        if line.contains(" GEN5 ") && line.contains(" ready in ") {
+            let raw = line.split(" GEN5 ").nth(1)?.split_whitespace().next()?;
+            let name = picture_name(raw);
+            if let Some(sp) = self.wild.take() {
+                return Some(PartyEvent::Named { species: sp, name });
+            }
+            if self.box_open && !self.seen.contains(&name) {
+                self.seen.push(name);
+            }
+            return None;
+        }
+        if line.contains(" WILD ") {
+            // only a lone Pokémon past #493 can be paired with its picture
+            let sp = line.split("for species ").nth(1).and_then(|r| r.split_whitespace().next()).and_then(|n| n.parse::<u32>().ok());
+            self.wild = match (self.wild, sp) {
+                (None, Some(n)) if n > 493 => Some(n),
+                _ => None,
+            };
+            return None;
+        }
+        if line.contains(" BATTLE ") {
+            self.wild = None;
+        }
+        if line.contains(" BOXES ") && line.contains(": done") {
+            let r = line.split("move ").nth(1)?;
+            let mut it = r.split(" -> ");
+            let from = it.next()?.trim().parse().ok()?;
+            let to = it.next()?.split(':').next()?.trim().parse().ok()?;
+            return Some(PartyEvent::Move { from, to, seen: std::mem::take(&mut self.seen) });
+        }
+        if line.contains(" CATCH ") && line.contains("caught battler") {
+            let sp = line.split("species ").nth(1)?.split_whitespace().next()?.parse().ok()?;
+            return Some(PartyEvent::Caught { species: sp });
+        }
+        None
+    }
+}
+
+/// `world-card.ini` (written by the game when it opens): the party then, as
+/// the game's species numbers in slot order.
+pub fn read_world_card(path: &Path) -> Option<Vec<u32>> {
+    let s = std::fs::read_to_string(path).ok()?;
+    let line = s.lines().find(|l| l.contains('\t'))?;
+    let list = line.split('\t').nth(5)?;
+    let party: Vec<u32> = list.split(',').filter_map(|e| e.split('.').next()?.trim().parse().ok()).collect();
+    (!party.is_empty() && party.len() <= 6).then_some(party)
+}
+
+/// What a Poké Radar chain is worked out from. The game writes no chain
+/// line, so the app counts it from these.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RadarEvent {
+    /// "bag page: use item 431" (or the Y wheel's "used item 431"):
+    /// the Poké Radar was used.
+    Used,
+    /// One wild battle, from its WILD line(s) to "BATTLE HUD fade 16".
+    Battle { species: u32, multi: bool, end: BattleEnd },
+}
+
+/// The Poké Radar is item 431 in Platinum.
+pub fn is_radar_use(line: &str) -> bool {
+    line.contains(" UI ") && (line.contains("use item 431 ") || line.contains("used item 431 ") || line.trim_end().ends_with("item 431"))
+}
+
+/// Follows wild battles from start to end, for the Poké Radar chain.
+///
+///   08:20:36 INFO  WILD     shiny chance 2 in 8192 for species 280 at level 17
+///   08:20:36 INFO  BATTLE   encounter effect took 169 ms
+///   08:20:45 INFO  FAINT    battler 1 state 0
+///   08:20:48 INFO  BATTLE   HUD fade 16 towards 0000      (the battle is over)
+#[derive(Default)]
+pub struct RadarWatch {
+    species: Vec<u32>,
+    started: bool,
+    knocked: bool,
+    caught: bool,
+}
+
+impl RadarWatch {
+    pub fn push(&mut self, line: &str) -> Option<RadarEvent> {
+        if is_radar_use(line) {
+            return Some(RadarEvent::Used);
+        }
+        if let Some(w) = parse_wild(line) {
+            if self.started {
+                // a new battle while the last one never ended: start over
+                *self = Self::default();
+            }
+            self.species.push(w.species);
+            return None;
+        }
+        if self.species.is_empty() {
+            return None;
+        }
+        if is_battle_start(line) {
+            self.started = true;
+        } else if line.contains(" FAINT ") && (line.contains("battler 1 state 0") || line.contains("battler 3 state 0")) {
+            // the wild side is battlers 1 and 3
+            self.knocked = true;
+        } else if line.contains(" CATCH ") && line.contains("caught battler") {
+            self.caught = true;
+        } else if self.started && line.contains(" BATTLE ") && line.contains("HUD fade 16") {
+            let end = if self.caught {
+                BattleEnd::Caught
+            } else if self.knocked {
+                BattleEnd::Knocked
+            } else {
+                BattleEnd::Ran
+            };
+            let ev = RadarEvent::Battle { species: self.species[0], multi: self.species.len() > 1, end };
+            *self = Self::default();
+            return Some(ev);
+        }
+        None
+    }
+}
+
 /// What the log says about how you're hunting (used to switch the hunting
 /// style automatically).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -175,6 +440,30 @@ fn newest_log(dir: &Path) -> Option<(PathBuf, SystemTime)> {
         .max_by_key(|(_, t)| *t)
 }
 
+/// A Poké Ball thrown: its item number.
+///   12:50:10 INFO  CATCH    ball 15 from battler 2 at battler 1 (picked 1)
+pub fn parse_ball_throw(line: &str) -> Option<u16> {
+    let r = line.split(" CATCH ").nth(1)?.trim_start().strip_prefix("ball ")?;
+    if !r.contains(" from battler ") {
+        return None;
+    }
+    r.split_whitespace().next()?.parse().ok()
+}
+
+/// A Shiny Lure lit (true) or worn off (false), from the game's messages:
+///   13:02:11 INFO  MESSAGE  field message: You used a Shiny Lure!
+///   13:31:40 INFO  MESSAGE  field message: The Shiny Lure wore off...
+pub fn parse_lure(line: &str) -> Option<bool> {
+    let m = line.split(" MESSAGE ").nth(1)?;
+    if m.contains("used a Shiny Lure") {
+        Some(true)
+    } else if m.contains("Shiny Lure wore off") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
 /// Follows the newest session log, like `tail -f`.
 pub struct LogTail {
     dir: PathBuf,
@@ -190,6 +479,17 @@ pub struct LogTail {
     gifts: Vec<GiftLine>,
     hints: Vec<MethodHint>,
     last_reset: Option<Instant>,
+    hatch: HatchWatch,
+    eggs: Vec<EggEvent>,
+    radar: RadarWatch,
+    radar_events: Vec<RadarEvent>,
+    party: PartyWatch,
+    /// (seconds into the day the line was written, event)
+    party_events: Vec<(u32, PartyEvent)>,
+    /// Poké Balls thrown: (seconds into the day, item number).
+    balls: Vec<(u32, u16)>,
+    /// The Shiny Lure's newest state, not yet passed on.
+    lure: Option<bool>,
 }
 
 impl LogTail {
@@ -206,7 +506,35 @@ impl LogTail {
             gifts: Vec::new(),
             hints: Vec::new(),
             last_reset: None,
+            hatch: HatchWatch::default(),
+            eggs: Vec::new(),
+            radar: RadarWatch::default(),
+            radar_events: Vec::new(),
+            party: PartyWatch::default(),
+            party_events: Vec::new(),
+            balls: Vec::new(),
+            lure: None,
         }
+    }
+
+    /// The game's `world-card.ini` (next to the logs folder).
+    pub fn world_card(&self) -> Option<PathBuf> {
+        self.dir.parent().map(|d| d.join("world-card.ini"))
+    }
+
+    /// Poké Balls thrown since the last call: (seconds into the day, item).
+    pub fn take_balls(&mut self) -> Vec<(u32, u16)> {
+        std::mem::take(&mut self.balls)
+    }
+
+    /// The Shiny Lure lit or worn off since the last call (the newest).
+    pub fn take_lure(&mut self) -> Option<bool> {
+        self.lure.take()
+    }
+
+    /// Party moves / catches since the last call.
+    pub fn take_party(&mut self) -> Vec<(u32, PartyEvent)> {
+        std::mem::take(&mut self.party_events)
     }
 
     /// The folder being followed.
@@ -238,7 +566,25 @@ impl LogTail {
         if self.file.as_ref() != Some(&newest) {
             // At startup skip what's already in the log (old battles); a log
             // that appears later is a new game session, so read it from the top.
+            self.party = PartyWatch::default();
             self.pos = if self.first_pick {
+                // Old battles are skipped, but this session's party moves are
+                // read: the party is worked out from when the game opened.
+                if let Ok(text) = std::fs::read_to_string(&newest) {
+                    for line in text.lines() {
+                        if let Some(e) = self.party.push(line) {
+                            self.party_events.push((line_secs(line).unwrap_or(0), e));
+                        }
+                        // this session's throws too: the save may not have them yet
+                        if let Some(b) = parse_ball_throw(line) {
+                            self.balls.push((line_secs(line).unwrap_or(0), b));
+                        }
+                        // and whether a Shiny Lure is lit
+                        if let Some(l) = parse_lure(line) {
+                            self.lure = Some(l);
+                        }
+                    }
+                }
                 std::fs::metadata(&newest).map(|m| m.len()).unwrap_or(0)
             } else {
                 0
@@ -246,6 +592,8 @@ impl LogTail {
             self.first_pick = false;
             self.partial.clear();
             self.grouper = Grouper::default();
+            self.hatch = HatchWatch::default();
+            self.radar = RadarWatch::default();
             self.file = Some(newest);
         }
         Ok(())
@@ -266,6 +614,16 @@ impl LogTail {
     /// Hunting-style hints since the last call.
     pub fn take_hints(&mut self) -> Vec<MethodHint> {
         std::mem::take(&mut self.hints)
+    }
+
+    /// Poké Radar uses and finished wild battles since the last call.
+    pub fn take_radar(&mut self) -> Vec<RadarEvent> {
+        std::mem::take(&mut self.radar_events)
+    }
+
+    /// Eggs waiting / hatched since the last call.
+    pub fn take_eggs(&mut self) -> Vec<EggEvent> {
+        std::mem::take(&mut self.eggs)
     }
 
     /// Starters (gifts) handed over since the last call.
@@ -311,6 +669,24 @@ impl LogTail {
                 }
                 if is_reset(&line) {
                     self.last_reset = Some(now);
+                }
+                if is_egg_waiting(&line) {
+                    self.eggs.push(EggEvent::Waiting);
+                }
+                if let Some(e) = self.hatch.push(line.trim_end()) {
+                    self.eggs.push(e);
+                }
+                if let Some(e) = self.radar.push(line.trim_end()) {
+                    self.radar_events.push(e);
+                }
+                if let Some(e) = self.party.push(line.trim_end()) {
+                    self.party_events.push((line_secs(&line).unwrap_or(0), e));
+                }
+                if let Some(b) = parse_ball_throw(line.trim_end()) {
+                    self.balls.push((line_secs(&line).unwrap_or(0), b));
+                }
+                if let Some(l) = parse_lure(line.trim_end()) {
+                    self.lure = Some(l);
                 }
                 if let Some(group) = self.grouper.push(line.trim_end(), now) {
                     self.note_battle(&group, now);
@@ -489,6 +865,165 @@ pub fn read_new_events(dir: &Path, cursors: &mut std::collections::BTreeMap<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn hatches(text: &str) -> Vec<EggEvent> {
+        let mut w = HatchWatch::default();
+        text.lines().filter_map(|l| w.push(l.trim_end())).collect()
+    }
+
+    /// The real lines from a hatch where the nickname page was opened
+    /// (game 0.4.1, 15 Nov 2026).
+    const HATCH_NAMED: &str = "07:07:38 INFO  MAP      wide view: 35 wall tiles on filler block 586
+07:07:39 INFO  DISPLAY  context app
+07:07:39 INFO  DISPLAY  layout wide (held, black), context app, brightness 8010 8010
+07:07:39 INFO  DISPLAY  scene wide 1 sides 0x8
+07:07:39 INFO  DISPLAY  layout wide, context app, brightness 8010 8010
+07:07:40 INFO  GEN5     EEVEE/0 ready in 0.4 ms (63 frames, 26 pictures, 49x49)
+07:07:42 INFO  DISPLAY  scene wide 0 sides 0x0
+07:07:42 INFO  DISPLAY  context field
+07:07:42 INFO  NAMING   the naming page opens: EEVEE\u{2019}s nickname? (10 letters)
+07:07:42 INFO  NAMING   music under the page: the song playing, turned down
+07:07:44 INFO  NAMING   the name is \"\"
+07:07:44 INFO  FIELD    effect pictures: room for 256 (field memory free 1031172, 368 each)
+07:07:44 INFO  ORIGIN   1 Pokemon stamped with origin 1
+07:07:45 INFO  UI       keys: a page";
+
+    /// A hatch with "No" to the nickname (12 Nov 2026).
+    const HATCH_UNNAMED: &str = "14:18:57 INFO  DISPLAY  context app
+14:18:57 INFO  DISPLAY  scene wide 1 sides 0x8
+14:18:57 INFO  DISPLAY  layout wide, context app, brightness 8010 8010
+14:19:01 INFO  DISPLAY  scene wide 0 sides 0x0
+14:19:01 INFO  DISPLAY  context field
+14:19:01 INFO  FIELD    effect pictures: room for 256 (field memory free 1037316, 368 each)
+14:19:01 INFO  ORIGIN   1 Pokemon stamped with origin 1
+14:19:03 INFO  SAVE     autosaved";
+
+    /// A catch: named mid-battle and stamped, but no hatch scene.
+    const CATCH: &str = "07:14:04 INFO  WILD     shiny chance 2 in 8192 for species 280 at level 17
+07:14:05 INFO  BATTLE   encounter effect took 671 ms
+07:14:28 INFO  CATCH    caught battler 1 slot 0 species 280
+07:14:30 INFO  CATCH    naming the Pokemon caught mid-battle (1 of 1)
+07:14:30 INFO  NAMING   the naming page opens: RALTS\u{2019}s nickname? (10 letters)
+07:14:48 INFO  ORIGIN   1 Pokemon stamped with origin 1";
+
+    #[test]
+    fn hatch_with_a_nickname_page_knows_the_species() {
+        assert_eq!(hatches(HATCH_NAMED), vec![EggEvent::Hatched { species: Some("EEVEE".into()) }]);
+    }
+
+    #[test]
+    fn hatch_without_a_nickname_still_counts() {
+        assert_eq!(hatches(HATCH_UNNAMED), vec![EggEvent::Hatched { species: None }]);
+    }
+
+    #[test]
+    fn catches_are_not_hatches() {
+        assert!(hatches(CATCH).is_empty());
+    }
+
+    #[test]
+    fn hatches_in_a_row_count_once_each() {
+        let two = format!("{HATCH_UNNAMED}\n{HATCH_NAMED}");
+        assert_eq!(hatches(&two).len(), 2);
+        // a stamp long after a scene is something else
+        let late = "10:00:00 INFO  DISPLAY  scene wide 1 sides 0x8\n10:05:00 INFO  ORIGIN   1 Pokemon stamped with origin 1";
+        assert!(hatches(late).is_empty());
+        // a battle in between calls it off
+        let fight = "10:00:00 INFO  DISPLAY  scene wide 1 sides 0x8\n10:00:10 INFO  BATTLE   encounter effect took 600 ms\n10:00:30 INFO  ORIGIN   1 Pokemon stamped with origin 1";
+        assert!(hatches(fight).is_empty());
+    }
+
+    #[test]
+    fn hatch_species_from_the_picture_and_forms() {
+        let s = "09:00:00 INFO  DISPLAY  scene wide 1 sides 0x8\n09:00:01 INFO  GEN5     RHYHORN_female/0 ready in 0.5 ms (76 frames)\n09:00:04 INFO  ORIGIN   1 Pokemon stamped with origin 1";
+        assert_eq!(hatches(s), vec![EggEvent::Hatched { species: Some("RHYHORN".into()) }]);
+    }
+
+
+    /// The real 7-Ralts chain from 15 Nov 2026 (other lines left out).
+    const RADAR_CHAIN: &str = "08:20:03 INFO  UI       bag page: use item 431 (request 20431)
+08:20:05 INFO  WILD     shiny chance 2 in 8192 for species 315 at level 19
+08:20:05 INFO  BATTLE   encounter effect took 167 ms
+08:20:08 INFO  BATTLE   HUD fade 16 towards 0000
+08:20:33 INFO  UI       bag page: use item 431 (request 20431)
+08:20:36 INFO  WILD     shiny chance 2 in 8192 for species 280 at level 17
+08:20:36 INFO  BATTLE   encounter effect took 169 ms
+08:20:45 INFO  FAINT    battler 1 state 0
+08:20:45 INFO  FAINT    battler 1 state 4
+08:20:48 INFO  EXP      whole party's Exp. Share: foe gives 170; 1 fought get 170 each, the rest 85 each
+08:20:48 INFO  BATTLE   HUD fade 2 towards 0000
+08:20:48 INFO  BATTLE   HUD fade 16 towards 0000
+08:20:54 INFO  WILD     shiny chance 2 in 8192 for species 280 at level 17
+08:20:54 INFO  BATTLE   encounter effect took 167 ms
+08:21:00 INFO  CATCH    caught battler 1 slot 0 species 280
+08:21:04 INFO  BATTLE   HUD fade 16 towards 0000
+08:22:37 INFO  WILD     shiny chance 2 in 8192 for species 400 at level 18
+08:22:37 INFO  BATTLE   encounter effect took 167 ms
+08:22:40 INFO  FAINT    battler 1 state 0
+08:22:42 INFO  BATTLE   HUD fade 16 towards 0000
+08:30:00 INFO  WILD     shiny chance 2 in 8192 for species 22 at level 49
+08:30:00 INFO  WILD     shiny chance 2 in 8192 for species 75 at level 49
+08:30:00 INFO  BATTLE   encounter effect took 177 ms
+08:30:04 INFO  BATTLE   HUD fade 16 towards 0000
+08:31:00 INFO  UI       Y wheel: used item 431 (1) once";
+
+    #[test]
+    fn radar_battles_and_how_they_ended() {
+        let mut w = RadarWatch::default();
+        let got: Vec<RadarEvent> = RADAR_CHAIN.lines().filter_map(|l| w.push(l)).collect();
+        use BattleEnd::*;
+        assert_eq!(
+            got,
+            vec![
+                RadarEvent::Used,
+                RadarEvent::Battle { species: 315, multi: false, end: Ran },
+                RadarEvent::Used,
+                RadarEvent::Battle { species: 280, multi: false, end: Knocked },
+                RadarEvent::Battle { species: 280, multi: false, end: Caught },
+                RadarEvent::Battle { species: 400, multi: false, end: Knocked },
+                RadarEvent::Battle { species: 22, multi: true, end: Ran },
+                RadarEvent::Used,
+            ]
+        );
+        assert!(!is_radar_use("08:06:37 INFO  UI       Y wheel: used item 450 (1)"));
+    }
+
+    #[test]
+    fn ball_throws() {
+        assert_eq!(parse_ball_throw("12:50:10 INFO  CATCH    ball 15 from battler 2 at battler 1 (picked 1)"), Some(15));
+        assert_eq!(parse_ball_throw("12:50:07 INFO  CATCH    battler 0 chose a ball (15): which wild Pokemon"), None);
+        assert_eq!(parse_ball_throw("12:50:08 INFO  CAPSULE  burst: capsule 3, seals -1, ball 4"), None);
+        assert_eq!(parse_lure("13:02:11 INFO  MESSAGE  field message: You used a Shiny Lure!"), Some(true));
+        assert_eq!(parse_lure("13:31:40 INFO  MESSAGE  field message: The Shiny Lure wore off..."), Some(false));
+        assert_eq!(parse_lure("13:31:40 INFO  MESSAGE  field message: You used a Repel!"), None);
+    }
+
+    #[test]
+    fn egg_waiting_line() {
+        assert!(is_egg_waiting("07:02:55 INFO  WISH     an Egg is waiting at the Day-Care"));
+        assert!(!is_egg_waiting("07:02:55 INFO  UI       Y wheel: BICYCLE"));
+    }
+
+    /// Every hatch in the real logs (set PT_LOGS to a logs folder).
+    #[test]
+    #[ignore]
+    fn real_logs_hatches() {
+        let dir = std::env::var("PT_LOGS").unwrap();
+        let mut names: Vec<_> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).map(|e| e.path()).collect();
+        names.sort();
+        for p in names {
+            let text = String::from_utf8_lossy(&std::fs::read(&p).unwrap()).to_string();
+            let mut w = HatchWatch::default();
+            for l in text.lines() {
+                if is_egg_waiting(l) {
+                    println!("{}  {}  egg waiting", p.file_name().unwrap().to_string_lossy(), &l[..8]);
+                }
+                if let Some(e) = w.push(l.trim_end()) {
+                    println!("{}  {}  {:?}", p.file_name().unwrap().to_string_lossy(), &l[..8], e);
+                }
+            }
+        }
+    }
     use std::io::Write;
 
     const SAMPLE: &str = "\

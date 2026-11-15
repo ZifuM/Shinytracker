@@ -56,6 +56,16 @@ pub(super) enum EraFilter {
     Modern,
 }
 
+/// "Your game" view: which to show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum GameFilter {
+    #[default]
+    All,
+    Caught,
+    SeenOnly,
+    NotSeen,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum CaughtFilter {
     #[default]
@@ -75,6 +85,9 @@ pub(super) struct DexState {
     pub stage: Option<usize>,
     pub era: EraFilter,
     pub caught: CaughtFilter,
+    /// "Your game": your save's Pokédex, seen and caught.
+    pub game: bool,
+    pub game_filter: GameFilter,
     /// The open entry (wiki id, e.g. "SCYTHER").
     pub open: Option<String>,
     /// The entry page's tab.
@@ -256,8 +269,10 @@ impl App {
         if self.setup.pokedex.index.as_ref().map(|(k, _)| *k) != Some(key) {
             self.setup.pokedex.index = Some((key, build_index(w)));
         }
-        if self.setup.pokedex.shiny {
-            kit::page_header(ui, "POKÉDEX", "Your Shiny Dex: every shiny you've caught. Click a caught one for its trophy; right-click to mark one you caught before.");
+        if self.setup.pokedex.game {
+            kit::page_header(ui, "POKÉDEX", "Your game's Pokédex: what your save has seen and caught (read only, it updates as the game saves). Click one for everything about it.");
+        } else if self.setup.pokedex.shiny {
+            kit::page_header(ui, "POKÉDEX", "Your Shiny Dex: every shiny you've caught. Click a caught one for its trophy; right-click one to log a shiny you caught before.");
         } else {
             kit::page_header(ui, "POKÉDEX", &format!("Every Pokémon in Platinum Together (Platinum Together Wiki v{}). Click one for everything about it.", w.data.version));
         }
@@ -268,7 +283,13 @@ impl App {
         let mut targets: Vec<String> = self.cfg.target.iter().cloned().collect();
         targets.extend(self.also_slugs());
 
-        self.dex_progress_card(ui, &index, &caught);
+        let gdex = if self.setup.pokedex.game { self.game_dex() } else { None };
+        if self.setup.pokedex.game {
+            let dexes: Vec<(u32, bool)> = index.iter().filter(|m| !m.cant_get).map(|m| (m.dex, m.modern)).collect();
+            self.game_dex_card(ui, &dexes, gdex.as_ref());
+        } else {
+            self.dex_progress_card(ui, &index, &caught);
+        }
         ui.add_space(16.0);
         self.dex_toolbar(ui, w, &index);
         ui.add_space(14.0);
@@ -301,6 +322,15 @@ impl App {
             .filter(|m| st.region.map_or(true, |r| crate::moddex::Region::of(m.dex as u16, m.modern) == r))
             .filter(|m| !st.shiny || !m.cant_get || st.show_unobtainable || st.how == HowFilter::CantGet)
             .filter(|m| {
+                if st.game {
+                    let s = gdex.as_ref().map_or(super::game_dex::InGame::Unseen, |g| g.status(m.dex));
+                    return match st.game_filter {
+                        GameFilter::All => true,
+                        GameFilter::Caught => s == super::game_dex::InGame::Caught,
+                        GameFilter::SeenOnly => s == super::game_dex::InGame::Seen,
+                        GameFilter::NotSeen => s == super::game_dex::InGame::Unseen,
+                    };
+                }
                 let has = caught.contains_key(&slug_of(m));
                 match st.caught {
                     CaughtFilter::All => true,
@@ -314,14 +344,32 @@ impl App {
             2 => list.sort_by(|a, b| met.get(&b.dex).copied().unwrap_or(0).cmp(&met.get(&a.dex).copied().unwrap_or(0)).then(a.dex.cmp(&b.dex))),
             _ => {}
         }
-        let shiny = st.shiny;
+        let shiny = st.shiny && !st.game;
+        let game = st.game;
         self.setup.pokedex.list_ids = list.iter().map(|m| m.id.clone()).collect();
 
         // ── count and legend
         let mut show_unob = self.setup.pokedex.show_unobtainable;
+        let mut log_new = false;
         ui.horizontal(|ui| {
             ui.label(RichText::new(format!("{} Pokémon", list.len())).font(super::charts::bold(14.0)).color(TEXT()));
             ui.add_space(10.0);
+            if game {
+                for (k, t) in [(0, "caught"), (1, "seen"), (2, "not seen yet")] {
+                    let (r, _) = ui.allocate_exact_size(vec2(12.0, 12.0), Sense::hover());
+                    match k {
+                        0 => super::sim_catch::draw_ball_color(ui.painter(), r.center(), 5.5, super::game_dex::CAUGHT_COL, false),
+                        1 => {
+                            ui.painter().circle_stroke(r.center(), 5.0, Stroke::new(1.5f32, MUTED()));
+                        }
+                        _ => {
+                            ui.painter().circle_filled(r.center(), 5.0, theme::blend(CARD(), TEXT(), 0.15));
+                        }
+                    }
+                    ui.label(RichText::new(t).size(12.0).color(MUTED()));
+                    ui.add_space(6.0);
+                }
+            }
             for (icon, c, t) in [("✨", GOLD, "shiny caught"), ("🎯", theme::HP_RED, "you're hunting it"), ("🌿", theme::GREEN, "on rare grass today")] {
                 ui.label(RichText::new(icon).size(12.0).color(c));
                 ui.label(RichText::new(t).size(12.0).color(MUTED()));
@@ -344,11 +392,30 @@ impl App {
                         txt.push_str(&format!(" · luckiest {} at {}", h.target, theme::thousands(h.encounters)));
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if kit::accent_button(ui, egui::Button::new(RichText::new("✨  Log a shiny").strong().color(kit::on_primary())), 4.0)
+                            .on_hover_text("Caught one without tracking it? Log it with its nature, IVs, moves and more")
+                            .clicked()
+                        {
+                            log_new = true;
+                        }
+                        ui.add_space(8.0);
                         ui.label(RichText::new(txt).size(12.0).color(MUTED()));
+                    });
+                } else {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if kit::accent_button(ui, egui::Button::new(RichText::new("✨  Log a shiny").strong().color(kit::on_primary())), 4.0)
+                            .on_hover_text("Caught one without tracking it? Log it with its nature, IVs, moves and more")
+                            .clicked()
+                        {
+                            log_new = true;
+                        }
                     });
                 }
             }
         });
+        if log_new {
+            self.open_log(None);
+        }
         if show_unob != self.setup.pokedex.show_unobtainable {
             self.setup.pokedex.show_unobtainable = show_unob;
         }
@@ -392,6 +459,7 @@ impl App {
         let mut open: Option<String> = None;
         let mut trophy: Option<String> = None;
         let mut mark: Option<(String, bool)> = None;
+        let mut log_this: Option<String> = None;
         for row in list.chunks(cols) {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = gap;
@@ -408,10 +476,23 @@ impl App {
                     let n_met = met.get(&m.dex).copied().unwrap_or(0);
                     let ht = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered(), kit::QUICK);
                     let tm = TileMon { dex: m.dex, name: m.name.clone(), types: m.types.clone(), modern: m.modern, cant_get: m.cant_get };
-                    self.dex_tile(ui, r, &sp, &tm, shiny, has, hunting, on_rare, ht);
+                    let gs = if game { Some(gdex.as_ref().map_or(super::game_dex::InGame::Unseen, |g| g.status(m.dex))) } else { None };
+                    self.dex_tile(ui, r, &sp, &tm, shiny, has, hunting, on_rare, ht, gs);
                     let mut tip = format!("#{:04} {}  ·  {}", m.dex, m.name, m.types.join(" / "));
+                    if let (Some(s), Some(g)) = (gs, gdex.as_ref()) {
+                        tip.push_str(match s {
+                            super::game_dex::InGame::Caught => "\nCaught in your game",
+                            super::game_dex::InGame::Seen => "\nSeen in your game, not caught yet",
+                            super::game_dex::InGame::Unseen if m.dex > 493 => "\nNone in your party or boxes (the game's Pokédex only covers the first 493)",
+                            super::game_dex::InGame::Unseen => "\nNot seen in your game yet",
+                        });
+                        if let Some(n) = g.owned.get(&m.dex) {
+                            tip.push_str(&format!("\n{n} in your party and boxes"));
+                        }
+                    }
                     match (&src, shiny) {
                         (Some(super::extras::DexSource::Hunt(t, n)), true) => tip.push_str(&format!("\n✨ Shiny caught {} after {} encounters", crate::stats::fmt_date(*t), theme::thousands(*n))),
+                        (Some(super::extras::DexSource::Logged(t, _)), true) => tip.push_str(&format!("\n✨ Shiny logged by hand · caught {}", crate::stats::fmt_date(*t))),
                         (Some(super::extras::DexSource::Manual), true) => tip.push_str("\n✨ Shiny marked by hand"),
                         (Some(_), false) => tip.push_str("\n✨ Shiny caught"),
                         (None, true) if !m.cant_get => tip.push_str("\nNot caught yet"),
@@ -446,8 +527,12 @@ impl App {
                         let slug = sp.slug.clone();
                         let manual = matches!(src, Some(super::extras::DexSource::Manual));
                         resp.context_menu(|ui| {
+                            if ui.button("✨ Log a shiny with its details…").clicked() {
+                                log_this = Some(slug.clone());
+                                ui.close_menu();
+                            }
                             if !has {
-                                if ui.button("✨ Mark as caught (shiny)").clicked() {
+                                if ui.button("Mark as caught (no details)").clicked() {
                                     mark = Some((slug.clone(), true));
                                     ui.close_menu();
                                 }
@@ -456,14 +541,15 @@ impl App {
                                     mark = Some((slug.clone(), false));
                                     ui.close_menu();
                                 }
-                            } else {
-                                ui.label("Caught on a hunt: click it to see the trophy");
                             }
                         });
                     }
                 }
             });
             ui.add_space(gap);
+        }
+        if let Some(slug) = log_this {
+            self.open_log(Some(&slug));
         }
         self.setup.pokedex.index = Some((ikey, index));
         if let Some(id) = open {
@@ -517,6 +603,7 @@ impl App {
         st.stage = None;
         st.era = EraFilter::All;
         st.caught = CaughtFilter::All;
+        st.game_filter = GameFilter::All;
         st.region = None;
     }
 
@@ -614,7 +701,12 @@ impl App {
             }
             ui.add_space((ui.available_width() - rest_w - 2.0).max(8.0));
             let start = ui.cursor().min.x;
-            kit::segmented(ui, &mut st.shiny, &[(false, "Normal"), (true, "✨ Shiny Dex")]);
+            let mut mode = if st.game { 2u8 } else if st.shiny { 1 } else { 0 };
+            if kit::segmented(ui, &mut mode, &[(0, "Normal"), (1, "✨ Shiny Dex"), (2, "📖 Your game")]) {
+                st.shiny = mode == 1;
+                st.game = mode == 2;
+                st.grid_gen += 1;
+            }
             kit::Dropdown::from_id_salt("pdx-sort")
                 .selected_text(["Number", "Name", "Most met"][st.sort.min(2) as usize])
                 .width(110.0)
@@ -642,14 +734,18 @@ impl App {
         });
         ui.add_space(10.0);
         // row 3: caught, how, when, era, clear
-        let active = !st.search.is_empty() || st.type_filter.is_some() || st.how != HowFilter::Any || st.stage.is_some() || st.era != EraFilter::All || st.caught != CaughtFilter::All || st.region.is_some();
+        let active = !st.search.is_empty() || st.type_filter.is_some() || st.how != HowFilter::Any || st.stage.is_some() || st.era != EraFilter::All || st.caught != CaughtFilter::All || st.game_filter != GameFilter::All || st.region.is_some();
         let mut clear = false;
         // The switches are nested layouts, which a wrapped row can't move to
         // the next line, so narrow pages get the row in two halves.
         let split = ui.available_width() < 980.0;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
-            kit::segmented(ui, &mut st.caught, &[(CaughtFilter::All, "All"), (CaughtFilter::Caught, "Shiny caught"), (CaughtFilter::NotYet, "Not caught")]);
+            if st.game {
+                kit::segmented(ui, &mut st.game_filter, &[(GameFilter::All, "All"), (GameFilter::Caught, "Caught"), (GameFilter::SeenOnly, "Seen, not caught"), (GameFilter::NotSeen, "Not seen")]);
+            } else {
+                kit::segmented(ui, &mut st.caught, &[(CaughtFilter::All, "All"), (CaughtFilter::Caught, "Shiny caught"), (CaughtFilter::NotYet, "Not caught")]);
+            }
             kit::Dropdown::from_id_salt("pdx-how").selected_text(st.how.label()).width(170.0).show_ui(ui, |ui| {
                 for h in HowFilter::ALL {
                     ui.selectable_value(&mut st.how, h, h.label());
@@ -699,7 +795,8 @@ impl App {
 
     /// One Pokémon in the grid.
     #[allow(clippy::too_many_arguments)]
-    fn dex_tile(&mut self, ui: &egui::Ui, r: Rect, sp: &crate::species::Species, m: &TileMon, shiny: bool, has: bool, hunting: bool, on_rare: bool, ht: f32) {
+    fn dex_tile(&mut self, ui: &egui::Ui, r: Rect, sp: &crate::species::Species, m: &TileMon, shiny: bool, has: bool, hunting: bool, on_rare: bool, ht: f32, game: Option<super::game_dex::InGame>) {
+        use super::game_dex::InGame;
         let p = ui.painter_at(r.expand(4.0));
         let tc = m.types.first().map(|t| type_color(t)).unwrap_or(MUTED());
         let r = r.translate(vec2(0.0, -2.0 * ht));
@@ -714,7 +811,14 @@ impl App {
         // sprite on a soft circle of its type colour
         let c = pos2(r.center().x, r.min.y + 54.0);
         p.circle_filled(c, 36.0, theme::blend(CARD(), tc, 0.18));
-        let tint = if shiny && !has {
+        let tint = if let Some(g) = game {
+            match g {
+                InGame::Caught => Color32::WHITE,
+                // seen: there, but grey
+                InGame::Seen => Color32::from_rgba_unmultiplied(120, 120, 132, 255),
+                InGame::Unseen => Color32::from_rgba_unmultiplied(10, 8, 18, 200),
+            }
+        } else if shiny && !has {
             // a silhouette, like a dex you haven't filled in yet
             if m.cant_get { Color32::from_rgba_unmultiplied(10, 8, 18, 110) } else { Color32::from_rgba_unmultiplied(10, 8, 18, 200) }
         } else if m.cant_get {
@@ -726,6 +830,17 @@ impl App {
         p.text(r.min + vec2(10.0, 12.0), Align2::LEFT_CENTER, format!("#{:04}", m.dex), super::charts::reg(10.5), MUTED());
         // corner marks
         let mut mx = r.max.x - 12.0;
+        match game {
+            Some(InGame::Caught) => {
+                super::sim_catch::draw_ball_color(&p, pos2(mx, r.min.y + 12.0), 5.5, super::game_dex::CAUGHT_COL, false);
+                mx -= 16.0;
+            }
+            Some(InGame::Seen) => {
+                p.circle_stroke(pos2(mx, r.min.y + 12.0), 5.0, Stroke::new(1.5f32, MUTED()));
+                mx -= 16.0;
+            }
+            _ => {}
+        }
         if has {
             theme::sparkle(&p, pos2(mx, r.min.y + 12.0), 5.0, GOLD);
             mx -= 16.0;
@@ -746,7 +861,7 @@ impl App {
         }
         // name and types
         let name = super::charts::clip(ui, &m.name, &super::charts::bold(13.0), r.width() - 12.0);
-        p.text(pos2(r.center().x, r.min.y + 104.0), Align2::CENTER_CENTER, name, super::charts::bold(13.0), if m.cant_get || (shiny && !has) { MUTED() } else { TEXT() });
+        p.text(pos2(r.center().x, r.min.y + 104.0), Align2::CENTER_CENTER, name, super::charts::bold(13.0), if m.cant_get || (shiny && !has) || matches!(game, Some(InGame::Unseen)) { MUTED() } else { TEXT() });
         let font = super::charts::bold(8.5);
         let gs: Vec<_> = m.types.iter().map(|t| (type_color(t), p.layout_no_wrap(t.to_uppercase(), font.clone(), Color32::WHITE))).collect();
         let total: f32 = gs.iter().map(|(_, g)| g.size().x + 12.0).sum::<f32>() + 4.0 * (gs.len().saturating_sub(1)) as f32;
@@ -897,6 +1012,9 @@ impl App {
         let team_list = self.team_choices();
         let mut add_team: Option<Option<u64>> = None;
         let mut test_catch = false;
+        let mut log_it = false;
+        let mut to_journal = false;
+        let have_journal = self.has_app(crate::apps::AppId::Journal);
         let map_ok = self.gamemap.as_ref().is_some_and(|r| r.is_ok());
         let wild_places: Vec<String> = {
             let mut v: Vec<String> = Vec::new();
@@ -984,6 +1102,10 @@ impl App {
                             Some(super::extras::DexSource::Hunt(t, n)) => {
                                 info_chip(ui, "✨", GOLD, &format!("Shiny caught {} · {} encounters", crate::stats::fmt_date(*t), theme::thousands(*n)));
                             }
+                            Some(super::extras::DexSource::Logged(t, n)) => {
+                                let enc = n.map(|n| format!(" · {} encounters", theme::thousands(n))).unwrap_or_default();
+                                info_chip(ui, "✨", GOLD, &format!("Shiny logged · caught {}{enc}", crate::stats::fmt_date(*t)));
+                            }
                             Some(super::extras::DexSource::Manual) => {
                                 info_chip(ui, "✨", GOLD, "In your Shiny Dex");
                             }
@@ -1037,6 +1159,12 @@ impl App {
                         }
                         if ui.add(egui::Button::new("🎯  Catch odds").fill(kit::btn_fill())).on_hover_text("Every Poké Ball's chance, in the Battle Sim's Catch Lab").clicked() {
                             test_catch = true;
+                        }
+                        if ui.add(egui::Button::new("✨  Log a shiny").fill(kit::btn_fill())).on_hover_text("Caught one without tracking it? Log it with its nature, IVs, moves and more").clicked() {
+                            log_it = true;
+                        }
+                        if super::journal_add::add_button(ui, have_journal) {
+                            to_journal = true;
                         }
                     });
                     if !rare_spots.is_empty() {
@@ -1149,8 +1277,17 @@ impl App {
         if let Some(t) = add_team {
             self.team_add_from(&m.id, t);
         }
+        if log_it {
+            let slug = self.species.iter().find(|s| s.name.eq_ignore_ascii_case(&m.name)).map(|s| s.slug.clone());
+            self.open_log(slug.as_deref());
+        }
         if test_catch {
             self.sim_test_catch(&m.id);
+        }
+        if to_journal {
+            if let Some(c) = self.dex_clip(&m.id) {
+                self.journal_add(c);
+            }
         }
         if let Some(t) = show_type {
             let st = &mut self.setup.pokedex;
@@ -1370,7 +1507,7 @@ impl App {
     /// One Pokémon in the evolution chart, with how it evolves above it.
     /// Returns true when clicked.
     #[allow(clippy::too_many_arguments)]
-    fn evo_tile(
+    pub(super) fn evo_tile(
         &mut self,
         ui: &mut egui::Ui,
         w: &Arc<Wiki>,
@@ -1406,7 +1543,7 @@ impl App {
             let hunting = self.cfg.target.as_deref() == Some(sp.slug.as_str());
             let tm = TileMon { dex: mon.dex, name: mon.name.clone(), types: mon.types.clone(), modern: mon.modern, cant_get: w.unobtainable(id).is_some() };
             let ht = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered() || current, kit::QUICK);
-            self.dex_tile(ui, tile, &sp, &tm, shiny, has, hunting, false, if current { 0.0 } else { ht });
+            self.dex_tile(ui, tile, &sp, &tm, shiny, has, hunting, false, if current { 0.0 } else { ht }, None);
             if current {
                 ui.painter().rect_stroke(tile, 18.0, Stroke::new(2.0f32, kit::primary()));
             }
@@ -1423,10 +1560,10 @@ impl App {
     }
 }
 
-const EVO_TILE_W: f32 = 132.0;
-const EVO_TILE_H: f32 = 150.0;
+pub(super) const EVO_TILE_W: f32 = 132.0;
+pub(super) const EVO_TILE_H: f32 = 150.0;
 /// Room above each tile for the "Lv. 16" chip.
-const EVO_CHIP: f32 = 24.0;
+pub(super) const EVO_CHIP: f32 = 24.0;
 
 pub(super) fn card_title(ui: &mut egui::Ui, title: &str) {
     ui.label(RichText::new(title).font(super::charts::bold(16.0)).color(TEXT()));
@@ -1434,7 +1571,7 @@ pub(super) fn card_title(ui: &mut egui::Ui, title: &str) {
 }
 
 /// A small rounded note: an icon and some words.
-fn info_chip(ui: &mut egui::Ui, icon: &str, c: Color32, text: &str) {
+pub(super) fn info_chip(ui: &mut egui::Ui, icon: &str, c: Color32, text: &str) {
     egui::Frame::none()
         .fill(theme::blend(CARD(), c, 0.12))
         .rounding(14.0)
@@ -1469,7 +1606,7 @@ fn type_toggle(ui: &mut egui::Ui, t: &str, on: bool) -> egui::Response {
 }
 
 /// Part of a circle from the top, clockwise.
-fn ring_arc(p: &egui::Painter, c: egui::Pos2, r: f32, f: f32, stroke: Stroke) {
+pub(super) fn ring_arc(p: &egui::Painter, c: egui::Pos2, r: f32, f: f32, stroke: Stroke) {
     if f <= 0.0 {
         return;
     }
@@ -1484,7 +1621,7 @@ fn ring_arc(p: &egui::Painter, c: egui::Pos2, r: f32, f: f32, stroke: Stroke) {
 }
 
 /// Label above value, for the fact grids.
-fn fact(ui: &mut egui::Ui, w: f32, label: &str, value: &str) {
+pub(super) fn fact(ui: &mut egui::Ui, w: f32, label: &str, value: &str) {
     ui.allocate_ui_with_layout(vec2(w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
         ui.set_width(w);
         ui.spacing_mut().item_spacing.y = 2.0;
@@ -1635,7 +1772,7 @@ fn breeding_card(ui: &mut egui::Ui, m: &crate::wiki::Mon, e: Option<&crate::dexe
     go
 }
 
-fn stat_color(v: u32) -> Color32 {
+pub(super) fn stat_color(v: u32) -> Color32 {
     match v {
         0..=49 => Color32::from_rgb(232, 98, 82),
         50..=79 => Color32::from_rgb(240, 160, 64),
@@ -1688,7 +1825,7 @@ fn stats_card(ui: &mut egui::Ui, m: &crate::wiki::Mon, e: Option<&crate::dexextr
 }
 
 /// Every attacking type and how much it hurts, as a grid.
-fn defenses_card(ui: &mut egui::Ui, m: &crate::wiki::Mon) {
+pub(super) fn defenses_card(ui: &mut egui::Ui, m: &crate::wiki::Mon) {
     kit::card(ui, |ui| {
         ui.set_width(ui.available_width());
         card_title(ui, "Type matchups");

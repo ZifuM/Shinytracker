@@ -27,7 +27,6 @@ use std::sync::OnceLock;
 static RAW: &[u8] = include_bytes!("../assets/breed.json");
 
 /// The base shiny rate in Platinum Together.
-pub const SHINY_BASE: f64 = 4096.0;
 /// Steps in one egg cycle (Platinum's own count).
 pub const CYCLE_STEPS: u32 = 255;
 pub const DITTO: &str = "DITTO";
@@ -38,7 +37,7 @@ const NOTE_ABILITY: &str = "Ability chances use the newer games' numbers (80% fo
 const NOTE_BALL_DITTO: &str = "With Ditto the Egg gets the other parent's ball, as in the newer games. Not confirmed for this mod.";
 const NOTE_BALL_SAME: &str = "Two parents of the same species: the ball comes from either one, as in the newer games. Not confirmed for this mod.";
 const NOTE_STEPS: &str = "Steps use 255 per egg cycle, as in Platinum. Not confirmed for this mod.";
-const NOTE_MASUDA: &str = "Masuda alone is 6 tries: worked out from the notes' 8 with the Shiny Charm too.";
+const NOTE_MASUDA: &str = "Masuda is 6 rolls out of 8192 (about 1 in 1,365), 8 with the Shiny Charm (1 in 1,024): from the game's dev.";
 const NOTE_TWO_POWER: &str = "Two Power items: one of them works, picked at random, as in the newer games. Not confirmed for this mod.";
 const NOTE_LEVEL_MOVES: &str = "Moves both parents know that the baby learns by level may pass too, as in the newer games. Not confirmed for this mod.";
 const NOTE_TOO_MANY: &str = "More than 4 moves would pass: the baby keeps 4 of them.";
@@ -445,15 +444,20 @@ pub fn eggs_for(p: f64, confidence: f64) -> Option<u32> {
     Some(((1.0 - confidence).ln() / (1.0 - p).ln()).ceil().max(1.0) as u32)
 }
 
-/// Shiny tries per Egg: 1, 3 with the Shiny Charm, 6 with the Masuda
-/// Method, 8 with both.
-pub fn shiny_rolls(charm: bool, masuda: bool) -> u32 {
-    1 + if charm { 2 } else { 0 } + if masuda { 5 } else { 0 }
+/// The game's shiny rolls are out of this many (its log writes "N in 8192").
+pub const ROLLS_OF: f64 = 8192.0;
+/// The most rolls anything can add up to.
+pub const MAX_ROLLS: u32 = 10;
+
+/// Shiny rolls per Egg (from the game's dev, Kai): 1, +2 with the Shiny
+/// Charm, +2 with a Shiny Lure lit, +5 with the Masuda Method; 10 at most.
+pub fn shiny_rolls(charm: bool, masuda: bool, lure: bool) -> u32 {
+    (1 + if charm { 2 } else { 0 } + if masuda { 5 } else { 0 } + if lure { 2 } else { 0 }).min(MAX_ROLLS)
 }
 
-/// Shiny odds as "1 in N" for that many tries.
+/// Shiny odds as "1 in N" for that many rolls out of 8192.
 pub fn shiny_one_in(rolls: u32) -> f64 {
-    1.0 / (1.0 - (1.0 - 1.0 / SHINY_BASE).powi(rolls as i32))
+    ROLLS_OF / rolls.max(1) as f64
 }
 
 /// About how many steps an Egg takes to hatch.
@@ -714,7 +718,7 @@ impl Egg {
 
 /// Shiny odds for Eggs from these parents.
 pub fn egg_shiny_one_in(a: &Parent, b: &Parent, setup: &Setup) -> f64 {
-    shiny_one_in(shiny_rolls(setup.shiny_charm, a.masuda || b.masuda))
+    shiny_one_in(shiny_rolls(setup.shiny_charm, a.masuda || b.masuda, false))
 }
 
 /// Every Pokémon a parent of `id` can make Eggs with (the species ids),
@@ -1076,17 +1080,17 @@ mod tests {
         let e = egg(&Parent::new("TOXICROAK", Gender::Female), &Parent::new("DITTO", Gender::Male));
         assert_eq!((e.species[0].0.as_str(), e.cycles), ("CROAGUNK", 10));
         assert_eq!(e.compat, Some(Compat::Low));
-        assert_eq!(e.shiny_one_in, 4096.0);
+        assert_eq!(e.shiny_one_in, 8192.0);
         // Nidorina and Nidoqueen can't breed at all.
         assert!(matches!(compat(&Parent::new("NIDOQUEEN", Gender::Female), &Parent::new("NIDOKING", Gender::Male), Some(w)), Err(Why::NoEggs(_))));
         // A traded parent: Masuda odds, with and without the Charm.
         let mut traded = Parent::new("DITTO", Gender::Male);
         traded.masuda = true;
         let e = egg(&Parent::new("TOXICROAK", Gender::Female), &traded);
-        assert_eq!(e.shiny_one_in.round(), 683.0);
+        assert_eq!(e.shiny_one_in.floor(), 1365.0);
         let charm = Setup { shiny_charm: true, ..s };
         let e = super::egg(&Parent::new("TOXICROAK", Gender::Female), &traded, &charm, w).unwrap();
-        assert_eq!(e.shiny_one_in.round(), 512.0);
+        assert_eq!(e.shiny_one_in, 1024.0);
         // Manaphy gives Phione.
         let e = egg(&Parent::new("MANAPHY", Gender::Genderless), &Parent::new("DITTO", Gender::Male));
         assert_eq!(e.species[0].0, "PHIONE");
@@ -1220,13 +1224,17 @@ mod tests {
 
     #[test]
     fn shiny_and_hatching_numbers() {
-        assert_eq!(shiny_rolls(false, false), 1);
-        assert_eq!(shiny_rolls(true, false), 3);
-        assert_eq!(shiny_rolls(false, true), 6);
-        assert_eq!(shiny_rolls(true, true), 8);
-        assert!((shiny_one_in(1) - 4096.0).abs() < 1e-6);
-        assert_eq!(shiny_one_in(6).round(), 683.0);
-        assert_eq!(shiny_one_in(8).round(), 512.0);
+        // Kai's table for Eggs
+        let t = |c, m, l| shiny_one_in(shiny_rolls(c, m, l)).floor();
+        assert_eq!(shiny_rolls(false, false, false), 1);
+        assert_eq!(t(false, false, false), 8192.0);
+        assert_eq!(t(true, false, false), 2730.0);
+        assert_eq!(t(false, false, true), 2730.0);
+        assert_eq!(t(true, false, true), 1638.0);
+        assert_eq!(t(false, true, false), 1365.0);
+        assert_eq!(t(true, true, false), 1024.0);
+        assert_eq!(shiny_rolls(true, true, true), 10);
+        assert_eq!(t(true, true, true), 819.0);
         assert_eq!(hatch_steps(20, false, false), 5100);
         assert_eq!(hatch_steps(20, true, true), 1275);
         assert_eq!(eggs_for(0.5, 0.5), Some(1));

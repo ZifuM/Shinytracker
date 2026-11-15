@@ -18,6 +18,10 @@ impl App {
         // then your widgets, in a waterfall grid you can arrange
         self.home_widgets_bar(ui);
         self.home_widget_grid(ui);
+        // left open for a Journal canvas: that's not this page's
+        if self.setup.home.gallery.to_canvas.take().is_some() {
+            self.setup.home.gallery.open = false;
+        }
         self.home_gallery(&ui.ctx().clone());
     }
 
@@ -99,7 +103,7 @@ impl App {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 8.0;
                         ui.label(RichText::new(theme::thousands(self.cfg.count)).font(crate::fonts::sans_bold_font(34.0)).color(TEXT()));
-                        ui.label(RichText::new("encounters").size(13.5).color(MUTED()));
+                        ui.label(RichText::new(self.count_word()).size(13.5).color(MUTED()));
                     });
                     if let Some(o) = odds {
                         let mult = n as f64 / o;
@@ -120,7 +124,7 @@ impl App {
                     ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
                         self.overlay_button(ui, egui::vec2(150.0, 36.0));
-                        change = sec_button(ui, "🎯  Change target", "Pick a different Pokémon to hunt");
+                        change = sec_button(ui, "+  New hunt", "Set up a new hunt, step by step");
                         if home {
                             open_hunter = sec_button(ui, "Open Shiny Hunter  ›", "Hunt settings, counting, runs and the overlay");
                         } else {

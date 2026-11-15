@@ -313,7 +313,7 @@ impl App {
                             lab.push_str(&format!("  ·  {}", t.to_uppercase()));
                         }
                     }
-                    let lr = tracked(&p, pos2(rx, nr.max.y + 5.0), Align2::LEFT_CENTER, &lab, 7.5, if v.counter_label == "ENCOUNTERS" { soft() } else { tone(v.counter_col) });
+                    let lr = tracked(&p, pos2(rx, nr.max.y + 5.0), Align2::LEFT_CENTER, &lab, 7.5, if super::overlay_mod::plain_counter(v.counter_label) { soft() } else { tone(v.counter_col) });
                     if let Some((_, _, tp)) = &v.timer {
                         tip(ui, lr, "ne-timer", tp);
                     }

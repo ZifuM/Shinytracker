@@ -14,7 +14,7 @@ pub(super) fn is_shiny_tab(t: Tab) -> bool {
 
 impl App {
     /// Start overlay: the picker opens (with last time's picks ticked);
-    /// nothing opens until Go.
+    /// nothing opens until Go. While it's running the same menu stops it.
     pub(super) fn start_overlay(&mut self) {
         self.setup.ov_picker = true;
     }
@@ -60,12 +60,13 @@ impl App {
                 self.ov_hidden = false;
             }
         } else if self.any_overlay() {
-            let b = egui::Button::new(RichText::new(if self.overlay_on { "■  Stop overlay" } else { "■  Stop overlays" }).size(kit::fs(14.0)).family(kit::strong_family(kit::fs(14.0))).strong().color(TEXT()))
+            // opens the overlay menu: stop it there, or change what's open
+            let b = egui::Button::new(RichText::new("■  Stop overlay…").size(kit::fs(14.0)).family(kit::strong_family(kit::fs(14.0))).strong().color(TEXT()))
                 .fill(kit::btn_fill())
                 .rounding(kit::btn_round(8.0))
                 .min_size(size);
-            if ui.add(b).on_hover_text("Close the overlay. Counting keeps going if that's on below.").clicked() {
-                self.stop_overlay();
+            if ui.add(b).on_hover_text("The overlay menu: stop the overlay, or change what's open. Counting keeps going if that's on.").clicked() {
+                self.start_overlay();
             }
         } else {
             let b = egui::Button::new(RichText::new("▶  Start overlay").size(kit::fs(14.0)).family(kit::strong_family(kit::fs(14.0))).strong().color(kit::on_primary()))
@@ -79,10 +80,22 @@ impl App {
         }
     }
 
-    /// Jump straight to the target picker on the Hunt page.
+    /// New hunt: the Hunt page, with the step-by-step guide open.
+    /// (or, with the guide turned off, the Pokémon picker as before).
     pub(super) fn open_target_picker(&mut self) {
+        if self.cfg.hunt_guide_off {
+            self.open_quick_picker();
+        } else {
+            self.open_hunt_wizard();
+        }
+    }
+
+    /// The Hunt page with its Pokémon picker open (the way without the guide).
+    pub(super) fn open_quick_picker(&mut self) {
+        self.setup.hunt_wizard = None;
         self.setup.tab = Tab::Hunt;
         self.setup.picking_target = true;
+        self.setup.picking_also = None;
         self.setup.search.clear();
         self.setup.nav_collapsed.retain(|t| *t != Tab::Shiny);
         self.setup.scroll_top = true;
@@ -260,8 +273,8 @@ impl App {
                         ui.label(RichText::new(odds).size(kit::fs(12.0)).color(col));
                         ui.add_space(4.0);
                         if ui
-                            .add(egui::Button::new(RichText::new("Change target").size(kit::fs(12.5))).fill(kit::btn_fill()))
-                            .on_hover_text("Pick a different Pokémon to hunt")
+                            .add(egui::Button::new(RichText::new("+ New hunt").size(kit::fs(12.5))).fill(kit::btn_fill()))
+                            .on_hover_text("Set up a new hunt, step by step")
                             .clicked()
                         {
                             self.open_target_picker();

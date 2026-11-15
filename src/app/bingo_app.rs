@@ -204,12 +204,14 @@ impl App {
                     let mons = mons
                         .iter()
                         .map(|w| {
-                            let mon = self.wiki.as_ref().and_then(|wk| wk.by_dex(w.species));
+                            // the log's number is the game's own (the same up to #493)
+                            let dex = crate::species::national_from_game(w.species).unwrap_or(w.species);
+                            let mon = self.wiki.as_ref().and_then(|wk| wk.by_dex(dex));
                             Met {
-                                dex: w.species,
+                                dex,
                                 level: w.level,
                                 rare_grass: w.method.contains("rare grass"),
-                                name: mon.map(|m| m.name.clone()).or_else(|| self.species.iter().find(|s| s.dex == w.species).map(|s| s.name.to_string())).unwrap_or_default(),
+                                name: mon.map(|m| m.name.clone()).or_else(|| self.species.iter().find(|s| s.dex == dex).map(|s| s.name.to_string())).unwrap_or_default(),
                                 types: mon.map(|m| m.types.clone()).unwrap_or_default(),
                             }
                         })

@@ -7,7 +7,16 @@ use crate::teams::Member;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::OnceLock;
+
+/// The world's catch rate (0 normal, 1 double, 2 four times, 3 always),
+/// from world.ini.
+static WORLD_CATCH: AtomicU8 = AtomicU8::new(0);
+
+pub fn set_world_catch(code: u8) {
+    WORLD_CATCH.store(code, Ordering::Relaxed);
+}
 
 static RAW: &[u8] = include_bytes!("../assets/sim.json");
 
@@ -335,6 +344,13 @@ fn shake_value(rate: u16, max_hp: u32, hp: u32, ball: f64, status: f64) -> Resul
     let m = max_hp.max(1) as f64;
     let h = hp.clamp(1, max_hp.max(1)) as f64;
     let x = ((((3.0 * m - 2.0 * h) * rate as f64 * ball) / (3.0 * m)).floor() * status).floor();
+    // the world's catch rate (double / four times / always)
+    let x = match WORLD_CATCH.load(Ordering::Relaxed) {
+        1 => x * 2.0,
+        2 => x * 4.0,
+        3 => return Err(true),
+        _ => x,
+    };
     if x >= 255.0 {
         return Err(true);
     }

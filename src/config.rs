@@ -27,6 +27,91 @@ pub struct HuntRecord {
     pub phase: bool,
     /// The run this came from (0 = unknown).
     pub run_id: u64,
+    /// The game world it was caught in (None: before worlds were tracked).
+    pub world: Option<u32>,
+}
+
+/// One game world's hunting, counted from when worlds were tracked.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WorldTally {
+    /// Its name (world-name.txt), as last seen.
+    pub name: String,
+    pub encounters: u64,
+    pub battles: u64,
+    pub shinies: u32,
+    /// Encounters by local day.
+    pub days: std::collections::BTreeMap<i64, u64>,
+    /// First and last time it was hunted in (unix).
+    pub first: u64,
+    pub last: u64,
+}
+
+/// The Journal app's settings, and what's open.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct JournalCfg {
+    /// Note text size.
+    pub font_size: f32,
+    /// Keep notes to a comfortable width.
+    pub readable: bool,
+    /// Outline, backlinks and tags beside the note.
+    pub right_panel: bool,
+    /// Notes open in: 0 Live preview, 1 Source, 2 Reading.
+    pub default_mode: u8,
+    /// Where today's notes go.
+    pub daily_folder: String,
+    pub bookmarks: Vec<String>,
+    /// Notes open as tabs (opened again next time).
+    pub tabs: Vec<String>,
+    /// The note and canvas of journals elsewhere (a hunt's: "run:…", "gotchi").
+    pub links: std::collections::BTreeMap<String, JLink>,
+}
+
+/// A journal's own note and canvas in the Journal (their paths), and which shows.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct JLink {
+    pub note: Option<String>,
+    pub canvas: Option<String>,
+    /// The canvas is showing (else the note).
+    pub canvas_view: bool,
+}
+
+impl Default for JournalCfg {
+    fn default() -> Self {
+        JournalCfg { font_size: 15.0, readable: true, right_panel: true, default_mode: 0, daily_folder: "Daily".into(), bookmarks: Vec::new(), tabs: Vec::new(), links: Default::default() }
+    }
+}
+
+/// A shiny caught without tracking it, logged by hand with what you know
+/// about it. It goes in the Shiny Dex and your shiny lists; it isn't a run,
+/// so it adds no encounters, XP or achievements.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default)]
+pub struct LoggedShiny {
+    pub id: u64,
+    /// The Pokédex slug.
+    pub slug: String,
+    /// Species, nickname, level, gender, item, ability, nature, IVs, EVs,
+    /// moves and notes (the Team Planner's set).
+    pub mon: crate::teams::Member,
+    /// The IVs and EVs were filled in (else unknown).
+    pub stats_known: bool,
+    /// The nature was picked (else unknown).
+    pub nature_known: bool,
+    /// The level was filled in (else unknown).
+    pub level_known: bool,
+    /// Encounters it took (None: N/A or not known).
+    pub encounters: Option<u64>,
+    /// How it was hunted (a HuntMethod label or your own words).
+    pub method: String,
+    /// Where it was caught.
+    pub place: String,
+    /// When it was caught.
+    pub when_unix: u64,
+    /// When it was logged.
+    pub logged_unix: u64,
 }
 
 /// How the shiny is being hunted; decides the odds. Rates are for
@@ -45,6 +130,34 @@ pub enum HuntMethod {
 }
 
 pub const BASE_ONE_IN: f64 = 4096.0;
+
+/// One party slot. `slug` None = a Pokémon the log couldn't name.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PartySlot {
+    pub slug: Option<String>,
+    /// The game's species number, when known (0 = not known).
+    pub game_id: u32,
+    /// Worked out from a picture the box page loaded, not certain.
+    pub guess: bool,
+    /// From the save: the Pokémon's personality value (0 = not from the
+    /// save), whether it's shiny, and its level then.
+    pub pid: u32,
+    pub shiny: bool,
+    pub level: u8,
+    /// An Egg (from the save).
+    pub egg: bool,
+}
+
+/// A box place: known empty, or a Pokémon (None = one the log couldn't name).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum BoxSpot {
+    Empty,
+    Mon(PartySlot),
+}
+
+/// The Poké Radar chain where the odds stop improving.
+pub const RADAR_MAX: u32 = 40;
 
 impl HuntMethod {
     pub const ALL: [HuntMethod; 8] = [
@@ -80,10 +193,10 @@ impl HuntMethod {
                 "1 in 2,048. Double chance on rare grass (patch notes, and confirmed by the game's log)."
             }
             HuntMethod::PokeRadar => {
-                "Gen 4 chain curve, never worse than the base rate: about 1 in 200 at chain 40. Not confirmed for this mod."
+                "The chain is counted from the game's log: use the Radar, then knock out or catch the same Pokémon each time. Gen 4 curve, never worse than the base rate: 1 in 4,096 until 20, about 1 in 200 from 40. Not confirmed for this mod."
             }
             HuntMethod::Masuda => {
-                "Eggs get 6 tries at the base rate with a Pokémon traded from another player: about 1 in 683, or 1 in 512 with the Shiny Charm (8 tries, from the game's notes)."
+                "Eggs start at 1 in 8,192. A parent from another language (the Masuda Method) makes it about 1 in 1,365; with the Shiny Charm 1 in 1,024; with a Shiny Lure lit too about 1 in 819, the most there is (from the game's dev). Each Egg that hatches counts by itself from the game's log; the log doesn't say if it's shiny, so press Caught when one is."
             }
             HuntMethod::FromGameLog => {
                 "Uses the exact odds the game writes for each wild encounter (includes any bonuses). Updates after your first battle."
@@ -352,6 +465,11 @@ pub struct OverlayModules {
     pub daily_goal: bool,
     pub streak: bool,
     pub best: bool,
+    /// Eggs you carry and how close each is to hatching (from the save;
+    /// only shows while there are Eggs).
+    pub eggs: bool,
+    /// Poké Balls left in the Bag (from the save, less the throws since).
+    pub balls: bool,
 }
 
 impl Default for OverlayModules {
@@ -380,6 +498,8 @@ impl Default for OverlayModules {
             daily_goal: false,
             streak: false,
             best: false,
+            eggs: true,
+            balls: true,
         }
     }
 }
@@ -501,8 +621,56 @@ pub struct Config {
     pub last_log_odds: Option<(u32, u32)>,
     /// Current Poké Radar chain length (odds stop improving at 40).
     pub radar_chain: u32,
+    /// The Pokémon the chain is of (National Dex number).
+    pub radar_species: Option<u32>,
+    /// The Radar was used and the chain hasn't broken since.
+    pub radar_on: bool,
+    /// Longest chain this hunt.
+    pub radar_best: u32,
+    /// Radar battles at chain 40 or more this hunt ("checks at max").
+    pub radar_checks: u64,
+    /// Chains broken this hunt.
+    pub radar_breaks: u32,
+    /// The chain is counted from the game's log (older versions kept a
+    /// typed-in chain, 40 by default: that's put back to 0 once).
+    #[serde(default)]
+    pub radar_counted: bool,
+
+    // Party (title bar): from world-card.ini when the game opens, then the
+    // log's box moves and catches.
+    /// Show the party's pictures in the title bar.
+    pub show_party: bool,
+    pub party: Vec<PartySlot>,
+    /// When world-card.ini was written (unix ms) for the party above.
+    pub party_card_ms: u64,
+    /// Match the app's switches (MORE / MODERN, the Breeding Planner's
+    /// setup, the catch rate) to your world.ini and save.
+    pub world_match: bool,
+    /// The world options last matched to (so it only happens when they change).
+    pub world_applied: String,
+    /// Hunting per game world (by its number), from when worlds were tracked.
+    pub world_tally: std::collections::BTreeMap<u32, WorldTally>,
+    /// When the save the party came from was written (unix ms).
+    pub party_save_ms: u64,
+    /// The party in world-card.ini (the game's species numbers).
+    pub party_card: Vec<u32>,
+    /// What's known to be in each box place (number from the log), and what
+    /// was known when the game last opened (so replaying the log on a restart
+    /// starts from the same place).
+    pub box_spots: std::collections::HashMap<u32, BoxSpot>,
+    pub box_spots_base: std::collections::HashMap<u32, BoxSpot>,
+    /// The game's own numbers past #493 → species slug (learned from the log
+    /// or picked by hand).
+    pub game_dex: std::collections::HashMap<u32, String>,
+    /// Pokémon Boxes: your notes, by the Pokémon's personality value.
+    pub box_notes: std::collections::HashMap<String, String>,
     /// Shiny Charms in the bag: each gives one more chance to be shiny.
     pub shiny_charms: u32,
+    /// A Shiny Lure is lit (followed from the game's log, or set by hand).
+    pub shiny_lure: bool,
+    /// New hunt skips the step-by-step guide and opens the Pokémon picker
+    /// on the Hunt page, the way it always worked.
+    pub hunt_guide_off: bool,
     pub paused: bool,
     /// Id of the run currently being counted (0 = not assigned yet).
     pub run_id: u64,
@@ -555,6 +723,10 @@ pub struct Config {
     pub level_on_overlay: bool,
     /// Shinies marked by hand in the Shiny Dex (caught before using the app).
     pub dex_manual: Vec<String>,
+    /// Shinies caught without tracking, logged by hand with their details.
+    pub logged: Vec<LoggedShiny>,
+    /// The Journal app's settings and open notes.
+    pub journal: JournalCfg,
     /// Daily encounter goal.
     pub daily_goal: u64,
     /// Daily goals and weekly challenges completed (for XP and streaks).
@@ -708,8 +880,28 @@ impl Default for Config {
             battle_type: BattleType::Doubles,
             count_source: CountSource::GameLog,
             last_log_odds: None,
-            radar_chain: 40,
+            radar_chain: 0,
+            radar_species: None,
+            radar_on: false,
+            radar_best: 0,
+            radar_checks: 0,
+            radar_breaks: 0,
+            radar_counted: true,
+            show_party: true,
+            party: Vec::new(),
+            party_card_ms: 0,
+            world_match: true,
+            world_applied: String::new(),
+            world_tally: Default::default(),
+            party_save_ms: 0,
+            party_card: Vec::new(),
+            box_spots: Default::default(),
+            box_spots_base: Default::default(),
+            game_dex: Default::default(),
+            box_notes: Default::default(),
             shiny_charms: 0,
+            shiny_lure: false,
+            hunt_guide_off: false,
             paused: false,
             run_id: 0,
             run_started_unix: 0,
@@ -738,6 +930,8 @@ impl Default for Config {
             toasts: true,
             level_on_overlay: true,
             dex_manual: Vec::new(),
+            logged: Vec::new(),
+            journal: JournalCfg::default(),
             daily_goal: 500,
             goals_done: Vec::new(),
             sounds: SoundSettings::default(),
@@ -1042,20 +1236,23 @@ impl Config {
         } else {
             0.0
         };
+        // Wild Pokémon (from the game's dev, Kai): 2 rolls out of 8192, +1
+        // for each Shiny Charm, +3 with a Shiny Lure lit, 10 at most. Rare
+        // grass starts at 4 (the game's log says "4 in 8192" there).
+        let wild = |base: u32| {
+            let rolls = (base + self.shiny_charms + if self.shiny_lure { 3 } else { 0 }).min(crate::breed::MAX_ROLLS);
+            crate::breed::shiny_one_in(rolls)
+        };
         let base = match self.hunt_method {
-            HuntMethod::FullOdds | HuntMethod::SoftReset | HuntMethod::SweetScent => BASE_ONE_IN,
-            HuntMethod::RareGrassSweetScent => BASE_ONE_IN / 2.0,
-            // Eggs: 6 tries with Masuda, 8 with the Shiny Charm too (the
-            // game's notes). More than one Charm isn't known to add more.
+            HuntMethod::FullOdds | HuntMethod::SoftReset | HuntMethod::SweetScent => return Some(wild(2)),
+            HuntMethod::RareGrassSweetScent => return Some(wild(4)),
+            // Eggs: 1 roll, +2 Charm, +5 Masuda, +2 Lure (one Charm counts).
             HuntMethod::Masuda => {
-                return Some(crate::breed::shiny_one_in(crate::breed::shiny_rolls(self.shiny_charms > 0, true)));
+                return Some(crate::breed::shiny_one_in(crate::breed::shiny_rolls(self.shiny_charms > 0, true, self.shiny_lure)));
             }
             // Gen 4 radar: chance per patch = (65535 / (8200 - chain*200)) / 65536,
             // chain capped at 40; never worse than the base rate.
-            HuntMethod::PokeRadar => {
-                let c = self.radar_chain.min(40) as f64;
-                ((8200.0 - c * 200.0) * 65536.0 / 65535.0).min(BASE_ONE_IN)
-            }
+            HuntMethod::PokeRadar => Self::radar_one_in(self.radar_chain),
             HuntMethod::FromGameLog => {
                 let (n, d) = self.last_log_odds?;
                 if n == 0 || d == 0 {
@@ -1102,6 +1299,9 @@ impl Config {
         if self.hunt_method.uses_charms() && self.shiny_charms > 0 {
             s.push_str(" + Charm");
         }
+        if self.hunt_method.uses_charms() && self.shiny_lure && self.hunt_method != HuntMethod::PokeRadar {
+            s.push_str(" + Lure");
+        }
         if self.hunt_method.is_wild_battles() {
             s.push_str(match self.battle_type {
                 BattleType::Doubles => " · Doubles",
@@ -1118,6 +1318,28 @@ impl Config {
 
     pub fn load() -> Self {
         Self::load_from(&data_dir())
+    }
+
+    /// Older versions kept a typed-in Radar chain (40 by default, since the
+    /// method couldn't count): start the counted chain from 0 instead.
+    pub fn radar_upgrade(&mut self) {
+        if !self.radar_counted {
+            self.radar_counted = true;
+            self.radar_chain = 0;
+            self.radar_on = false;
+        }
+    }
+
+    /// The chain odds' denominator at `chain` (Gen 4 curve, capped at 40,
+    /// never worse than the base rate).
+    pub fn radar_one_in(chain: u32) -> f64 {
+        let c = chain.min(40) as f64;
+        ((8200.0 - c * 200.0) * 65536.0 / 65535.0).min(BASE_ONE_IN)
+    }
+
+    /// At (or past) the chain where the odds stop improving.
+    pub fn radar_maxed(&self) -> bool {
+        self.radar_chain >= RADAR_MAX
     }
 
     /// Nothing worth keeping: no runs, no catches, no count, no hunt time.
@@ -1145,6 +1367,7 @@ impl Config {
                     Ok(s) => {
                         if let Ok(mut c) = serde_json::from_str::<Config>(&s) {
                             c.note_version(dir, &s);
+                            c.radar_upgrade();
                             return c;
                         }
                         raw = Some(s);
@@ -1166,12 +1389,14 @@ impl Config {
             if let Some(mut c) = raw.as_deref().and_then(Self::from_json_lenient) {
                 if !c.is_blank() {
                     c.saved_by = update_version().to_string();
+                    c.radar_upgrade();
                     return c;
                 }
             }
         }
         let mut c = Self::newest_backup(dir).unwrap_or_default();
         c.saved_by = update_version().to_string();
+        c.radar_upgrade();
         c
     }
 
@@ -1421,14 +1646,52 @@ mod masuda_tests {
     fn masuda_uses_the_games_egg_rolls() {
         let mut c = Config::default();
         c.hunt_method = HuntMethod::Masuda;
-        assert_eq!(c.odds_one_in().unwrap().round(), 683.0);
+        // Kai's numbers for Eggs
+        assert_eq!(c.odds_one_in().unwrap().floor(), 1365.0);
         c.shiny_charms = 1;
-        assert_eq!(c.odds_one_in().unwrap().round(), 512.0);
+        assert_eq!(c.odds_one_in().unwrap(), 1024.0);
         c.shiny_charms = 3;
-        assert_eq!(c.odds_one_in().unwrap().round(), 512.0);
-        // Wild odds are unchanged.
+        assert_eq!(c.odds_one_in().unwrap(), 1024.0);
+        c.shiny_lure = true;
+        assert_eq!(c.odds_one_in().unwrap().floor(), 819.0);
+        // and for wild Pokémon
         c.hunt_method = HuntMethod::FullOdds;
+        c.shiny_lure = false;
         c.shiny_charms = 0;
         assert_eq!(c.odds_one_in().unwrap(), 4096.0);
+        c.shiny_charms = 1;
+        assert_eq!(c.odds_one_in().unwrap().floor(), 2730.0);
+        c.shiny_charms = 0;
+        c.shiny_lure = true;
+        assert_eq!(c.odds_one_in().unwrap().floor(), 1638.0);
+        c.shiny_charms = 1;
+        assert_eq!(c.odds_one_in().unwrap().floor(), 1365.0);
+        c.shiny_charms = 5;
+        assert_eq!(c.odds_one_in().unwrap().floor(), 819.0);
+        c.shiny_charms = 20;
+        assert_eq!(c.odds_one_in().unwrap().floor(), 819.0);
+    }
+}
+
+#[cfg(test)]
+mod logged_tests {
+    use super::*;
+
+    #[test]
+    fn logged_shinies_load_and_old_saves_have_none() {
+        // a config from before logging has no shinies logged
+        let c: Config = serde_json::from_str("{}").unwrap();
+        assert!(c.logged.is_empty());
+        // one logged with only a species still loads, everything else unknown
+        let c: Config = serde_json::from_str(r#"{"logged":[{"id":3,"slug":"gible","mon":{"species":"Gible"}}]}"#).unwrap();
+        let l = &c.logged[0];
+        assert_eq!((l.id, l.slug.as_str(), l.mon.species.as_str()), (3, "gible", "Gible"));
+        assert!(l.encounters.is_none() && !l.stats_known && !l.nature_known && !l.level_known);
+        // and what's saved comes back the same
+        let mut l = l.clone();
+        l.encounters = Some(2412);
+        l.mon.moves = vec!["Dragon Claw".into()];
+        let back: LoggedShiny = serde_json::from_str(&serde_json::to_string(&l).unwrap()).unwrap();
+        assert_eq!(back, l);
     }
 }

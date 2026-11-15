@@ -419,7 +419,7 @@ impl App {
             if let (Some((t, _, _)), false) = (&v.timer, v.compact) {
                 lab = format!("{lab} · {t}");
             }
-            let lr = p.text(pos2(r.max.x - 26.0, r.center().y), Align2::RIGHT_CENTER, &lab, bold_font(7.5), if v.counter_label == "ENCOUNTERS" { fade(Color32::WHITE, 0.75) } else { mix(v.counter_col, Color32::WHITE, 0.3) });
+            let lr = p.text(pos2(r.max.x - 26.0, r.center().y), Align2::RIGHT_CENTER, &lab, bold_font(7.5), if super::overlay_mod::plain_counter(v.counter_label) { fade(Color32::WHITE, 0.75) } else { mix(v.counter_col, Color32::WHITE, 0.3) });
             if let Some((_, _, tp)) = &v.timer {
                 tip(ui, lr, "ho-timer", tp);
             }

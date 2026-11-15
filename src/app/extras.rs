@@ -81,6 +81,8 @@ impl TargetWatch {
 pub(super) enum DexSource {
     /// Caught on a hunt: date and encounters.
     Hunt(u64, u64),
+    /// Logged by hand with its details: date, encounters (if known).
+    Logged(u64, Option<u64>),
     Manual,
 }
 
@@ -206,13 +208,34 @@ impl App {
         Some(TargetWatch::new(self.cfg.count, self.cfg.target_seen, self.cfg.run_stats.target_last))
     }
 
+    /// What the hunt's count is of: "eggs hatched" for an egg hunt.
+    pub(super) fn count_word(&self) -> &'static str {
+        if self.cfg.hunt_method == crate::config::HuntMethod::Masuda {
+            "eggs hatched"
+        } else if self.radar_checking() {
+            "checks at max chain"
+        } else {
+            "encounters"
+        }
+    }
+
     /// What the odds bar counts: (number, "encounters" / "Riolu seen").
     pub(super) fn odds_count(&self) -> (u64, String) {
         if self.cfg.odds_target_only && self.target_watch().is_some() {
             let name = self.target_name(self.cfg.target.as_deref());
             (self.cfg.target_seen, format!("{name} encounters"))
         } else {
-            (self.cfg.count, "encounters".to_string())
+            (self.ov_count(), self.count_word().to_string())
+        }
+    }
+
+    /// The overlay's big number: encounters (eggs for Masuda), or the checks
+    /// at max chain once a Poké Radar chain reaches 40.
+    pub(super) fn ov_count(&self) -> u64 {
+        if self.radar_checking() {
+            self.cfg.radar_checks
+        } else {
+            self.cfg.count
         }
     }
 
@@ -250,7 +273,9 @@ impl App {
             stats: None,
             phase: true,
             run_id: self.cfg.run_id,
+            world: self.world_now(),
         });
+        self.world_shiny();
         self.cfg.run_stats.notes.push(Note { unix: now, count: self.cfg.count, text: format!("Phase: shiny {}!", sp.name) });
         self.dirty = true;
         self.play(Sfx::Caught);
@@ -337,6 +362,15 @@ impl App {
         for s in &self.cfg.dex_manual {
             m.insert(s.clone(), DexSource::Manual);
         }
+        for l in &self.cfg.logged {
+            if l.slug.is_empty() {
+                continue;
+            }
+            let keep_earlier = matches!(m.get(&l.slug), Some(DexSource::Logged(t, _)) if *t <= l.when_unix);
+            if !keep_earlier {
+                m.insert(l.slug.clone(), DexSource::Logged(l.when_unix, l.encounters));
+            }
+        }
         for h in &self.cfg.history {
             let slug = h.slug.clone().or_else(|| {
                 self.species.iter().find(|s| s.name.eq_ignore_ascii_case(&h.target)).map(|s| s.slug.clone())
@@ -353,7 +387,10 @@ impl App {
 
     /// (species in the dex, regions complete) for achievements.
     pub(super) fn dex_progress(&self) -> (u32, [bool; 5]) {
-        let caught = self.dex_caught();
+        // logged shinies aren't hunts: they don't count for achievements
+        // (a hand mark still does, as before)
+        let mut caught = self.dex_caught();
+        caught.retain(|slug, src| !matches!(src, DexSource::Logged(..)) || self.cfg.dex_manual.contains(slug));
         let mut done = [true; 5];
         for e in moddex::entries() {
             if e.unobtainable {
@@ -459,6 +496,7 @@ impl App {
         });
 
         // filters
+        let mut log_new = false;
         ui.horizontal(|ui| {
             // Search box, filter group and checkbox all share the 30px
             // control height so the row lines up.
@@ -470,6 +508,14 @@ impl App {
             );
             kit::checkbox(ui, &mut self.setup.dex.unobtainable, "Unobtainable")
                 .on_hover_text("Show Pokémon that can't be obtained in the game yet");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if kit::accent_button(ui, egui::Button::new(RichText::new("✨  Log a shiny").strong().color(kit::on_primary())), 4.0)
+                    .on_hover_text("Caught one without tracking it? Log it with its nature, IVs, moves and more")
+                    .clicked()
+                {
+                    log_new = true;
+                }
+            });
         });
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
@@ -516,6 +562,7 @@ impl App {
         let (cols, tw) = grid_cols(ui.available_width());
         let tile = egui::vec2(tw, TILE_H);
         let mut toggle: Option<(String, bool)> = None;
+        let mut log_this: Option<String> = None;
         let mut open: Option<String> = None;
         for row in list.chunks(cols) {
             ui.horizontal(|ui| {
@@ -569,6 +616,7 @@ impl App {
                     };
                     let info = match &src {
                         Some(DexSource::Hunt(t, n)) => format!("Shiny caught {} after {} encounters", fmt_date(*t), theme::thousands(*n)),
+                        Some(DexSource::Logged(t, _)) => format!("Shiny logged by hand · caught {}", fmt_date(*t)),
                         Some(DexSource::Manual) => "Shiny marked by hand".to_string(),
                         None if e.unobtainable => "Can't be obtained in the game yet".to_string(),
                         None => "Not caught yet".to_string(),
@@ -589,8 +637,12 @@ impl App {
                     let manual = matches!(src, Some(DexSource::Manual));
                     let slug = sp.slug.clone();
                     resp.context_menu(|ui| {
+                        if ui.button("✨ Log a shiny with its details…").clicked() {
+                            log_this = Some(slug.clone());
+                            ui.close_menu();
+                        }
                         if !has {
-                            if ui.button("✨ Mark as caught (shiny)").clicked() {
+                            if ui.button("Mark as caught (no details)").clicked() {
                                 toggle = Some((slug.clone(), true));
                                 ui.close_menu();
                             }
@@ -599,8 +651,6 @@ impl App {
                                 toggle = Some((slug.clone(), false));
                                 ui.close_menu();
                             }
-                        } else {
-                            ui.label("Caught on a hunt: click it to see the trophy");
                         }
                     });
                 }
@@ -610,6 +660,12 @@ impl App {
         if open.is_some() {
             self.setup.dex.open = open;
             self.setup.note_draft.clear();
+        }
+        if let Some(slug) = log_this {
+            self.open_log(Some(&slug));
+        }
+        if log_new {
+            self.open_log(None);
         }
         if let Some((slug, on)) = toggle {
             if on {
@@ -654,6 +710,7 @@ impl App {
             })
             .collect();
         let manual = self.cfg.dex_manual.iter().any(|s| s == slug);
+        let logged: Vec<crate::config::LoggedShiny> = self.cfg.logged.iter().filter(|l| l.slug == slug).cloned().collect();
         let entry = moddex::entries().into_iter().find(|e| e.dex as u32 == sp.dex);
         ui.add_space(6.0);
         kit::card(ui, |ui| {
@@ -685,7 +742,14 @@ impl App {
                     }
                     ui.label(RichText::new(sub.join("  ·  ")).size(kit::fs(13.0)).color(MUTED()));
                     ui.add_space(8.0);
-                    let line = if catches.is_empty() {
+                    let line = if catches.is_empty() && !logged.is_empty() {
+                        let first = logged.iter().map(|l| l.when_unix).min().unwrap_or(0);
+                        if logged.len() == 1 {
+                            format!("Logged by hand · caught {}", fmt_date(first))
+                        } else {
+                            format!("Logged {} times · first {}", logged.len(), fmt_date(first))
+                        }
+                    } else if catches.is_empty() {
                         "Marked as caught by hand".to_string()
                     } else {
                         let hs: Vec<_> = catches.iter().map(|&i| &self.cfg.history[i]).collect();
@@ -709,6 +773,16 @@ impl App {
         if !catches.is_empty() {
             kit::section(ui, if catches.len() == 1 { "Trophy" } else { "Trophies" });
             self.trophy_grid(ui, &catches);
+        }
+        self.logged_cards(ui, slug);
+        ui.add_space(8.0);
+        let label = if manual && logged.is_empty() && catches.is_empty() { "✨  Add its details" } else { "✨  Log another one" };
+        if ui
+            .add(egui::Button::new(label).fill(kit::btn_fill()))
+            .on_hover_text("Log a shiny of this Pokémon you caught without tracking it")
+            .clicked()
+        {
+            self.open_log(Some(slug));
         }
         if manual {
             kit::card(ui, |ui| {
@@ -1037,7 +1111,18 @@ impl App {
 
     /// Journal section on a run's stats page.
     pub(super) fn journal_section(&mut self, ui: &mut egui::Ui, run: RunRef, count: u64) {
-        kit::section(ui, "Hunt journal");
+        let in_journal = self.setup.tab == Tab::Journal;
+        ui.horizontal(|ui| {
+            kit::section(ui, "Hunt journal");
+            if !in_journal && self.has_app(crate::apps::AppId::Journal) {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.link(RichText::new("📓 Open in Journal ›").size(kit::fs(12.5))).on_hover_text("The same notes, in the Journal app").clicked() {
+                        self.setup.tab = Tab::Journal;
+                        self.journal_open_run(run);
+                    }
+                });
+            }
+        });
         let notes: Vec<Note> = self.notes_mut(run).map(|n| n.clone()).unwrap_or_default();
         let mut add = false;
         let mut remove = None;
@@ -1099,6 +1184,13 @@ impl App {
                 }
             }
             self.dirty = true;
+        }
+        // the hunt's own note and canvas
+        if let Some(info) = self.run_info(run) {
+            let key = format!("run:{}:{}:{}", info.run_id, info.started, info.name);
+            let name = format!("{} hunt ({})", info.name, crate::stats::fmt_date(info.started));
+            ui.add_space(16.0);
+            self.linked_journal(ui, &key, &name, "Hunt journals", "this hunt");
         }
     }
 
@@ -1312,7 +1404,7 @@ impl App {
                                 .speed(50.0),
                         )
                         .changed();
-                    ui.label(RichText::new("encounters").size(kit::fs(12.5)).color(TEXT()));
+                    ui.label(RichText::new(self.count_word()).size(kit::fs(12.5)).color(TEXT()));
                 });
                 ui.label(
                     RichText::new("Earlier shinies still get the normal Shiny spotted! sound. Dismissing the alert stops the song.")

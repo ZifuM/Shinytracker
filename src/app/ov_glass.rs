@@ -222,7 +222,7 @@ impl App {
                             line_txt.push_str(&format!(" · {t} today"));
                         }
                     }
-                    let lr = p.text(pos2(rx, nr.max.y + 6.0), Align2::LEFT_CENTER, &line_txt, sans_font(11.0), if v.counter_label == "ENCOUNTERS" { soft() } else { tone(v.counter_col) });
+                    let lr = p.text(pos2(rx, nr.max.y + 6.0), Align2::LEFT_CENTER, &line_txt, sans_font(11.0), if super::overlay_mod::plain_counter(v.counter_label) { soft() } else { tone(v.counter_col) });
                     if let Some((_, _, tp)) = &v.timer {
                         tip(ui, lr, "gl-timer", tp);
                     }

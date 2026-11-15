@@ -120,6 +120,33 @@ pub fn all() -> Vec<Species> {
         .collect()
 }
 
+/// The game numbers its newer Pokémon from 512 up, in the order the Platinum
+/// Together wiki lists them (checked against every newer Pokémon in a real
+/// save: names, abilities and moves all line up). This is each one's
+/// National Pokédex number, so 512 is Victini, 541 Greninja, 621 Falinks.
+pub const GAME_DEX_FIRST: u32 = 512;
+pub const GAME_DEX_NATIONAL: &[u32] = &[
+    494, 495, 496, 497, 501, 502, 503, 546, 547, 551, 552, 553,
+    570, 571, 607, 608, 609, 610, 611, 612, 633, 634, 635, 636,
+    637, 643, 644, 656, 657, 658, 661, 662, 663, 679, 680, 681,
+    684, 685, 696, 697, 700, 701, 704, 705, 706, 714, 715, 716,
+    717, 746, 778, 821, 822, 823, 856, 857, 858, 891, 892, 906,
+    907, 908, 957, 958, 959, 650, 651, 652, 653, 654, 655, 531,
+    498, 499, 500, 529, 530, 543, 544, 545, 559, 560, 602, 603,
+    604, 622, 623, 667, 668, 669, 670, 671, 677, 678, 686, 687,
+    688, 689, 690, 691, 718, 719, 739, 740, 767, 768, 780, 801,
+    807, 870, 951, 952, 969, 970, 978, 977, 996, 997, 998,
+];
+
+/// The game's species number (in the save and the log) → National Pokédex
+/// number. The same up to #493; the newer ones by the list above.
+pub fn national_from_game(id: u32) -> Option<u32> {
+    match id {
+        1..=493 => Some(id),
+        _ => GAME_DEX_NATIONAL.get(id.checked_sub(GAME_DEX_FIRST)? as usize).copied(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

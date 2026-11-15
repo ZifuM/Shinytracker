@@ -57,6 +57,19 @@ mod team_check;
 mod team_home;
 mod hunt_pages;
 mod notices;
+mod radar;
+mod party;
+mod boxes_app;
+mod eggs;
+mod balls;
+mod game_dex;
+mod world_sync;
+mod w_boxes;
+mod nuzlocke_app;
+mod w_nuzlocke;
+mod quick_search;
+mod quick_query;
+mod hunt_wizard;
 mod onboarding;
 mod launcher;
 mod charts;
@@ -84,6 +97,14 @@ mod w_fit;
 mod w_core;
 mod w_build;
 mod w_presets;
+mod log_shiny;
+mod journal_md;
+mod journal_app;
+mod journal_canvas;
+mod journal_add;
+mod journal_link;
+mod journal_ui;
+mod w_journal;
 mod w_hunt;
 mod w_explore;
 mod w_battle;
@@ -151,6 +172,9 @@ enum Tab {
     Bingo,
     RareGrass,
     Replay,
+    Journal,
+    Boxes,
+    Nuzlocke,
     Profile,
     Stats,
     Dex,
@@ -183,6 +207,21 @@ struct Setup {
     store: store::StoreState,
     /// Home's widget grid.
     home: widgets::HomeState,
+    /// The Log a shiny window.
+    log: log_shiny::LogState,
+    /// The Journal app.
+    journal: journal_app::JournalState,
+    /// Pokémon Boxes (read from the save).
+    boxes: boxes_app::BoxesState,
+    /// Nuzlocke Tracker (read from the worlds' files).
+    nuz: nuzlocke_app::NuzState,
+    world: world_sync::WorldState,
+    /// The Add to Journal popup.
+    jadd: journal_add::AddState,
+    /// The Ctrl K launcher.
+    quick: quick_search::QuickState,
+    /// The New hunt guide (on the Hunt page).
+    hunt_wizard: Option<hunt_wizard::HuntWizard>,
     search: String,
     monitors: usize,
     shot: Option<Shot>,
@@ -206,6 +245,12 @@ struct Setup {
     /// Picking the optional second target.
     /// Picking an extra target: Some(i) replaces the i-th, Some(len) adds one.
     picking_also: Option<usize>,
+    /// This run's party moves from the log (seconds into the day, event):
+    /// the party is worked out again from the newest base (the game opening
+    /// or a save) plus the moves after it.
+    party_events: Vec<(u32, crate::gamelog::PartyEvent)>,
+    /// Setting a party slot by hand: (slot, search).
+    party_pick: Option<(usize, String)>,
     /// The "which shiny was it?" page (hunts with 3+ targets).
     caught_pick: bool,
     /// Backup "Save as" (true) / "Open" (false) box while it's open.
@@ -261,6 +306,8 @@ struct Setup {
     rare_cache: Option<((i64, bool, bool, bool), std::time::Instant, Vec<rare::RareSpot>)>,
     /// Apps in the sidebar whose pages are folded away.
     nav_collapsed: Vec<Tab>,
+    /// The settings window is open, at this page (Appearance, Hotkeys or Advanced).
+    settings_open: Option<Tab>,
     /// Advanced page: scroll to this section once.
     adv_jump: Option<settings::AdvTab>,
     /// Appearance page: a look code being pasted, and the last result.
@@ -359,6 +406,8 @@ pub struct App {
     confirm_caught: bool,
     show_setup: bool,
     setup: Setup,
+    /// A Poké Radar chain that just broke: (length, why, when).
+    radar_flash: Option<(u32, String, Instant)>,
     applied_size: Option<[f32; 2]>,
     icon_tex: egui::TextureHandle,
     /// Window position/size changed: save without flashing "✔ Saved".
@@ -589,10 +638,19 @@ impl App {
             shiny_alert: None,
             confirm_caught: false,
             show_setup,
+            radar_flash: None,
             setup: Setup {
                 tab: Tab::Home,
                 store: store::StoreState { old_look, ..Default::default() },
                 home: Default::default(),
+                log: Default::default(),
+                journal: Default::default(),
+                boxes: Default::default(),
+                nuz: Default::default(),
+                world: Default::default(),
+                jadd: Default::default(),
+                quick: Default::default(),
+                hunt_wizard: None,
                 search: String::new(),
                 monitors: 0,
                 shot: None,
@@ -611,6 +669,8 @@ impl App {
                 hk_swap: None,
                 picking_target: false,
                 picking_also: None,
+                party_pick: None,
+                party_events: Vec::new(),
                 caught_pick: false,
                 backup_picker: None,
                 restore_pending: None,
@@ -646,6 +706,7 @@ impl App {
                 rare_cache: None,
                 // Apps start folded; clicking one opens its pages.
                 nav_collapsed: vec![Tab::Shiny],
+                settings_open: None,
                 adv_jump: None,
                 look_code: String::new(),
                 look_msg: None,
@@ -826,6 +887,7 @@ impl App {
         } else if self.cfg.count < before {
             let day = crate::stats::local_day(now_unix());
             self.cfg.run_stats.unrecord(day, before - self.cfg.count);
+            self.world_note(-((before - self.cfg.count) as i64), now_unix());
         }
         self.dirty = true;
     }
@@ -867,6 +929,8 @@ impl App {
         let gap = self.cfg.idle_gap_secs();
         let st = &mut self.cfg.run_stats;
         st.record_gap(now, crate::stats::local_day(now), n, gap);
+        self.world_note(n as i64, now);
+        let st = &mut self.cfg.run_stats;
         let reached = st.check_milestones(now, count, odds);
         if self.cfg.celebrate_milestones {
             if let Some(r) = reached.last() {
@@ -885,75 +949,99 @@ impl App {
         self.maybe_check_progress();
     }
 
+    /// Count `added` Pokémon met (one battle, a hatched Egg, a gift…).
+    fn count_encounter(&mut self, names: Vec<usize>, added: u32, late: bool, rare: bool, from_log: bool) {
+        // log encounters earn card XP through the Card Collector's
+        // own log reading (overlay on or off); screen ones here
+        if !from_log || !self.setup.cards.reads_logs {
+            self.cards_met(&names, added, rare);
+        }
+        self.gotchi_encounter(added, rare, from_log);
+        self.cfg.count += added as u64;
+        self.counted_since_start = true;
+        self.last_added = Some(added as u64);
+        self.note_encounters(added as u64);
+        if !late {
+            self.cfg.battles += 1;
+            if let Some(t) = self.world_now().and_then(|w| self.cfg.world_tally.get_mut(&w)) {
+                t.battles += 1;
+            }
+            self.battle_target_hits = 0;
+            self.battle_species.clear();
+        }
+        // what you're running into (each Pokémon once per battle)
+        let mut already = self.battle_species.clone();
+        for &i in &names {
+            if let Some(k) = already.iter().position(|&x| x == i) {
+                already.remove(k);
+            } else if let Some(sp) = self.species.get(i) {
+                *self.cfg.run_stats.species.entry(sp.dex).or_insert(0) += 1;
+                self.battle_species.push(i);
+            }
+        }
+        let targets = self.all_target_idx();
+        if !targets.is_empty() {
+            // A sighting of any target (multi-target hunts count them all).
+            let hits = names.iter().filter(|i| targets.contains(i)).count() as u64;
+            if hits > self.battle_target_hits {
+                self.cfg.target_seen += hits - self.battle_target_hits;
+                self.battle_target_hits = hits;
+                if self.cfg.spot_flash {
+                    self.target_flash = Some(Instant::now());
+                }
+                self.cfg.run_stats.note_target_seen(self.cfg.count);
+            }
+        }
+        // live feed: a late name joins the battle it belongs to
+        match self.enc_feed.back_mut() {
+            Some(b) if late => {
+                b.2 += added;
+                for &i in &names {
+                    if !b.1.contains(&i) {
+                        b.1.push(i);
+                    }
+                }
+            }
+            _ => {
+                self.enc_feed.push_back((now_unix(), names.clone(), added));
+                while self.enc_feed.len() > 30 {
+                    self.enc_feed.pop_front();
+                }
+            }
+        }
+        self.last_battle = names;
+        self.last_enc_at = Some(Instant::now());
+        if added > 0 {
+            let now = now_unix();
+            self.recent_enc.push_back((now, added as u64));
+            while self.recent_enc.front().is_some_and(|&(t, _)| now.saturating_sub(t) > 30 * 60) {
+                self.recent_enc.pop_front();
+            }
+        }
+        self.dirty = true;
+    }
+
     fn on_msg(&mut self, msg: WorkerMsg) {
         match msg {
             WorkerMsg::Encounter { names, added, late, rare, from_log } => {
-                // log encounters earn card XP through the Card Collector's
-                // own log reading (overlay on or off); screen ones here
-                if !from_log || !self.setup.cards.reads_logs {
-                    self.cards_met(&names, added, rare);
+                // An egg hunt counts hatched Eggs, not battles on the way.
+                if self.cfg.hunt_method == crate::config::HuntMethod::Masuda {
+                    return;
                 }
-                self.gotchi_encounter(added, rare, from_log);
-                self.cfg.count += added as u64;
-                self.counted_since_start = true;
-                self.last_added = Some(added as u64);
-                self.note_encounters(added as u64);
-                if !late {
-                    self.cfg.battles += 1;
-                    self.battle_target_hits = 0;
-                    self.battle_species.clear();
-                }
-                // what you're running into (each Pokémon once per battle)
-                let mut already = self.battle_species.clone();
-                for &i in &names {
-                    if let Some(k) = already.iter().position(|&x| x == i) {
-                        already.remove(k);
-                    } else if let Some(sp) = self.species.get(i) {
-                        *self.cfg.run_stats.species.entry(sp.dex).or_insert(0) += 1;
-                        self.battle_species.push(i);
-                    }
-                }
-                let targets = self.all_target_idx();
-                if !targets.is_empty() {
-                    // A sighting of any target (multi-target hunts count them all).
-                    let hits = names.iter().filter(|i| targets.contains(i)).count() as u64;
-                    if hits > self.battle_target_hits {
-                        self.cfg.target_seen += hits - self.battle_target_hits;
-                        self.battle_target_hits = hits;
-                        if self.cfg.spot_flash {
-                            self.target_flash = Some(Instant::now());
-                        }
-                        self.cfg.run_stats.note_target_seen(self.cfg.count);
-                    }
-                }
-                // live feed: a late name joins the battle it belongs to
-                match self.enc_feed.back_mut() {
-                    Some(b) if late => {
-                        b.2 += added;
-                        for &i in &names {
-                            if !b.1.contains(&i) {
-                                b.1.push(i);
-                            }
-                        }
-                    }
-                    _ => {
-                        self.enc_feed.push_back((now_unix(), names.clone(), added));
-                        while self.enc_feed.len() > 30 {
-                            self.enc_feed.pop_front();
-                        }
-                    }
-                }
-                self.last_battle = names;
-                self.last_enc_at = Some(Instant::now());
-                if added > 0 {
-                    let now = now_unix();
-                    self.recent_enc.push_back((now, added as u64));
-                    while self.recent_enc.front().is_some_and(|&(t, _)| now.saturating_sub(t) > 30 * 60) {
-                        self.recent_enc.pop_front();
-                    }
-                }
-                self.dirty = true;
+                self.count_encounter(names, added, late, rare, from_log);
             }
+            WorkerMsg::EggWaiting => self.egg_waiting(),
+            WorkerMsg::BallThrown { item, at } => self.ball_thrown(item, at),
+            WorkerMsg::Lure(on) => {
+                if self.cfg.shiny_lure != on {
+                    self.cfg.shiny_lure = on;
+                    self.dirty = true;
+                }
+            }
+            WorkerMsg::Radar(ev) => self.radar_event(ev),
+            WorkerMsg::PartyCard { party, ms } => self.party_card(party, ms),
+            WorkerMsg::Party(ev, at) => self.party_event(ev, at),
+            WorkerMsg::Hatched { names } => self.egg_hatched(names),
             WorkerMsg::BattleOver => {}
             WorkerMsg::ShinyStar { plate, .. } => {
                 // Its own fanfare, once per alert (not again while it's showing).
@@ -2180,7 +2268,9 @@ impl App {
             stats: Some(stats),
             phase: false,
             run_id: self.cfg.run_id,
+            world: self.world_now(),
         });
+        self.world_shiny();
         let id = self.cfg.run_id;
         self.cards_shiny(format!("{id}:{}", slug.as_deref().unwrap_or("")));
         self.gotchi_shiny(format!("{id}:{}", slug.as_deref().unwrap_or("")));
@@ -2273,6 +2363,8 @@ impl App {
         self.cfg.run_id = new_run_id();
         self.cfg.run_started_unix = now_unix();
         self.cfg.run_stats = Default::default();
+        radar::clear(&mut self.cfg, true);
+        self.radar_flash = None;
         let odds = self.cfg.odds_one_in();
         self.cfg.run_stats.ensure_started(now_unix(), 0, odds);
         self.reset_transient();
@@ -2937,6 +3029,9 @@ impl eframe::App for App {
         self.bingo_tick(ctx);
         self.rare_tick();
         self.replay_tick(ctx);
+        self.journal_flush(false);
+        self.boxes_tick();
+        self.world_tick();
         self.hotkeys_guard();
         while let Ok(msg) = self.rx.try_recv() {
             self.on_msg(msg);

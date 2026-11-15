@@ -67,7 +67,7 @@ fn same_folder(a: &std::path::Path, b: &std::path::Path) -> bool {
 
 /// Egg hunting isn't well tested yet.
 pub(super) fn method_experimental(m: HuntMethod) -> bool {
-    matches!(m, HuntMethod::Masuda)
+    matches!(m, HuntMethod::Masuda | HuntMethod::PokeRadar)
 }
 
 pub(super) const EXPERIMENTAL_NOTE: &str = "Experimental: issues may occur with this hunting style.";
@@ -75,7 +75,9 @@ pub(super) const EXPERIMENTAL_NOTE: &str = "Experimental: issues may occur with 
 /// Methods that don't work yet: shown greyed out and can't be picked
 /// (a hunt already set to one is left as it is).
 pub(super) fn method_unavailable(m: HuntMethod) -> bool {
-    matches!(m, HuntMethod::PokeRadar | HuntMethod::Masuda)
+    // (every method works now; kept for the next one that doesn't yet)
+    let _ = m;
+    false
 }
 
 pub(super) const UNAVAILABLE_NOTE: &str = "Not working yet: this hunting style comes in a later update.";
@@ -190,7 +192,14 @@ impl App {
                 PAGE(),
             );
             self.apps_tick(ctx);
+            self.log_window(ctx);
+            self.party_pick_window(ctx);
+            self.journal_overlays(ctx);
             self.app_overlays(ctx);
+            if !self.apps_welcome_open() && !self.onboarding_open() {
+                self.finders(ctx);
+                self.hunt_wizard(ctx);
+            }
             if self.apps_welcome_open() {
                 self.apps_welcome(ctx);
             } else if self.onboarding_open() {
@@ -220,7 +229,7 @@ impl App {
                 });
                 // The Map fills the whole pane, edge to edge, with its
                 // controls floating on top.
-                let map_full = self.setup.tab == Tab::Map
+                let map_full = matches!(self.setup.tab, Tab::Map | Tab::Journal)
                     && !self.setup.caught_pick
                     && !self.setup.phase_pick
                     && self.setup.profile_card.is_none()
@@ -228,7 +237,11 @@ impl App {
                 if map_full {
                     egui::CentralPanel::default().frame(egui::Frame::none()).show(ctx, |ui| {
                         kit::settings_style(ui);
-                        self.page_map(ui);
+                        if self.setup.tab == Tab::Journal {
+                            self.page_journal(ui);
+                        } else {
+                            self.page_map(ui);
+                        }
                     });
                 } else {
                 egui::CentralPanel::default()
@@ -328,7 +341,7 @@ impl App {
                                     || self.setup.caught_pick
                                     || (self.setup.profile_card.is_none()
                                         && self.setup.share.is_none()
-                                        && matches!(self.setup.tab, Tab::Home | Tab::Store | Tab::Library | Tab::Profile | Tab::Stats | Tab::Dex | Tab::Trophies | Tab::Runs | Tab::Pokedex | Tab::Map | Tab::Info | Tab::Team | Tab::Sim | Tab::Breed | Tab::Calc | Tab::Cards | Tab::Gotchi | Tab::Bingo | Tab::RareGrass | Tab::Replay));
+                                        && matches!(self.setup.tab, Tab::Home | Tab::Store | Tab::Library | Tab::Profile | Tab::Stats | Tab::Dex | Tab::Trophies | Tab::Runs | Tab::Pokedex | Tab::Map | Tab::Info | Tab::Team | Tab::Sim | Tab::Breed | Tab::Calc | Tab::Cards | Tab::Gotchi | Tab::Bingo | Tab::RareGrass | Tab::Replay | Tab::Journal | Tab::Boxes | Tab::Nuzlocke));
                                 let cap = if modern { 1060.0 } else { 900.0 };
                                 let w = if wide { ui.available_width() } else { ui.available_width().min(cap) };
                                 ui.set_max_width(w);
@@ -367,6 +380,9 @@ impl App {
                                         Tab::Bingo => self.page_bingo(ui),
                                         Tab::RareGrass => self.page_rare(ui),
                                         Tab::Replay => self.page_replay(ui),
+                                        Tab::Journal => self.page_journal(ui),
+                                        Tab::Boxes => self.page_boxes(ui),
+                                        Tab::Nuzlocke => self.page_nuzlocke(ui),
                                         Tab::Profile => self.page_profile(ui),
                                         Tab::Stats => self.page_stats(ui),
                                         Tab::Dex | Tab::Trophies => {
@@ -416,6 +432,10 @@ impl App {
                         }
                     });
                 }
+            }
+            // App settings: a window over the page, opened by the cog.
+            if !self.apps_welcome_open() && !self.onboarding_open() {
+                self.settings_window(ctx);
             }
             // Outline on top, like the overlay; resize grip bottom-right
             // (neither when maximized).
@@ -692,11 +712,7 @@ impl App {
         match self.cfg.hunt_method {
             HuntMethod::PokeRadar => {
                 ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Current chain").size(kit::fs(13.0)).color(TEXT()));
-                    self.dirty |= kit::stepper(ui, &mut self.cfg.radar_chain, 0, 999);
-                    kit::info(ui, "Odds stop improving at a chain of 40.");
-                });
+                self.radar_controls(ui);
             }
             HuntMethod::Custom => {
                 ui.add_space(6.0);
@@ -811,11 +827,83 @@ impl App {
         });
     }
 
+    // ─────────────────────────── the settings window ───────────────────────────
+
+    /// The settings (Appearance, Hotkeys, Advanced) in a window over the
+    /// page, opened by the cog top right. Esc, the × or a click outside
+    /// closes it.
+    pub(super) fn settings_window(&mut self, ctx: &egui::Context) {
+        let Some(mut tab) = self.setup.settings_open else { return };
+        let screen = ctx.screen_rect();
+        let size = egui::vec2((screen.width() - 48.0).clamp(380.0, 1220.0), (screen.height() - 64.0).max(300.0));
+        let panel = Rect::from_center_size(screen.center(), size);
+        let mut close = false;
+        // (Esc stays with the hotkey being recorded)
+        if self.setup.recording.is_none() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            close = true;
+        }
+        egui::Area::new(egui::Id::new("settings-window")).order(egui::Order::Middle).fixed_pos(screen.min).show(ctx, |ui| {
+            kit::settings_style(ui);
+            let (sr, scrim) = ui.allocate_exact_size(screen.size(), Sense::click());
+            ui.painter().rect_filled(sr, 0.0, Color32::from_black_alpha(150));
+            if scrim.clicked() {
+                close = true;
+            }
+            ui.painter().add(kit::shadow_tier(3).as_shape(panel, 22.0));
+            ui.painter().rect_filled(panel, 22.0, PAGE());
+            ui.painter().rect_stroke(panel, 22.0, egui::Stroke::new(1.0f32, kit::CONTROL()));
+            // the window eats its own clicks
+            ui.interact(panel, egui::Id::new("settings-window-panel"), Sense::click());
+            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(panel.shrink2(egui::vec2(26.0, 20.0))).layout(egui::Layout::top_down(egui::Align::Min)), |ui| {
+                // title and ×
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Settings").font(crate::fonts::sans_bold_font(22.0)).color(TEXT()));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let (r, _) = ui.allocate_exact_size(egui::vec2(34.0, 34.0), Sense::hover());
+                        if super::store::pill_button(ui, r, "×", false, "settings-x").on_hover_text("Close (Esc)").clicked() {
+                            close = true;
+                        }
+                    });
+                });
+                ui.add_space(10.0);
+                let before = tab;
+                kit::tab_bar(ui, &mut tab, &[(Tab::Appearance, "🎨  Appearance"), (Tab::Hotkeys, "⌨  Hotkeys"), (Tab::Advanced, "⚙  Advanced")]);
+                if tab != before {
+                    self.setup.scroll_top = true;
+                }
+                ui.add_space(12.0);
+                let mut area = egui::ScrollArea::vertical().id_salt(("settings-window-scroll", tab as u8)).auto_shrink([false, false]);
+                if std::mem::take(&mut self.setup.scroll_top) {
+                    area = area.vertical_scroll_offset(0.0);
+                }
+                area.show(ui, |ui| {
+                    ui.set_max_width(ui.available_width() - 14.0);
+                    // the pages' headings show their own icon (not the page under the window)
+                    let (icon, _, color) = super::shell::tab_meta(tab);
+                    kit::set_page_icon(kit::modern().then_some((icon, color)));
+                    match tab {
+                        Tab::Hotkeys => self.page_hotkeys(ui),
+                        Tab::Advanced => self.page_advanced(ui),
+                        _ => self.page_appearance(ui),
+                    }
+                    ui.add_space(20.0);
+                    let (icon, _, color) = super::shell::tab_meta(self.setup.tab);
+                    kit::set_page_icon(kit::modern().then_some((icon, color)));
+                });
+            });
+        });
+        if close {
+            self.setup.settings_open = None;
+        } else if self.setup.settings_open.is_some() {
+            self.setup.settings_open = Some(tab);
+        }
+    }
+
     // ─────────────────────────── pages ───────────────────────────
 
     /// Open Advanced settings at the game folder (from the Map and Counting).
     pub(super) fn open_game_folder_settings(&mut self) {
-        self.setup.tab = Tab::Advanced;
+        self.open_settings(Tab::Advanced);
         self.setup.adv_jump = Some(AdvTab::Game);
     }
 

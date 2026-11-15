@@ -61,6 +61,12 @@ fn star_check(track: &mut StarTrack, i: usize, found: Option<(f32, f32, u32)>) -
     }
 }
 
+/// "EEVEE" / "MR. MIME" (as the game's log writes names) → species index.
+pub(crate) fn species_by_log_name(species: &[Species], name: &str) -> Option<usize> {
+    let key: String = name.chars().filter(|c| c.is_ascii_alphanumeric()).map(|c| c.to_ascii_uppercase()).collect();
+    (!key.is_empty()).then(|| species.iter().position(|s| s.key == key)).flatten()
+}
+
 #[derive(Clone)]
 pub struct WorkerSettings {
     pub paused: bool,
@@ -107,6 +113,21 @@ pub enum WorkerMsg {
     ShinyGift,
     /// The log shows which hunting style is being used.
     MethodHint(crate::gamelog::MethodHint),
+    /// "An Egg is waiting at the Day-Care" (game 0.4.0 on).
+    EggWaiting,
+    /// A Poké Ball thrown (item number), at this many seconds into the day.
+    BallThrown { item: u16, at: u32 },
+    /// The game says a Shiny Lure was lit (true) or wore off (false).
+    Lure(bool),
+    /// The party when the game opened (world-card.ini: the game's species
+    /// numbers in slot order, and when the file was written, unix ms).
+    PartyCard { party: Vec<u32>, ms: u64 },
+    /// A box/party move, a catch, or a species number named by the log.
+    Party(crate::gamelog::PartyEvent, u32),
+    /// Poké Radar used / a wild battle finished (for the chain).
+    Radar(crate::gamelog::RadarEvent),
+    /// An Egg hatched; the species if the log named it.
+    Hatched { names: Vec<usize> },
     /// Shiny chance the game reported for the latest encounter.
     LogOdds {
         num: u32,
@@ -149,6 +170,9 @@ fn run(
     let mut last_log_try: Option<Instant> = None;
     let mut log_dir_set: Option<std::path::PathBuf> = None;
     let mut log_battle_at: Option<Instant> = None;
+    // world-card.ini: looked at every couple of seconds, sent when it changes
+    let mut card_at: Option<Instant> = None;
+    let mut card_sent: Option<u64> = None;
 
     let send = |msg: WorkerMsg| {
         let _ = tx.send(msg);
@@ -182,6 +206,27 @@ fn run(
         {
             last_log_try = Some(Instant::now());
             logtail = crate::gamelog::log_dir(s.log_dir.as_deref()).map(|d| LogTail::new(d, s.log_dir.clone()));
+            card_sent = None;
+        }
+        // The party when the game opened: before the log is read, so this
+        // session's moves (read again on a restart) start from it.
+        if let Some(path) = logtail.as_ref().and_then(|t| t.world_card()) {
+            if card_at.map_or(true, |t| t.elapsed() > Duration::from_secs(2)) {
+                card_at = Some(Instant::now());
+                let ms = std::fs::metadata(&path)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as u64);
+                if let Some(ms) = ms {
+                    if card_sent != Some(ms) {
+                        if let Some(party) = crate::gamelog::read_world_card(&path) {
+                            card_sent = Some(ms);
+                            send(WorkerMsg::PartyCard { party, ms });
+                        }
+                    }
+                }
+            }
         }
         let mut log_error = None;
         match logtail.as_mut() {
@@ -194,7 +239,8 @@ fn run(
                         if s.source == CountSource::GameLog && !s.paused {
                             let names: Vec<usize> = g
                                 .iter()
-                                .filter_map(|w| (w.species as usize).checked_sub(1))
+                                .filter_map(|w| crate::species::national_from_game(w.species as u32))
+                                .map(|d| d as usize - 1)
                                 .filter(|&i| i < species.len())
                                 .collect();
                             let rare = g.iter().any(|w| w.method.contains("rare grass"));
@@ -214,12 +260,43 @@ fn run(
                     } else {
                         tail.take_hints();
                     }
+                    // Eggs: read whichever way counting is set (screen
+                    // reading can't see a hatch); the app decides what counts.
+                    for e in tail.take_eggs() {
+                        match e {
+                            crate::gamelog::EggEvent::Waiting => send(WorkerMsg::EggWaiting),
+                            crate::gamelog::EggEvent::Hatched { species: sp } => {
+                                if s.paused {
+                                    continue;
+                                }
+                                let names = sp
+                                    .and_then(|n| species_by_log_name(&species, &n))
+                                    .into_iter()
+                                    .collect();
+                                send(WorkerMsg::Hatched { names });
+                            }
+                        }
+                    }
+                    for (at, ev) in tail.take_party() {
+                        send(WorkerMsg::Party(ev, at));
+                    }
+                    for (at, item) in tail.take_balls() {
+                        send(WorkerMsg::BallThrown { item, at });
+                    }
+                    if let Some(on) = tail.take_lure() {
+                        send(WorkerMsg::Lure(on));
+                    }
+                    for ev in tail.take_radar() {
+                        if !s.paused {
+                            send(WorkerMsg::Radar(ev));
+                        }
+                    }
                     for gift in tail.take_gifts() {
                         if s.paused {
                             continue;
                         }
-                        let names: Vec<usize> = (gift.species as usize)
-                            .checked_sub(1)
+                        let names: Vec<usize> = crate::species::national_from_game(gift.species as u32)
+                            .map(|d| d as usize - 1)
                             .filter(|&i| i < species.len())
                             .into_iter()
                             .collect();

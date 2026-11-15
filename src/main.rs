@@ -3,6 +3,9 @@
 
 mod app;
 mod apps;
+mod gamesave;
+mod nuzlocke;
+mod worldini;
 mod cards;
 mod masonry;
 mod battle;
@@ -27,6 +30,8 @@ mod replay;
 #[cfg(all(windows, feature = "replay-rec"))]
 mod replay_win;
 mod gotchi;
+mod journal;
+mod jcanvas;
 mod goals;
 mod hotkeys;
 mod icon;

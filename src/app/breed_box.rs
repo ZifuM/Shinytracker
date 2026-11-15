@@ -782,7 +782,7 @@ impl App {
                 }
                 if masuda_hunt {
                     kit::checkbox(ui, &mut count_hunt, RichText::new(format!("Add it to your Masuda hunt too (now {})", super::sim_home::thousands(self.cfg.count.min(u32::MAX as u64) as u32))).size(12.5))
-                        .on_hover_text("Each Egg you log adds one to the Shiny Hunter's count, like the +1 key. Off unless you turn it on.");
+                        .on_hover_text("Each Egg you log adds one to the Shiny Hunter's count, like the +1 key. Hatches already count by themselves from the game's log, so leave this off unless they don't (or they'd count twice).");
                 }
             });
         });

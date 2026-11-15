@@ -832,7 +832,7 @@ pub fn make_plan(w: &Wiki, t: &Target, breeders: &[Breeder], setup: &Setup, sim_
     // 9. Shiny.
     if t.shiny {
         let masuda = a.masuda || b.masuda;
-        let one_in = breed::shiny_one_in(breed::shiny_rolls(setup.shiny_charm, masuda)).round() as u32;
+        let one_in = breed::shiny_one_in(breed::shiny_rolls(setup.shiny_charm, masuda, false)).round() as u32;
         plan.steps.push(Step {
             key: "shiny".into(),
             kind: StepKind::Shiny,
@@ -847,7 +847,7 @@ pub fn make_plan(w: &Wiki, t: &Target, breeders: &[Breeder], setup: &Setup, sim_
             } else {
                 format!(
                     "A Ditto (or parent) traded from another player makes each Egg 1 in {} to be shiny instead of 1 in {}. Mark it \"Masuda\" in your Breeders.",
-                    thousands(breed::shiny_one_in(breed::shiny_rolls(setup.shiny_charm, true)).round() as u32),
+                    thousands(breed::shiny_one_in(breed::shiny_rolls(setup.shiny_charm, true, false)).round() as u32),
                     thousands(one_in)
                 )
             },

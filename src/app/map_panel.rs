@@ -184,6 +184,8 @@ impl App {
             }
         });
         ui.add_space(6.0);
+        let have_journal = self.has_app(crate::apps::AppId::Journal);
+        let mut to_journal = false;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             if let Some(first) = inside {
@@ -194,7 +196,19 @@ impl App {
             if ui.add(egui::Button::new("Zoom to it").fill(kit::btn_fill())).clicked() {
                 acts.zoom_to = Some(z);
             }
+            if super::journal_add::add_button(ui, have_journal) {
+                to_journal = true;
+            }
         });
+        if to_journal {
+            let group = w.as_ref().and_then(|w| places.first().and_then(|p| super::info_places::group_of(w, p))).unwrap_or_else(|| label.clone());
+            let link = super::journal_add::place_link(&group);
+            let clip = match &w {
+                Some(w) => self.place_clip(w, &group, &link),
+                None => super::journal_add::Clip { title: label.clone(), what: "Place".into(), card: format!("> [!place] {label}\n> {kind}\n"), link: format!("**{label}**"), full: format!("## {label}\n\n{kind}\n"), ..Default::default() },
+            };
+            self.journal_add(clip);
+        }
 
         // rare grass here today
         let rare_here: Vec<RareSpot> = spots.iter().filter(|s| s.zone == Some(z)).cloned().collect();

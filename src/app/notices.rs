@@ -90,6 +90,48 @@ impl App {
         });
     }
 
+    /// The game says an Egg is waiting at the Day-Care.
+    pub(super) fn egg_waiting(&mut self) {
+        self.notify(Notice {
+            id: "egg-waiting",
+            icon: "🔔",
+            title: "An Egg is waiting".into(),
+            body: "The Day-Care Man has an Egg for you.".into(),
+            progress: None,
+            action: None,
+            expires: Some(Instant::now() + Duration::from_secs(10)),
+            accent: theme::GREEN,
+        });
+    }
+
+    /// An Egg hatched (from the game's log). An egg hunt counts it; the log
+    /// doesn't say whether it's shiny, so that's still the Caught button.
+    pub(super) fn egg_hatched(&mut self, names: Vec<usize>) {
+        // the Eggs on the overlay drop it now, not at the next save
+        self.setup.boxes.hatched += 1;
+        if self.cfg.hunt_method != crate::config::HuntMethod::Masuda {
+            return;
+        }
+        let what = names.first().and_then(|&i| self.species.get(i)).map(|s| s.name);
+        self.count_encounter(names, 1, false, false, false);
+        self.notify(Notice {
+            id: "egg-hatched",
+            icon: "🐣",
+            title: match what {
+                Some(n) => format!("Egg hatched: {n}"),
+                None => "An Egg hatched".into(),
+            },
+            body: format!(
+                "Egg {} this hunt. The game doesn't say if it's shiny, so if it is, press Caught.",
+                theme::thousands(self.cfg.count)
+            ),
+            progress: None,
+            action: None,
+            expires: Some(Instant::now() + Duration::from_secs(8)),
+            accent: theme::GREEN,
+        });
+    }
+
     pub(super) fn clear_notice(&mut self, id: &str) {
         self.notices.retain(|n| n.id != id);
     }
@@ -148,6 +190,8 @@ impl App {
             self.clear_notice("stuck");
         } else if !self.stuck_shown
             && !self.cfg.paused
+            // an Egg takes minutes to hatch
+            && self.cfg.hunt_method != crate::config::HuntMethod::Masuda
             && self.game_open_since.is_some_and(|t| t.elapsed() > STUCK_AFTER)
         {
             self.stuck_shown = true;

@@ -258,7 +258,7 @@ impl App {
         o
     }
 
-    fn render_card(&mut self, info: &RunInfo) -> crate::canvas::Canvas {
+    pub(super) fn render_card(&mut self, info: &RunInfo) -> crate::canvas::Canvas {
         let data = self.card_data(info);
         let opts = self.card_opts();
         let fonts = self.card_fonts();
@@ -310,7 +310,7 @@ impl App {
         let st = info.stats.clone().unwrap_or_default();
         let mut tab = if self.setup.run_tab == RunTab::Journal { RunTab::Journal } else { RunTab::Overview };
         ui.horizontal(|ui| {
-            let w = (ui.available_width() - 210.0).max(240.0);
+            let w = (ui.available_width() - 380.0).max(240.0);
             ui.allocate_ui_with_layout(egui::vec2(w, 44.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                 ui.set_width(w);
                 kit::tab_bar(ui, &mut tab, &[(RunTab::Overview, "Stats"), (RunTab::Journal, "Journal")]);
@@ -318,6 +318,11 @@ impl App {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if primary(ui, "  🖼  Make share image  ").clicked() {
                     self.open_share(run, Some(run));
+                }
+                if super::journal_add::add_button(ui, self.has_app(crate::apps::AppId::Journal)) {
+                    if let Some(c) = self.run_clip(run, info.caught) {
+                        self.journal_add(c);
+                    }
                 }
             });
         });
@@ -409,6 +414,8 @@ impl App {
         let tw = ((ui.available_width() - gap * (cols as f32 - 1.0)) / cols as f32).floor();
         let mut share = None;
         let mut copy = None;
+        let mut to_journal = None;
+        let have_journal = self.has_app(crate::apps::AppId::Journal);
         let mut stats_of = None;
         for row in order.chunks(cols) {
             ui.horizontal(|ui| {
@@ -475,6 +482,9 @@ impl App {
                                     {
                                         copy = Some(i);
                                     }
+                                    if have_journal && ui.add(egui::Button::new("📓").fill(kit::btn_fill()).rounding(kit::btn_round(6.0))).on_hover_text("Add to Journal: this shiny and its share image").clicked() {
+                                        to_journal = Some(i);
+                                    }
                                 });
                             });
                     });
@@ -484,6 +494,11 @@ impl App {
         }
         if let Some(i) = share {
             self.open_share(RunRef::Finished(i), None);
+        }
+        if let Some(i) = to_journal {
+            if let Some(c) = self.run_clip(RunRef::Finished(i), true) {
+                self.journal_add(c);
+            }
         }
         if let Some(i) = stats_of {
             self.setup.tab = Tab::Runs;
@@ -807,6 +822,8 @@ impl App {
         // Actions
         let msg_before = self.setup.share.as_ref().and_then(|s| s.msg.clone());
         let gif_ready = gif_frames.is_some();
+        let have_journal = self.has_app(crate::apps::AppId::Journal);
+        let mut to_journal = false;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             let copy_tip = if animated {
@@ -885,12 +902,37 @@ impl App {
                     }
                 }
             }
+            if have_journal {
+                let j = ui
+                    .add_enabled_ui(!animated, |ui| super::journal_add::add_button(ui, true))
+                    .inner;
+                if j {
+                    to_journal = true;
+                }
+            }
             if let Some(path) = self.setup.share.as_ref().and_then(|s| s.saved.clone()) {
                 if ui.add(egui::Button::new(RichText::new("Show in folder").color(theme::LINK())).frame(false)).clicked() {
                     crate::share::reveal(&path);
                 }
             }
         });
+        if to_journal {
+            let src = self.setup.share.as_ref().map(|s| s.src);
+            let png = self.setup.share.as_ref().and_then(|s| s.image.as_ref()).and_then(crate::share::png_bytes);
+            match (src, png) {
+                (Some(src), Some(png)) => {
+                    let mut c = self.run_clip(src, false).unwrap_or_else(|| self.image_clip(&info.name, Vec::new()));
+                    c.image = Some((png, format!("{} {}", info.name, info.count)));
+                    c.what = "Share image".into();
+                    self.journal_add(c);
+                }
+                _ => {
+                    if let Some(sv) = self.setup.share.as_mut() {
+                        sv.msg = Some((false, "Still drawing, try again".into()));
+                    }
+                }
+            }
+        }
         // Sharing or saving counts for the "Show Off" achievement.
         let msg_after = self.setup.share.as_ref().and_then(|s| s.msg.clone());
         if msg_after != msg_before && msg_after.as_ref().is_some_and(|(ok, m)| *ok && (m.contains("Copied") || m.contains("Saved"))) {

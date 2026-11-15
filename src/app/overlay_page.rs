@@ -35,9 +35,9 @@ fn preset_of(m: &OverlayModules) -> Option<Preset> {
     }
 }
 
-fn section_flags(m: &OverlayModules) -> [bool; 17] {
+fn section_flags(m: &OverlayModules) -> [bool; 19] {
     [
-        m.status_dot, m.target, m.sprites, m.counter, m.buttons, m.odds_bar, m.method_line, m.luck, m.milestone, m.session, m.sparkline, m.last_seen, m.phases, m.xp, m.daily_goal, m.streak, m.best,
+        m.status_dot, m.target, m.sprites, m.counter, m.buttons, m.odds_bar, m.method_line, m.luck, m.milestone, m.session, m.sparkline, m.last_seen, m.phases, m.xp, m.daily_goal, m.streak, m.best, m.eggs, m.balls,
     ]
 }
 
@@ -66,6 +66,8 @@ fn minimal(keep: &OverlayModules) -> OverlayModules {
         daily_goal: false,
         streak: false,
         best: false,
+        eggs: false,
+        balls: false,
     }
 }
 
@@ -418,7 +420,7 @@ impl App {
                             Preset::Everything => {
                                 let mut m = keep.clone();
                                 for f in [
-                                    &mut m.status_dot, &mut m.target, &mut m.sprites, &mut m.counter, &mut m.buttons, &mut m.odds_bar, &mut m.method_line, &mut m.luck, &mut m.milestone, &mut m.session, &mut m.sparkline, &mut m.last_seen, &mut m.phases, &mut m.xp, &mut m.daily_goal, &mut m.streak, &mut m.best,
+                                    &mut m.status_dot, &mut m.target, &mut m.sprites, &mut m.counter, &mut m.buttons, &mut m.odds_bar, &mut m.method_line, &mut m.luck, &mut m.milestone, &mut m.session, &mut m.sparkline, &mut m.last_seen, &mut m.phases, &mut m.xp, &mut m.daily_goal, &mut m.streak, &mut m.best, &mut m.eggs, &mut m.balls,
                                 ] {
                                     *f = true;
                                 }
@@ -439,16 +441,16 @@ impl App {
             if size != OverlaySize::Full {
                 ui.add_space(10.0);
                 let note = match size {
-                    OverlaySize::Compact => "Compact shows the sprites and the count; the other sections come back in Full.",
-                    _ => "The Bar shows target, count and odds, plus luck, milestone, session, pace, streak and buttons if they're on.",
+                    OverlaySize::Compact => "Compact shows the sprites, the count, your Eggs and Poké Balls; the other sections come back in Full.",
+                    _ => "The Bar shows target, count and odds, plus luck, milestone, session, pace, streak, Eggs, Poké Balls and buttons if they're on.",
                 };
                 ui.label(RichText::new(note).size(12.0).color(ch::ink(ORANGE)));
             }
             let in_size = |f: &str| -> bool {
                 match size {
                     OverlaySize::Full => true,
-                    OverlaySize::Compact => matches!(f, "status" | "sprites" | "single" | "counter"),
-                    OverlaySize::Bar => matches!(f, "target" | "sprites" | "counter" | "odds" | "luck" | "milestone" | "session" | "sparkline" | "streak" | "buttons" | "status"),
+                    OverlaySize::Compact => matches!(f, "status" | "sprites" | "single" | "counter" | "eggs" | "balls"),
+                    OverlaySize::Bar => matches!(f, "target" | "sprites" | "counter" | "odds" | "luck" | "milestone" | "session" | "sparkline" | "streak" | "eggs" | "balls" | "buttons" | "status"),
                 }
             };
             let mut d = false;
@@ -545,6 +547,8 @@ impl App {
             "goal" => &mut o.daily_goal,
             "streak" => &mut o.streak,
             "best" => &mut o.best,
+            "eggs" => &mut o.eggs,
+            "balls" => &mut o.balls,
             "click" => &mut o.click_through,
             "level" => &mut self.cfg.level_on_overlay,
             "time" => &mut self.cfg.show_session_timer,
@@ -568,6 +572,8 @@ const SECTION_GROUPS: [(&str, &[(&str, &str, &str)]); 5] = [
             ("counter", "Counter", "The big number, with ENCOUNTERS / PAUSED under it."),
             ("time", "Today's time", "A small timer next to the counter: how long you've hunted today, across all runs."),
             ("buttons", "Buttons", "−1, +1, pause and Caught!. Hotkeys still work when they're hidden, and the Caught! question always shows."),
+            ("eggs", "Egg progress", "The Eggs you carry and how close each is to hatching, from the game's save (it saves itself every few minutes). Only on Masuda (egg) hunts, while you have Eggs."),
+            ("balls", "Poké Balls left", "How many of each ball are in your Bag: from the game's save, going down with each throw the game's log shows. The one you threw last comes first, red when it's running low."),
         ],
     ),
     ("Header", &[("level", "Level badge", "Your trainer level next to the title."), ("status", "Status light", "Green watching, gold in battle, grey paused, red if something needs fixing.")]),

@@ -587,14 +587,17 @@ impl App {
     }
 
     pub(super) fn counter_label(&self) -> (&'static str, Color32) {
+        let plain = if self.cfg.hunt_method == crate::config::HuntMethod::Masuda { EGGS_LABEL } else { "ENCOUNTERS" };
         if self.status.error.is_some() {
             ("CHECK SETUP ⚙", theme::HP_RED)
         } else if self.cfg.paused {
             ("PAUSED", MUTED())
         } else if self.game_closed() {
             ("GAME CLOSED", MUTED())
+        } else if self.radar_checking() {
+            (CHECKS_LABEL, theme::GOLD)
         } else {
-            ("ENCOUNTERS", MUTED())
+            (plain, MUTED())
         }
     }
 
@@ -802,6 +805,8 @@ impl App {
                 daily_goal: false,
                 streak: false,
                 best: false,
+                eggs: m.eggs,
+                balls: m.balls,
             };
         }
         // Liquid layout: the full overlay is as wide as the user dragged it.
@@ -978,7 +983,7 @@ impl App {
             if m.counter {
                 shown_any = true;
                 let big = if compact { 20.0 } else { 24.0 };
-                outlined_text(&p, egui::pos2(cx, y + big * 0.58), Align2::CENTER_CENTER, &theme::thousands(this.cfg.count), big, Color32::WHITE);
+                outlined_text(&p, egui::pos2(cx, y + big * 0.58), Align2::CENTER_CENTER, &theme::thousands(this.ov_count()), big, Color32::WHITE);
                 y += if compact { 27.0 } else { 32.0 };
                 let (label, label_color) = this.counter_label();
                 outlined_text(&p, egui::pos2(cx, y + 4.0), Align2::CENTER_CENTER, label, 8.0, label_color);
@@ -1165,14 +1170,18 @@ impl App {
                 egui::Shape::rect_stroke(full, 12.0, Stroke::new(if border == GOLD { 2.5f32 } else { 1.5f32 }, border)),
             );
 
+            this.ov_shape.clear();
+            this.ov_shape.push([full.min.x, full.min.y, full.width(), full.height(), 12.0]);
+            // Your Eggs and Poké Balls: strips just under the overlay.
+            let (card_bottom, strips) = this.under_strips(ui, &p, full.min.x, full.max.y, full.width(), crate::config::OverlayTheme::Classic, compact);
+            this.ov_shape.extend(strips);
+
             // Notices and pop-ups hover just under the overlay, never over it.
             let below = !this.notices.is_empty() || this.toasts_pending();
             // (pop-ups open under the Card Collector's XP bar when it's there)
             let room = this.bar_room();
-            this.ov_shape.clear();
-            this.ov_shape.push([full.min.x, full.min.y, full.width(), full.height(), 12.0]);
             if below {
-                let area = Rect::from_min_max(egui::pos2(full.min.x, full.max.y + 6.0 + room), egui::pos2(full.max.x, full.max.y + 6.0 + room + BELOW_H - 8.0));
+                let area = Rect::from_min_max(egui::pos2(full.min.x, card_bottom + 6.0 + room), egui::pos2(full.max.x, card_bottom + 6.0 + room + BELOW_H - 8.0));
                 if !this.notices.is_empty() {
                     this.draw_notice(ui, ctx, area, crate::config::OverlayTheme::Classic);
                 }
@@ -1203,8 +1212,8 @@ impl App {
             }
 
             let extra = if below { BELOW_H + 6.0 + room } else { 0.0 };
-            this.setup.cards.bar_ui.card_h = Some((full.max.y - win.min.y + 1.0).ceil());
-            this.ov_size = Some([width, (full.max.y - win.min.y + 1.0 + extra).ceil()]);
+            this.setup.cards.bar_ui.card_h = Some((card_bottom - win.min.y + 1.0).ceil());
+            this.ov_size = Some([width, (card_bottom - win.min.y + 1.0 + extra).ceil()]);
         });
     }
 
@@ -1237,6 +1246,7 @@ impl App {
             let p = ui.painter().clone();
             let t = this.t_ms();
             let blink = (t / 350) % 2 == 0;
+            let radar = this.radar_bar();
             let target_flash = this.target_flash.is_some_and(|f| f.elapsed() < Duration::from_millis(1600));
             let top = win.min.y + 1.0;
             let left = win.min.x + 1.0;
@@ -1316,14 +1326,44 @@ impl App {
                 }
                 if m.counter {
                     let y = if m.target { top + 34.0 } else { mid };
-                    let r = outlined_text(&p, egui::pos2(x, y), Align2::LEFT_CENTER, &theme::thousands(this.cfg.count), 16.0, Color32::WHITE);
+                    let r = outlined_text(&p, egui::pos2(x, y), Align2::LEFT_CENTER, &theme::thousands(this.ov_count()), 16.0, Color32::WHITE);
                     let (label, col) = this.counter_label();
-                    if label != "ENCOUNTERS" {
+                    if !plain_counter(label) {
                         tiny(&p, egui::pos2(r.max.x + 6.0, y + 2.0), Align2::LEFT_CENTER, label, col);
                     }
-                    w = w.max(r.width() + if label != "ENCOUNTERS" { 70.0 } else { 0.0 });
+                    w = w.max(r.width() + if !plain_counter(label) { 70.0 } else { 0.0 });
+                }
+                if radar.is_some() {
+                    w = w.max(super::radar::BAR_COUNT_W);
                 }
                 x += w + 10.0;
+            }
+
+            // Poké Radar chain (fixed width, so nothing shifts)
+            if let (Some(rb), None) = (&radar, this.shiny_alert) {
+                divider(&p, &mut x);
+                let (lab_col, fill) = rb.colors(theme::GREEN, MUTED());
+                let on = rb.look != super::radar::BarLook::Broken || blink;
+                tiny(&p, egui::pos2(x, top + 17.0), Align2::LEFT_CENTER, &rb.label, lab_col);
+                super::radar::meter(&p, Rect::from_min_size(egui::pos2(x + 1.0, top + 28.0), egui::vec2(super::radar::BAR_CHAIN_W - 12.0, 6.0)), rb.filled, fill, Color32::from_rgba_unmultiplied(255, 255, 255, 50), on);
+                ui.interact(Rect::from_min_size(egui::pos2(x, top + 6.0), egui::vec2(super::radar::BAR_CHAIN_W - 10.0, BAR_H - 12.0)), ui.id().with("bar-radar"), Sense::hover())
+                    .on_hover_text(&rb.tip);
+                x += super::radar::BAR_CHAIN_W;
+                if rb.look == super::radar::BarLook::Broken {
+                    ctx.request_repaint();
+                }
+            }
+
+            // Eggs you carry
+            if let (Some(eggs), None) = (this.ov_eggs(), this.shiny_alert) {
+                divider(&p, &mut x);
+                x += this.bar_eggs(ui, &p, x, top, BAR_H, &eggs, crate::fonts::pixel_font(7.5), Color32::WHITE, theme::OUTLINE, GOLD, Color32::from_rgb(70, 66, 84)) + 10.0;
+            }
+            // Poké Balls left
+            let balls = this.ov_balls();
+            if !balls.is_empty() && this.shiny_alert.is_none() {
+                divider(&p, &mut x);
+                x += this.bar_balls(ui, &p, x, top, BAR_H, &balls, crate::fonts::pixel_font(7.5), crate::fonts::sans_bold_font(12.0), Color32::WHITE, MUTED(), theme::HP_RED) + 10.0;
             }
 
             // Odds
@@ -1336,7 +1376,7 @@ impl App {
                 theme::gauge(&p, bar, o.frac, o.color);
                 ui.interact(Rect::from_min_size(egui::pos2(x, top + 6.0), egui::vec2(68.0, BAR_H - 12.0)), ui.id().with("bar-odds"), Sense::hover())
                     .on_hover_text(o.tip);
-                x += 74.0;
+                x += if radar.is_some() { 120.0 } else { 74.0 };
             }
 
             // Little stat columns: tiny label over a value.
@@ -1524,4 +1564,15 @@ impl App {
             this.ov_size = Some([w, h]);
         });
     }
+}
+
+/// The counter's label for an egg hunt.
+pub(super) const EGGS_LABEL: &str = "EGGS HATCHED";
+
+/// The counter's everyday label (not a status like PAUSED), drawn quietly.
+/// The counter's label at max Poké Radar chain.
+pub(super) const CHECKS_LABEL: &str = "CHECKS";
+
+pub(super) fn plain_counter(label: &str) -> bool {
+    label == "ENCOUNTERS" || label == EGGS_LABEL
 }

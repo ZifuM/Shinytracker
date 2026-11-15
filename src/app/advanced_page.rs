@@ -63,7 +63,11 @@ impl App {
                         ui.add_space(18.0);
                         this.adv_data_card(ui);
                     }
-                    AdvTab::Game => this.adv_game_card(ui),
+                    AdvTab::Game => {
+                        this.adv_game_card(ui);
+                        ui.add_space(16.0);
+                        this.world_card(ui);
+                    }
                     AdvTab::Counter => this.adv_counter_card(ui),
                     AdvTab::Reading => this.adv_reading_card(ui),
                     AdvTab::Help => this.adv_help_card(ui),
@@ -578,6 +582,8 @@ impl App {
                             self.cfg.count = 0;
                             self.cfg.battles = 0;
                             self.cfg.target_seen = 0;
+                            super::radar::clear(&mut self.cfg, true);
+                            self.radar_flash = None;
                             self.dirty = true;
                             self.setup.confirm_reset = false;
                         }
@@ -779,7 +785,7 @@ fn short_path(p: &std::path::Path) -> String {
     format!("…\\{}", parts.join("\\"))
 }
 
-fn card_head(ui: &mut egui::Ui, icon: &str, col: Color32, title: &str, sub: &str) {
+pub(super) fn card_head(ui: &mut egui::Ui, icon: &str, col: Color32, title: &str, sub: &str) {
     ui.horizontal(|ui| {
         let (r, _) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::hover());
         kit::icon_chip(ui.painter(), r, icon, col, false);

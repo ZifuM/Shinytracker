@@ -247,7 +247,7 @@ impl App {
             let pb = Rect::from_min_size(pos2(scr.max.x - pb_w - 6.0, scr.max.y - pb_h - 6.0), vec2(pb_w, pb_h));
             poly(&p, vec![pb.left_top() + vec2(-10.0, -2.0), pb.right_top() + vec2(2.0, -2.0), pb.right_bottom() + vec2(2.0, 2.0), pb.left_bottom() + vec2(-2.0, 2.0)], BOX_EDGE);
             poly(&p, vec![pb.left_top() + vec2(-8.0, 0.0), pb.right_top(), pb.right_bottom(), pb.left_bottom()], BOX);
-            let label = if v.counter_label == "ENCOUNTERS" { "ENCOUNTERS" } else { v.counter_label };
+            let label = v.counter_label;
             ds(&p, pos2(pb.min.x + 4.0, pb.min.y + 9.0), Align2::LEFT_CENTER, label, 5.5, tone(v.counter_col));
             if let Some((t, idle, tp)) = &v.timer {
                 let r = ds(&p, pos2(pb.max.x - 5.0, pb.min.y + 9.0), Align2::RIGHT_CENTER, &t.to_uppercase(), 5.5, if *idle { Color32::from_rgb(150, 150, 160) } else { TXT });

@@ -24,9 +24,12 @@ pub enum AppId {
     Bingo,
     Rare,
     Replay,
+    Journal,
+    Boxes,
+    Nuzlocke,
 }
 
-pub const ALL: [AppId; 13] = [AppId::Shiny, AppId::Pokedex, AppId::Map, AppId::Info, AppId::Team, AppId::Sim, AppId::Breed, AppId::Calc, AppId::Cards, AppId::Gotchi, AppId::Bingo, AppId::Rare, AppId::Replay];
+pub const ALL: [AppId; 16] = [AppId::Shiny, AppId::Pokedex, AppId::Map, AppId::Info, AppId::Team, AppId::Sim, AppId::Breed, AppId::Calc, AppId::Cards, AppId::Gotchi, AppId::Bingo, AppId::Rare, AppId::Replay, AppId::Journal, AppId::Boxes, AppId::Nuzlocke];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Cat {
@@ -386,6 +389,92 @@ const REPLAY: Meta = Meta {
     works_with: &[(AppId::Shiny, "Saves a clip when the shiny alert fires")],
 };
 
+const BOXES: Meta = Meta {
+    id: AppId::Boxes,
+    slug: "boxes",
+    name: "Pokémon Boxes",
+    cat: Cat::Explore,
+    core: false,
+    beta: true,
+    overlay: false,
+    tagline: "Your party and every box, with each Pokémon's IVs, EVs, nature and moves.",
+    about: &[
+        "Every box from your save, laid out like the game's PC, with your party beside it. Click a Pokémon for everything the save knows: level, nature, ability, item, ball, where and when you met it, its moves, IVs and EVs.",
+        "Read only, and only on this PC: your save file is only ever read, never written, and nothing is uploaded. It updates each time the game saves. Newer Pokémon the game numbers its own way are named once by you, and you can keep notes on any Pokémon.",
+    ],
+    can_do: &[
+        "All your boxes (named as in the game) and your party",
+        "IVs, EVs, nature, ability, item, ball, met date and place, moves",
+        "Shinies starred, with Log this shiny filled in from the save",
+        "Your own notes on any Pokémon",
+        "Five Dashboard widgets",
+    ],
+    whats_new: "New: your boxes, read straight from your save.",
+    updated: "15 Nov 2026",
+    uses: "Your save file and the game's text (read only, never written)",
+    shots: &[("boxes", "A box, your party and a Pokémon's details")],
+    requires: &[],
+    works_with: &[(AppId::Shiny, "Log a shiny, filled in from the save")],
+};
+
+const NUZLOCKE: Meta = Meta {
+    id: AppId::Nuzlocke,
+    slug: "nuzlocke",
+    name: "Nuzlocke Tracker",
+    cat: Cat::Explore,
+    core: false,
+    beta: true,
+    overlay: false,
+    tagline: "Every route of your Nuzlocke runs: who you got, who's still in, and the rules.",
+    about: &[
+        "Your Nuzlocke, Duallocke and Soul Link runs from the game's own files: each route in the order you got its Pokémon, with its nickname and level, and whether it's still in the run. Your rules, level caps and lives sit beside it, with your team.",
+        "Read only, and only on this PC: your worlds' files are only ever read, never written, and nothing is uploaded. It keeps up as you play, and every world the game keeps can be looked back on.",
+    ],
+    can_do: &[
+        "Every route's Pokémon, nickname and level, as a trail",
+        "In or out of the run, and a search",
+        "Your run's type, rules, level caps and lives",
+        "Your team, from the save",
+        "Every world the game keeps, not just this one",
+        "Five Dashboard widgets",
+    ],
+    whats_new: "New: your Nuzlocke runs, read straight from the game.",
+    updated: "15 Nov 2026",
+    uses: "Your worlds' files and save (read only, never written)",
+    shots: &[("nuzlocke", "A Duallocke's routes, its rules and the team")],
+    requires: &[],
+    works_with: &[(AppId::Boxes, "The same save, for your team and boxes")],
+};
+
+const JOURNAL: Meta = Meta {
+    id: AppId::Journal,
+    slug: "journal",
+    name: "Journal",
+    cat: Cat::Hunting,
+    core: false,
+    beta: true,
+    overlay: false,
+    tagline: "Notes and endless canvases for your hunts and plans, like Obsidian.",
+    about: &[
+        "A notes app built in: folders, tabs, and three ways to see a note. Live preview styles it as you type, Source shows the plain text, and Reading shows the finished page with links, tags, tasks and pictures.",
+        "Canvases are endless boards: drag on cards, notes, pictures and live Dashboard widgets, group them and join them with arrows. Anything in the app can be added with the Add to Journal button: a Pokédex entry, a Game Info page, a Map place, a share image or a shiny you logged.",
+        "Every note is a plain .md file and every canvas a .canvas file in your data folder, so they open in Obsidian too. Your runs' hunt journals open here as well, kept in step with their pages.",
+    ],
+    can_do: &[
+        "Headings, bold, italic, highlight, lists, tasks, quotes, callouts, tables, code and pictures",
+        "Canvases with cards, notes, pictures, live widgets, groups and arrows",
+        "Add to Journal from the Pokédex, Game Info, the Map, widgets, share images and trophies",
+        "[[Links]] between notes, backlinks, #tags, search, bookmarks and Ctrl+O to jump anywhere",
+        "Your hunt journals, kept in step with their runs",
+    ],
+    whats_new: "New: canvases, and Add to Journal from all over the app.",
+    updated: "14 Nov 2026",
+    uses: "Markdown files in a Journal folder in your data folder, and your runs' hunt journals",
+    shots: &[("journal_canvas", "A canvas with a live widget, a Pokédex snippet and a share image"), ("journal", "A hunt note in Live preview, with its outline and backlinks")],
+    requires: &[],
+    works_with: &[(AppId::Shiny, "Your runs' hunt journals")],
+};
+
 const BINGO: Meta = Meta {
     id: AppId::Bingo,
     slug: "bingo",
@@ -430,6 +519,9 @@ pub fn meta(id: AppId) -> &'static Meta {
         AppId::Bingo => &BINGO,
         AppId::Rare => &RARE,
         AppId::Replay => &REPLAY,
+        AppId::Journal => &JOURNAL,
+        AppId::Boxes => &BOXES,
+        AppId::Nuzlocke => &NUZLOCKE,
     }
 }
 

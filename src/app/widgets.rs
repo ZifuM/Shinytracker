@@ -131,6 +131,16 @@ fn lim_of(kind: &str) -> Option<Lim> {
         "bingo_next" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 6), tall_by: None }),
         "bingo_meet" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 6), tall_by: None }),
         "bingo_recent" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 6), tall_by: None }),
+        "boxes_party" => Some(Lim { min: (2, 2), start: (3, 3), max: (6, 6), tall_by: None }),
+        "boxes_stats" => Some(Lim { min: (2, 1), start: (4, 1), max: (8, 3), tall_by: None }),
+        "boxes_shinies" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 6), tall_by: None }),
+        "boxes_ivs" => Some(Lim { min: (2, 1), start: (4, 3), max: (8, 6), tall_by: None }),
+        "boxes_dex" => Some(Lim { min: (2, 1), start: (4, 1), max: (8, 3), tall_by: None }),
+        "nuz_run" => Some(Lim { min: (2, 1), start: (4, 1), max: (8, 3), tall_by: None }),
+        "nuz_routes" => Some(Lim { min: (2, 1), start: (4, 3), max: (8, 6), tall_by: None }),
+        "nuz_lost" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 6), tall_by: None }),
+        "nuz_team" => Some(Lim { min: (2, 2), start: (3, 3), max: (6, 6), tall_by: None }),
+        "nuz_rules" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 4), tall_by: None }),
         "rare_out" => Some(Lim { min: (2, 1), start: (4, 3), max: (8, 6), tall_by: None }),
         "rare_new" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 6), tall_by: None }),
         "rare_stats" => Some(Lim { min: (2, 1), start: (4, 1), max: (8, 3), tall_by: None }),
@@ -141,6 +151,11 @@ fn lim_of(kind: &str) -> Option<Lim> {
         "replay_recent" => Some(Lim { min: (2, 2), start: (4, 3), max: (8, 6), tall_by: None }),
         "replay_stats" => Some(Lim { min: (2, 1), start: (4, 1), max: (8, 3), tall_by: None }),
         "replay_save" => Some(Lim { min: (2, 1), start: (3, 1), max: (6, 3), tall_by: None }),
+        "journal_recent" => Some(Lim { min: (2, 1), start: (4, 3), max: (8, 6), tall_by: None }),
+        "journal_today" => Some(Lim { min: (2, 2), start: (4, 3), max: (8, 6), tall_by: None }),
+        "journal_quick" => Some(Lim { min: (3, 1), start: (4, 1), max: (8, 2), tall_by: None }),
+        "journal_tasks" => Some(Lim { min: (2, 1), start: (4, 3), max: (8, 6), tall_by: None }),
+        "journal_stats" => Some(Lim { min: (2, 1), start: (4, 1), max: (8, 3), tall_by: None }),
         _ => None,
     }
 }
@@ -278,7 +293,7 @@ const fn wd(kind: &'static str, name: &'static str, about: &'static str, icon: &
     WidgetDef { kind, name, about, icon, app, span, multi }
 }
 
-use AppId::{Bingo, Breed, Calc, Cards, Gotchi, Info, Map, Pokedex, Rare, Replay, Shiny, Sim, Team};
+use AppId::{Bingo, Boxes, Breed, Calc, Cards, Gotchi, Info, Journal, Map, Nuzlocke, Pokedex, Rare, Replay, Shiny, Sim, Team};
 
 pub(super) const DEFS: &[WidgetDef] = &[
     // the Dashboard's own
@@ -353,6 +368,16 @@ pub(super) const DEFS: &[WidgetDef] = &[
     wd("bingo_week", "Bingo today", "Squares and lines done, and when the next card comes", "📅", Some(Bingo), 1, false),
     wd("bingo_next", "Closest to a line", "The lines nearest to done, and what each still needs", "📌", Some(Bingo), 1, false),
     wd("bingo_meet", "Bingo Pokémon", "Today's Pokémon to meet, ticked when you do", "🔍", Some(Bingo), 1, false),
+    wd("boxes_party", "Your party", "Your party from the last save, with levels and shinies", "👥", Some(Boxes), 1, false),
+    wd("boxes_stats", "Boxes in numbers", "Pokémon in your boxes, shinies and boxes used", "📦", Some(Boxes), 1, false),
+    wd("boxes_shinies", "Shinies in your boxes", "Every shiny in your boxes and where it is", "★", Some(Boxes), 1, false),
+    wd("boxes_ivs", "Best IVs", "Your Pokémon with the best IVs, from the save", "💎", Some(Boxes), 1, false),
+    wd("boxes_dex", "Your Pokédex", "Seen and caught, from your save", "📕", Some(Boxes), 1, false),
+    wd("nuz_run", "Your run in numbers", "Routes, Pokémon still in and out of your Nuzlocke", "💀", Some(Nuzlocke), 1, false),
+    wd("nuz_routes", "Latest routes", "The newest routes of your run and who you got there", "📍", Some(Nuzlocke), 1, false),
+    wd("nuz_lost", "Out of the run", "Every Pokémon out of your run, and from where", "🕯", Some(Nuzlocke), 1, false),
+    wd("nuz_team", "Nuzlocke team", "Your team in the world you're playing", "👥", Some(Nuzlocke), 1, false),
+    wd("nuz_rules", "Your run's rules", "Type, rules, level caps and lives of your run", "📜", Some(Nuzlocke), 1, false),
     wd("rare_out", "Rare grass today", "The rarest Pokémon on rare grass today, and where", "✨", Some(Rare), 1, false),
     wd("rare_new", "New on rare grass", "Pokémon on rare grass for the first time today", "🆕", Some(Rare), 1, false),
     wd("rare_stats", "Rare grass in numbers", "Pokémon and tiles today, everything seen, and the reset", "🌿", Some(Rare), 1, false),
@@ -363,6 +388,11 @@ pub(super) const DEFS: &[WidgetDef] = &[
     wd("replay_recent", "Recent clips", "Your latest clips, one click to watch", "🎞", Some(Replay), 1, false),
     wd("replay_stats", "Clips in numbers", "Clips, shinies on video, and the space they take", "📼", Some(Replay), 1, false),
     wd("replay_save", "Save replay now", "One big button that saves the last seconds of the game", "💾", Some(Replay), 1, false),
+    wd("journal_recent", "Recent notes", "The notes you changed last, one click to open", "📄", Some(Journal), 1, false),
+    wd("journal_today", "Today's note", "Today's note at a glance, or a button to start it", "📅", Some(Journal), 1, false),
+    wd("journal_quick", "Quick note", "Type a line and it goes into today's note, with the time", "✏", Some(Journal), 1, false),
+    wd("journal_tasks", "Open tasks", "Unticked tasks from all your notes (right-click to tick one)", "✔", Some(Journal), 1, false),
+    wd("journal_stats", "Journal in numbers", "Notes, words, open tasks and tags", "📓", Some(Journal), 1, false),
     wd("bingo_recent", "Just ticked", "The latest bingo squares you filled in", "✅", Some(Bingo), 1, false),
 ];
 
@@ -396,6 +426,8 @@ pub(super) struct Gallery {
     pub not_added: bool,
     /// The Starter layouts tab (else the widgets).
     pub layouts: bool,
+    /// Opened from a Journal canvas: what's picked goes there (its `rel`).
+    pub to_canvas: Option<String>,
 }
 
 #[derive(Default)]
@@ -584,12 +616,17 @@ impl App {
             return;
         }
         let screen = ctx.screen_rect();
-        let size = vec2((screen.width() - 80.0).clamp(360.0, 1180.0), (screen.height() - 70.0).clamp(300.0, 860.0));
+        // (nearly the window's full height: more widgets in view at once)
+        let size = vec2((screen.width() - 48.0).clamp(360.0, 1300.0), (screen.height() - 64.0).max(300.0));
         let panel = Rect::from_center_size(screen.center(), size);
         let mut close = false;
         let mut add: Option<&'static WidgetDef> = None;
         let mut get: Option<(AppId, &'static str)> = None;
-        let have: Vec<String> = self.home_widgets().into_iter().map(|w| w.kind).collect();
+        let mut to_journal: Option<&'static str> = None;
+        let canvas = self.setup.home.gallery.to_canvas.clone();
+        let have_journal = self.has_app(AppId::Journal) && canvas.is_none();
+        // on a canvas nothing's "added" yet, and any widget can go on twice
+        let have: Vec<String> = if canvas.is_some() { Vec::new() } else { self.home_widgets().into_iter().map(|w| w.kind).collect() };
         // one area: the scrim, with the panel drawn on it (so the panel
         // never ends up under its own scrim)
         egui::Area::new(egui::Id::new("widget-gallery")).order(egui::Order::Middle).fixed_pos(screen.min).show(ctx, |ui| {
@@ -608,8 +645,16 @@ impl App {
                 // header
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
-                        ui.label(egui::RichText::new("Add widgets").font(crate::fonts::sans_bold_font(22.0)).color(TEXT()));
-                        ui.label(egui::RichText::new("Pick what your Dashboard shows. Each app brings its own; add as many as you like.").size(kit::fs(12.5)).color(MUTED()));
+                        match &canvas {
+                            Some(rel) => {
+                                ui.label(egui::RichText::new(format!("Add a widget to {}", crate::journal::title_of(rel))).font(crate::fonts::sans_bold_font(22.0)).color(TEXT()));
+                                ui.label(egui::RichText::new("It stays live on the canvas. Double-click it there to use it.").size(kit::fs(12.5)).color(MUTED()));
+                            }
+                            None => {
+                                ui.label(egui::RichText::new("Add widgets").font(crate::fonts::sans_bold_font(22.0)).color(TEXT()));
+                                ui.label(egui::RichText::new("Pick what your Dashboard shows. Each app brings its own; add as many as you like.").size(kit::fs(12.5)).color(MUTED()));
+                            }
+                        }
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                         let (r, _) = ui.allocate_exact_size(vec2(34.0, 34.0), Sense::hover());
@@ -620,12 +665,15 @@ impl App {
                 });
                 ui.add_space(12.0);
                 // two tabs: single widgets, or a whole layout
-                let mut tab = self.setup.home.gallery.layouts;
-                let wl = format!("Widgets  {}", DEFS.len());
-                let ll = format!("Starter layouts  {}", super::w_presets::PRESETS.len());
-                kit::segmented(ui, &mut tab, &[(false, wl.as_str()), (true, ll.as_str())]);
-                self.setup.home.gallery.layouts = tab;
-                ui.add_space(12.0);
+                // (whole layouts are only for the Dashboard)
+                let mut tab = self.setup.home.gallery.layouts && canvas.is_none();
+                if canvas.is_none() {
+                    let wl = format!("Widgets  {}", DEFS.len());
+                    let ll = format!("Starter layouts  {}", super::w_presets::PRESETS.len());
+                    kit::segmented(ui, &mut tab, &[(false, wl.as_str()), (true, ll.as_str())]);
+                    self.setup.home.gallery.layouts = tab;
+                    ui.add_space(12.0);
+                }
                 if tab {
                     ui.label(egui::RichText::new("A whole Dashboard in one click, laid out for a kind of player. Apps a layout needs are added with it.").size(kit::fs(12.5)).color(MUTED()));
                     ui.add_space(12.0);
@@ -643,10 +691,12 @@ impl App {
                     let mut sort = self.setup.home.gallery.sort;
                     kit::segmented(ui, &mut sort, &[(Sort::App, "By app"), (Sort::Name, "A–Z"), (Sort::Size, "Size")]);
                     self.setup.home.gallery.sort = sort;
-                    ui.add_space(6.0);
-                    let mut na = self.setup.home.gallery.not_added;
-                    if ui.checkbox(&mut na, egui::RichText::new("Hide added").size(kit::fs(12.5)).color(TEXT())).changed() {
-                        self.setup.home.gallery.not_added = na;
+                    if canvas.is_none() {
+                        ui.add_space(6.0);
+                        let mut na = self.setup.home.gallery.not_added;
+                        if ui.checkbox(&mut na, egui::RichText::new("Hide added").size(kit::fs(12.5)).color(TEXT())).changed() {
+                            self.setup.home.gallery.not_added = na;
+                        }
                     }
                 });
                 ui.add_space(10.0);
@@ -798,8 +848,14 @@ impl App {
                                 }
                             } else if added > 0 && !d.multi {
                                 p.text(br.center(), Align2::CENTER_CENTER, "Added", crate::fonts::sans_bold_font(12.5), MUTED());
-                            } else if pill_button(ui, br, if added > 0 { "+  Add another" } else { "+  Add" }, true, ("gal-add", d.kind)).clicked() {
+                            } else if pill_button(ui, br, if canvas.is_some() { "+  Add" } else if added > 0 { "+  Add another" } else { "+  Add" }, true, ("gal-add", d.kind)).on_hover_text(if canvas.is_some() { "Put it on the canvas" } else { "Put it on your Dashboard" }).clicked() {
                                 add = Some(*d);
+                            }
+                            if installed && have_journal {
+                                let jr = Rect::from_min_size(pos2(br.min.x - 40.0, br.min.y), vec2(32.0, 30.0));
+                                if pill_button(ui, jr, "📓", false, ("gal-journal", d.kind)).on_hover_text("Put it on a canvas in your Journal, live").clicked() {
+                                    to_journal = Some(d.kind);
+                                }
                             }
                         }
                     }
@@ -810,13 +866,28 @@ impl App {
             close = true;
         }
         if let Some(d) = add {
-            self.add_widget(d);
+            match &canvas {
+                // onto the canvas, in the middle of the view, and done
+                Some(rel) => {
+                    let (cw, ch) = start_size(d);
+                    let (w, h) = super::journal_canvas::widget_size(cw, ch);
+                    self.canvas_add_nodes(rel, vec![crate::jcanvas::widget_node(0.0, 0.0, w, h, d.kind, d.name)]);
+                    close = true;
+                }
+                None => self.add_widget(d),
+            }
+        }
+        if let Some(k) = to_journal {
+            if let Some(c) = self.widget_clip(k) {
+                self.journal_add(c);
+            }
         }
         if let Some((a, name)) = get {
             self.ask_for_app(a, name);
         }
         if close {
             self.setup.home.gallery.open = false;
+            self.setup.home.gallery.to_canvas = None;
             self.setup.home.add_at = None;
         }
     }
@@ -1179,6 +1250,16 @@ impl App {
             "bingo_next" => self.w_bingo_next(ui),
             "bingo_meet" => self.w_bingo_meet(ui),
             "bingo_recent" => self.w_bingo_recent(ui),
+            "boxes_party" => self.w_boxes_party(ui),
+            "boxes_stats" => self.w_boxes_stats(ui),
+            "boxes_shinies" => self.w_boxes_shinies(ui),
+            "boxes_ivs" => self.w_boxes_ivs(ui),
+            "boxes_dex" => self.w_boxes_dex(ui),
+            "nuz_run" => self.w_nuz_run(ui),
+            "nuz_routes" => self.w_nuz_routes(ui),
+            "nuz_lost" => self.w_nuz_lost(ui),
+            "nuz_team" => self.w_nuz_team(ui),
+            "nuz_rules" => self.w_nuz_rules(ui),
             "rare_out" => self.w_rare_out(ui),
             "rare_new" => self.w_rare_new(ui),
             "rare_stats" => self.w_rare_stats(ui),
@@ -1189,6 +1270,11 @@ impl App {
             "replay_recent" => self.w_replay_recent(ui),
             "replay_stats" => self.w_replay_stats(ui),
             "replay_save" => self.w_replay_save(ui),
+            "journal_recent" => self.w_journal_recent(ui),
+            "journal_today" => self.w_journal_today(ui),
+            "journal_quick" => self.w_journal_quick(ui, w, preview),
+            "journal_tasks" => self.w_journal_tasks(ui),
+            "journal_stats" => self.w_journal_stats(ui),
             _ => {}
         }
         out

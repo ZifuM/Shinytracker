@@ -319,8 +319,8 @@ impl App {
             let font = fit(&p, &num, display_font, size, 18.0, room);
             let h = font.size * 1.15;
             lettering(&p, pos2(x0, y + h / 2.0), Align2::LEFT_CENTER, &num, font.clone(), Color32::WHITE, INK, (font.size / 11.0).clamp(1.8, 3.2), Some(CYAN));
-            let label_fill = if v.counter_label == "ENCOUNTERS" { INK } else { pop_for(v.counter_col) };
-            let label_ink = if v.counter_label == "ENCOUNTERS" { Color32::WHITE } else { INK };
+            let label_fill = if super::overlay_mod::plain_counter(v.counter_label) { INK } else { pop_for(v.counter_col) };
+            let label_ink = if super::overlay_mod::plain_counter(v.counter_label) { Color32::WHITE } else { INK };
             let tr = tag(&p, pos2(x1, y + 6.0), Align2::RIGHT_TOP, v.counter_label, 8.5, label_fill, label_ink);
             if let Some((t, idle, tp)) = &v.timer {
                 let r = p.text(pos2(x1, tr.max.y + 12.0), Align2::RIGHT_CENTER, format!("{t} today"), bold_font(10.5), if *idle { mix(INK, PAPER, 0.55) } else { INK });

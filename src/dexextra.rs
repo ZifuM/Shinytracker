@@ -368,6 +368,11 @@ pub fn defenses(types: &[String]) -> Vec<(&'static str, u32)> {
         .collect()
 }
 
+/// How hard an attacking type hits each defending type, ×100 (0, 50, 100, 200).
+pub fn offense(atk: &str) -> Vec<(&'static str, u32)> {
+    TYPES.iter().map(|d| (*d, hit(atk, d) * 50)).collect()
+}
+
 // ───────────────────────────── fetching ─────────────────────────────
 
 fn cache_path(name: &str) -> PathBuf {

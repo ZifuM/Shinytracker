@@ -367,7 +367,7 @@ impl App {
                     scribble(&p, pos2(nr.min.x, nr.max.y - 4.0), pos2(nr.max.x + 6.0, nr.max.y - 5.0), 2.0, RED);
                     scribble(&p, pos2(nr.min.x + 4.0, nr.max.y - 0.5), pos2(nr.max.x + 2.0, nr.max.y - 1.5), 1.4, RED);
                     ry = nr.max.y + 4.0;
-                    if v.counter_label != "ENCOUNTERS" {
+                    if !super::overlay_mod::plain_counter(v.counter_label) {
                         hand(&p, pos2(nr.max.x + 10.0, nr.center().y), Align2::LEFT_CENTER, &v.counter_label.to_lowercase(), 13.0, tone(v.counter_col));
                     }
                     // this session in tally marks

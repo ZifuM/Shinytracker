@@ -196,6 +196,8 @@ impl App {
         let gap = 14.0;
         self.so_summary(ui, &d);
         ui.add_space(gap);
+        self.so_worlds(ui, &d);
+        ui.add_space(gap);
         self.so_activity(ui, &d);
         ui.add_space(gap);
         two(ui, wide, gap, |this: &mut App, ui: &mut egui::Ui, col| if col == 0 { this.so_luck(ui, &d) } else { this.so_highlights(ui, &d) }, self);
@@ -251,6 +253,92 @@ impl App {
             }
         }
         Data { today, from, days, sessions, clock, species, shinies, now, prev, life: self.lifetime_full() }
+    }
+
+    // ───────────────────────────── worlds ─────────────────────────────
+
+    /// Each game world's hunting (all time), and what came before worlds
+    /// were tracked.
+    fn so_worlds(&mut self, ui: &mut egui::Ui, d: &Data) {
+        let root = crate::gamemap::game_dir(self.cfg.game_dir_setting().as_deref());
+        let now_w = self.world_now();
+        let mut worlds: Vec<(u32, crate::config::WorldTally)> = self.cfg.world_tally.iter().map(|(k, v)| (*k, v.clone())).collect();
+        if let Some(w) = now_w {
+            if !worlds.iter().any(|(k, _)| *k == w) {
+                let name = self.setup.world.opts.as_ref().map(|o| o.name.clone()).unwrap_or_default();
+                worlds.push((w, crate::config::WorldTally { name, ..Default::default() }));
+            }
+        }
+        worlds.sort_by(|a, b| (Some(b.0) == now_w).cmp(&(Some(a.0) == now_w)).then(b.1.last.cmp(&a.1.last)));
+        let tracked_enc: u64 = worlds.iter().map(|(_, t)| t.encounters).sum();
+        let before_enc = d.life.encounters.saturating_sub(tracked_enc);
+        let before_shinies = self.cfg.history.iter().filter(|h| h.world.is_none()).count();
+        if worlds.is_empty() && before_enc == 0 {
+            return;
+        }
+        ch::card(ui, "🌍", "Your worlds", Some(("all time", MUTED())), |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(egui::RichText::new("Each game world on its own, counted from when worlds were tracked. Anything from before is kept apart, not guessed.").size(12.0).color(MUTED()));
+            ui.add_space(10.0);
+            let n = worlds.len() + (before_enc > 0 || before_shinies > 0) as usize;
+            let full = ui.available_width();
+            let cols = ((full + 12.0) / 250.0).floor().clamp(1.0, 4.0) as usize;
+            let tw = ((full - 12.0 * (cols as f32 - 1.0)) / cols as f32).floor();
+            let mut tiles: Vec<(String, String, Vec<(String, String)>, bool)> = Vec::new();
+            for (k, t) in &worlds {
+                let opts = if Some(*k) == now_w { self.setup.world.opts.clone() } else { crate::worldini::read_world(&root, *k) };
+                let kind = match opts.as_ref().map(|o| (o.challenge(), o.rules())) {
+                    Some((Some(c), Some(r))) => format!("{c} · {r} rules"),
+                    Some((Some(c), None)) => c,
+                    _ => "Normal".into(),
+                };
+                let title = if t.name.is_empty() { format!("World {k}") } else { format!("{} · World {k}", t.name) };
+                let days = t.days.values().filter(|n| **n > 0).count();
+                let last = if t.last > 0 { fmt_day_short(local_day(t.last)) } else { "—".into() };
+                tiles.push((
+                    title,
+                    if Some(*k) == now_w { format!("{kind} · playing now") } else { kind },
+                    vec![
+                        (theme::thousands(t.encounters), "encounters".into()),
+                        (t.shinies.to_string(), "shinies".into()),
+                        (days.to_string(), "days".into()),
+                        (last, "last hunted".into()),
+                    ],
+                    Some(*k) == now_w,
+                ));
+            }
+            if n > worlds.len() {
+                tiles.push((
+                    "Before worlds were tracked".into(),
+                    "Everything from earlier".into(),
+                    vec![(theme::thousands(before_enc), "encounters".into()), (before_shinies.to_string(), "shinies".into())],
+                    false,
+                ));
+            }
+            for row in tiles.chunks(cols) {
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing.x = 12.0;
+                    for (title, sub, vals, now) in row {
+                        let (r, _) = ui.allocate_exact_size(vec2(tw, 104.0), Sense::hover());
+                        let p = ui.painter();
+                        let col = if *now { GREEN } else { BLUE };
+                        p.rect_filled(r, 14.0, theme::blend(kit::CARD(), col, 0.07));
+                        p.rect_stroke(r, 14.0, Stroke::new(if *now { 1.5f32 } else { 1.0 }, if *now { col } else { kit::LINE() }));
+                        let tf = ch::bold(13.5);
+                        p.text(r.min + vec2(14.0, 18.0), Align2::LEFT_CENTER, ch::clip(ui, title, &tf, tw - 28.0), tf, TEXT());
+                        p.text(r.min + vec2(14.0, 36.0), Align2::LEFT_CENTER, sub, ch::reg(11.5), if *now { col } else { MUTED() });
+                        let cw = (tw - 28.0) / vals.len().max(1) as f32;
+                        for (i, (v, l)) in vals.iter().enumerate() {
+                            let x = r.min.x + 14.0 + cw * i as f32;
+                            let vf = ch::heavy(if v.len() > 7 { 13.0 } else { 17.0 });
+                            p.text(pos2(x, r.max.y - 34.0), Align2::LEFT_CENTER, ch::clip(ui, v, &vf, cw - 6.0), vf, TEXT());
+                            p.text(pos2(x, r.max.y - 15.0), Align2::LEFT_CENTER, l, ch::reg(10.5), MUTED());
+                        }
+                    }
+                });
+                ui.add_space(12.0);
+            }
+        });
     }
 
     // ───────────────────────────── summary ─────────────────────────────

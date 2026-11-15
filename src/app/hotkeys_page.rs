@@ -30,7 +30,7 @@ impl App {
     /// Stop recording a hotkey if its page was left (the others are switched
     /// off while recording).
     pub(super) fn hotkeys_guard(&mut self) {
-        if self.setup.recording.is_some() && self.setup.tab != Tab::Hotkeys {
+        if self.setup.recording.is_some() && self.setup.settings_open != Some(Tab::Hotkeys) && self.setup.tab != Tab::Hotkeys {
             self.setup.recording = None;
             self.apply_keybinds();
         }

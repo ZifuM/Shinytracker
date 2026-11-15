@@ -531,7 +531,7 @@ impl App {
         }
     }
 
-    fn team_moves_card(&mut self, ui: &mut egui::Ui, world: World, sp: &battle::Species, m: &mut Member, w: Option<&Wiki>, open: &mut Option<Picker>) {
+    pub(super) fn team_moves_card(&mut self, ui: &mut egui::Ui, world: World, sp: &battle::Species, m: &mut Member, w: Option<&Wiki>, open: &mut Option<Picker>) {
         let learn = w.map(|w| learnable(w, &sp.name, world)).unwrap_or_default();
         let ways = best_ways(&learn);
         kit::card(ui, |ui| {
@@ -628,7 +628,7 @@ impl App {
         });
     }
 
-    fn team_stats_card(&mut self, ui: &mut egui::Ui, world: World, sp: &battle::Species, m: &mut Member) {
+    pub(super) fn team_stats_card(&mut self, ui: &mut egui::Ui, world: World, sp: &battle::Species, m: &mut Member) {
         let d = battle::data();
         let base = sp.base_stats(world);
         kit::card(ui, |ui| {

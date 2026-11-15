@@ -515,7 +515,7 @@ impl App {
         self.cfg.hunt_method = crate::config::HuntMethod::Masuda;
         self.push_settings(true);
         self.dirty = true;
-        self.setup.breed.flash = Some((format!("The Shiny Hunter is set to hunt {name} with the Masuda Method. Log each Egg on the Hatch log and tick \"Add it to your Masuda hunt too\"."), Instant::now()));
+        self.setup.breed.flash = Some((format!("The Shiny Hunter is set to hunt {name} with the Masuda Method. Each Egg that hatches counts by itself from the game's log; press Caught when one is shiny."), Instant::now()));
     }
 
     /// Open the Plan for a target (from the Pokédex or the Team Planner).

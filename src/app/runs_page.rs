@@ -126,7 +126,18 @@ impl App {
         let mut sort = self.cfg.runs_sort.min(3);
         let mut list = self.cfg.runs_list;
         let mut query = std::mem::take(&mut self.setup.runs_query);
-        ui.label(RichText::new("Your runs").font(ch::bold(18.0)).color(TEXT()));
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Your runs").font(ch::bold(18.0)).color(TEXT()));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add(egui::Button::new("✨  Log a shiny you caught").fill(kit::btn_fill()))
+                    .on_hover_text("Caught one without tracking it? Log it with its details. It goes in your Shiny Dex, not here: it isn't a run")
+                    .clicked()
+                {
+                    self.open_log(None);
+                }
+            });
+        });
         ui.add_space(10.0);
         // width of the sort box and view switch, measured last frame
         let rest_id = egui::Id::new("runs-tools-rest");

@@ -71,6 +71,13 @@ impl App {
         let has_gotchi = self.has_app(AppId::Gotchi);
         let mut shiny = self.cfg.ov_pick_shiny;
         let mut toasts_on = self.cfg.all_toasts;
+        // the overlay's extra strips
+        let mut eggs_on = self.cfg.overlay.eggs;
+        let mut balls_on = self.cfg.overlay.balls;
+        let masuda = self.cfg.hunt_method == crate::config::HuntMethod::Masuda;
+        // already open: this is where it's stopped too
+        let running = self.any_overlay();
+        let mut stop = false;
         let mut bar = if has_cards { Some(self.setup.cards.file().bar.clone()) } else { None };
         let mut gov = if has_gotchi { Some(self.setup.gotchi.file().overlay.clone()) } else { None };
         let pet = has_gotchi && self.setup.gotchi.file().partner().is_some();
@@ -89,8 +96,13 @@ impl App {
             p.rect_filled(panel, 16.0, kit::CARD());
             p.rect_stroke(panel, 16.0, Stroke::new(1.0f32, LINE()));
             let inner = panel.shrink2(vec2(24.0, 22.0));
-            p.text(inner.min, Align2::LEFT_TOP, "Start overlay", crate::fonts::sans_bold_font(19.0), TEXT());
-            p.text(inner.min + vec2(0.0, 28.0), Align2::LEFT_TOP, "Pick what to open on top of the game, then press Go. Your picks are kept for next time.", crate::fonts::sans_font(12.5), MUTED());
+            p.text(inner.min, Align2::LEFT_TOP, if running { "Overlay" } else { "Start overlay" }, crate::fonts::sans_bold_font(19.0), TEXT());
+            let sub = if running {
+                "It's running. Turn things on and off here and it changes straight away, or stop it."
+            } else {
+                "Pick what to open on top of the game, then press Go. Your picks are kept for next time."
+            };
+            p.text(inner.min + vec2(0.0, 28.0), Align2::LEFT_TOP, sub, crate::fonts::sans_font(12.5), MUTED());
             // close
             let xc = pos2(inner.max.x - 10.0, inner.min.y + 10.0);
             let xr = Rect::from_center_size(xc, vec2(28.0, 28.0));
@@ -226,7 +238,14 @@ impl App {
                             }
                         }
                         _ => {
-                            cu.label(egui::RichText::new("Its look is set on the Overlay page").size(kit::fs(12.0)).color(MUTED()));
+                            // the strips under it: on or off
+                            cu.spacing_mut().item_spacing.x = 12.0;
+                            kit::checkbox(&mut cu, &mut eggs_on, "Eggs").on_hover_text(if masuda {
+                                "The Eggs you carry and how close each is to hatching"
+                            } else {
+                                "The Eggs you carry and how close each is to hatching. Only while your hunt method is Masuda."
+                            });
+                            kit::checkbox(&mut cu, &mut balls_on, "Poké Balls").on_hover_text("How many of each ball are left in your Bag");
                         }
                     }
                     if cu.min_rect().contains(ui.input(|i| i.pointer.interact_pos().unwrap_or_default())) {
@@ -260,7 +279,7 @@ impl App {
             p.text(pos2(inner.min.x, fy), Align2::LEFT_CENTER, note, crate::fonts::sans_font(12.5), MUTED());
             let gb = Rect::from_min_size(pos2(inner.max.x - 150.0, fy - 21.0), vec2(150.0, 42.0));
             let cb = Rect::from_min_size(pos2(gb.min.x - 110.0, fy - 21.0), vec2(100.0, 42.0));
-            if pill_button(ui, cb, "Cancel", false, "ov-cancel").clicked() {
+            if pill_button(ui, cb, if running { "Close" } else { "Cancel" }, false, "ov-cancel").clicked() {
                 close = true;
             }
             // Master switch for every pop-up, just left of Cancel.
@@ -276,7 +295,11 @@ impl App {
                         .color(if toasts_on { TEXT() } else { MUTED() }),
                 );
             });
-            if picked > 0 {
+            if running {
+                if pill_button(ui, gb, "■  Stop overlay", true, "ov-stop").clicked() {
+                    stop = true;
+                }
+            } else if picked > 0 {
                 if pill_button(ui, gb, "▶  Go", true, "ov-go").clicked() {
                     go = true;
                 }
@@ -303,6 +326,12 @@ impl App {
             self.cfg.ov_pick_shiny = shiny;
             self.dirty = true;
         }
+        if eggs_on != self.cfg.overlay.eggs || balls_on != self.cfg.overlay.balls {
+            self.cfg.overlay.eggs = eggs_on;
+            self.cfg.overlay.balls = balls_on;
+            self.ov_size = None;
+            self.dirty = true;
+        }
         if let Some(b) = bar {
             if b != self.setup.cards.file().bar {
                 self.setup.cards.file().bar = b;
@@ -315,7 +344,24 @@ impl App {
                 self.setup.gotchi.touch();
             }
         }
-        if go {
+        // Already open: what's ticked is what's open, straight away, so
+        // things can be turned on and off without stopping the overlay.
+        if running && !stop {
+            let picks = self.overlay_picks();
+            if picks.0 != self.overlay_on {
+                self.overlay_on = picks.0;
+                self.ov_hidden = false;
+                self.dirty = true;
+            }
+            if picks.2 != self.setup.gotchi.shown {
+                self.setup.gotchi.shown = picks.2;
+                self.dirty = true;
+            }
+        }
+        if stop {
+            self.setup.ov_picker = false;
+            self.stop_overlay();
+        } else if go {
             self.setup.ov_picker = false;
             self.launch_overlays();
         } else if let Some(a) = store {

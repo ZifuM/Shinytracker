@@ -1107,6 +1107,8 @@ impl App {
         let mut go: Option<Page> = None;
         let mut back = false;
         let mut flip_pin = false;
+        let mut to_journal = false;
+        let have_journal = self.has_app(crate::apps::AppId::Journal);
         ui.horizontal(|ui| {
             let label = format!("‹  {}", back_to.clone().unwrap_or_else(|| "Game Info".into()));
             back = ui.add(egui::Button::new(RichText::new(label).size(13.0)).fill(kit::btn_fill())).on_hover_text("Back (Alt+←)").clicked();
@@ -1129,10 +1131,18 @@ impl App {
                     if ui.add(egui::Button::new(RichText::new(t).size(12.5)).fill(fill)).on_hover_text(tip).clicked() {
                         flip_pin = true;
                     }
+                    if super::journal_add::add_button(ui, have_journal) {
+                        to_journal = true;
+                    }
                 });
             }
         });
         ui.add_space(16.0);
+        if to_journal {
+            if let Some(c) = self.info_clip(&page) {
+                self.journal_add(c);
+            }
+        }
         if flip_pin {
             if let Some(k) = pin_key {
                 if pinned {

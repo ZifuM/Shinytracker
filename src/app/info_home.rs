@@ -14,6 +14,16 @@ use eframe::egui::{self, Align2, Color32, Rect, RichText, Sense, Stroke};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+/// Something clicked in the launcher's quick look.
+pub(super) enum Peek {
+    /// Look at another thing (a move a Pokémon learns, where an item is…).
+    Look(Kind, String),
+    /// Open it in its app.
+    Open,
+    /// Read a guide, at a section.
+    Read(String, Option<usize>),
+}
+
 /// What a search result is.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub(super) enum Kind {
@@ -178,7 +188,7 @@ impl InfoState {
 }
 
 /// Places grouped by name ("Route 210" covers its north and south parts).
-fn place_groups(w: &Wiki) -> BTreeMap<String, Vec<String>> {
+pub(super) fn place_groups(w: &Wiki) -> BTreeMap<String, Vec<String>> {
     let mut g: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (k, p) in &w.data.places {
         let name = if p.group.is_empty() { p.name.clone() } else { p.group.clone() };
@@ -945,6 +955,250 @@ impl App {
 
     // ───────────────────────────── quick look ─────────────────────────────
 
+    /// A quick look for the Ctrl K launcher, drawn wherever you are (no
+    /// switching to Game Info). Returns what was clicked inside it.
+    pub(super) fn info_peek(&mut self, ui: &mut egui::Ui, w: &Arc<Wiki>, cur: &(Kind, String)) -> Option<Peek> {
+        let mut go: Option<(Kind, String)> = None;
+        let dex: Option<String> = None;
+        let mut read: Option<(String, Option<usize>)> = None;
+        match cur.0 {
+            Kind::Pokemon => {
+                if let Some(m) = w.mon(&cur.1).cloned() {
+                    self.peek_mon(ui, w, &m, &mut go);
+                }
+            }
+            Kind::Move => look_move(ui, w, &cur.1, &mut go),
+            Kind::Item => look_item(ui, w, &cur.1, &mut go),
+            Kind::Place => self.look_place(ui, w, &cur.1, &mut go),
+            Kind::Guide => {
+                if let Some(doc) = self.guide_doc(w, &cur.1) {
+                    read = look_guide(ui, w, &cur.1, &doc);
+                }
+            }
+        }
+        if let Some(g) = go {
+            return Some(Peek::Look(g.0, g.1));
+        }
+        if dex.is_some() {
+            return Some(Peek::Open);
+        }
+        read.map(|(id, sec)| Peek::Read(id, sec))
+    }
+
+    /// A Pokémon in the launcher: the most important things from its
+    /// Pokédex page (types, abilities, base stats, weaknesses, evolution,
+    /// where to catch it), without leaving the page you're on.
+    fn peek_mon(&mut self, ui: &mut egui::Ui, w: &Arc<Wiki>, m: &Mon, go: &mut Option<(Kind, String)>) {
+        let sp = self.species.get((m.dex as usize).wrapping_sub(1)).cloned().or_else(|| self.info_species(&m.name));
+        let extra = match sp.as_ref() {
+            Some(sp) => self.dexdb.get(&sp.slug),
+            None => crate::dexextra::State::Failed(String::new()),
+        };
+        if matches!(extra, crate::dexextra::State::Loading) {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+        }
+        let e = match &extra {
+            crate::dexextra::State::Ready(e) => Some(e.as_ref().clone()),
+            _ => None,
+        };
+        // name, number, types, kind
+        ui.horizontal(|ui| {
+            let (r, _) = ui.allocate_exact_size(egui::vec2(72.0, 72.0), Sense::hover());
+            let col = type_color(m.types.first().map(String::as_str).unwrap_or(""));
+            ui.painter().circle_filled(r.center(), 36.0, theme::blend(CARD(), col, 0.20));
+            if let Some(sp) = sp.as_ref() {
+                self.info_sprite(ui.painter(), sp, r.center(), egui::vec2(64.0, 64.0));
+            }
+            ui.add_space(8.0);
+            ui.vertical(|ui| {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(&m.name).font(crate::fonts::sans_bold_font(20.0)).color(TEXT()));
+                    ui.label(small(format!(" #{:04}", m.dex)));
+                    if m.modern {
+                        tag(ui, "MODERN", kit::C_INDIGO).on_hover_text("Only in worlds with MODERN POKéMON on");
+                    }
+                });
+                ui.horizontal(|ui| {
+                    for t in &m.types {
+                        type_chip(ui, t, "");
+                    }
+                    if let Some(e) = e.as_ref().filter(|e| !e.category.is_empty()) {
+                        ui.label(small(&e.category));
+                    }
+                });
+            });
+        });
+        ui.add_space(10.0);
+        let row = |ui: &mut egui::Ui, k: &str, v: &str| {
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(egui::vec2(96.0, 18.0), Sense::hover());
+                ui.painter().text(r.left_center(), Align2::LEFT_CENTER, k, crate::fonts::sans_font(12.0), MUTED());
+                ui.add(egui::Label::new(RichText::new(v).size(12.5).color(TEXT())).wrap());
+            });
+        };
+        match e.as_ref() {
+            Some(e) => {
+                // the facts
+                if !e.abilities.is_empty() {
+                    row(ui, "Abilities", &e.abilities.join(" · "));
+                }
+                if !e.hidden_ability.is_empty() {
+                    row(ui, "Hidden ability", &e.hidden_ability);
+                }
+                if !e.catch_rate.is_empty() {
+                    row(ui, "Catch rate", e.catch_rate.split(" (").next().unwrap_or(&e.catch_rate));
+                }
+                if !e.gender.is_empty() {
+                    row(ui, "Gender", &e.gender);
+                }
+                if !e.egg_groups.is_empty() {
+                    row(ui, "Egg groups", &e.egg_groups.join(" · "));
+                }
+                // base stats, small
+                if e.stats.len() == 6 {
+                    ui.add_space(8.0);
+                    look_head(ui, "BASE STATS", &format!("total {}", e.total));
+                    let names = ["HP", "Attack", "Defense", "Sp. Atk", "Sp. Def", "Speed"];
+                    for (i, (n, v)) in names.iter().zip(&e.stats).enumerate() {
+                        let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 18.0), Sense::hover());
+                        let p = ui.painter();
+                        p.text(r.left_center(), Align2::LEFT_CENTER, *n, crate::fonts::sans_font(11.5), MUTED());
+                        p.text(r.left_center() + egui::vec2(88.0, 0.0), Align2::RIGHT_CENTER, v.to_string(), crate::fonts::sans_bold_font(12.0), TEXT());
+                        let track = Rect::from_min_max(egui::pos2(r.left() + 98.0, r.center().y - 4.0), egui::pos2(r.right(), r.center().y + 4.0));
+                        p.rect_filled(track, 4.0, theme::blend(CARD(), TEXT(), 0.08));
+                        let f = kit::grow(ui.ctx(), egui::Id::new(("peek-stat", m.dex, i)), (*v as f32 / 180.0).clamp(0.03, 1.0));
+                        p.rect_filled(Rect::from_min_size(track.min, egui::vec2(track.width() * f, 8.0)), 4.0, super::pokedex::stat_color(*v));
+                    }
+                }
+            }
+            None => {
+                let msg = if matches!(extra, crate::dexextra::State::Loading) { "Getting its abilities and stats…" } else { "Abilities and stats need the internet the first time." };
+                ui.label(small(msg));
+            }
+        }
+        // what hurts it
+        let fx = crate::dexextra::defenses(&m.types);
+        let weak: Vec<(&str, u32)> = fx.iter().filter(|(_, x)| *x > 100).map(|(t, x)| (*t, *x)).collect();
+        let resist: Vec<&str> = fx.iter().filter(|(_, x)| *x > 0 && *x < 100).map(|(t, _)| *t).collect();
+        let immune: Vec<&str> = fx.iter().filter(|(_, x)| *x == 0).map(|(t, _)| *t).collect();
+        ui.add_space(8.0);
+        look_head(ui, "WEAK TO", "");
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+            for (t, x) in &weak {
+                type_chip(ui, t, if *x >= 400 { " ×4" } else { " ×2" });
+            }
+            if weak.is_empty() {
+                ui.label(small("Nothing"));
+            }
+        });
+        if !resist.is_empty() || !immune.is_empty() {
+            ui.add_space(4.0);
+            let mut line = String::new();
+            if !resist.is_empty() {
+                line.push_str(&format!("Resists {}", resist.join(", ")));
+            }
+            if !immune.is_empty() {
+                if !line.is_empty() {
+                    line.push_str(". ");
+                }
+                line.push_str(&format!("Immune to {}", immune.join(", ")));
+            }
+            ui.add(egui::Label::new(small(line)).wrap());
+        }
+        // evolution
+        let from = w.evolves_from(&m.id).cloned();
+        let into: Vec<wiki::Evo> = w.evolves_into(&m.id).into_iter().cloned().collect();
+        if from.is_some() || !into.is_empty() {
+            ui.add_space(8.0);
+            look_head(ui, "EVOLUTION", "");
+            if let Some(e) = from {
+                let name = w.mon(&e.from).map(|f| f.name.clone()).unwrap_or_else(|| e.from.clone());
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(small("From"));
+                    if ui.link(RichText::new(&name).size(12.5).strong()).clicked() {
+                        *go = Some((Kind::Pokemon, e.from.clone()));
+                    }
+                    ui.label(small(super::pokedex::short_method(&e.method)));
+                });
+            }
+            for e in into {
+                let name = w.mon(&e.species).map(|f| f.name.clone()).unwrap_or_else(|| e.species.clone());
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(small("Into"));
+                    if ui.link(RichText::new(&name).size(12.5).strong()).clicked() {
+                        *go = Some((Kind::Pokemon, e.species.clone()));
+                    }
+                    ui.label(small(super::pokedex::short_method(&e.method)));
+                });
+            }
+        }
+        // where to catch it (the best few for now)
+        let now = period_now();
+        let mut wild = w.wild(&m.id);
+        wild.sort_by_key(|e| (std::cmp::Reverse(chance_at(e, now)), w.stage_index(&e.stage)));
+        ui.add_space(8.0);
+        if !wild.is_empty() {
+            look_head(ui, "WHERE TO CATCH IT", &format!("best first for {} now", PERIODS[now].to_lowercase()));
+            for e in wild.iter().take(3) {
+                if wild_row(ui, w, e, now, false) {
+                    *go = w.place(&e.area).map(|p| (Kind::Place, if p.group.is_empty() { p.name.clone() } else { p.group.clone() }));
+                }
+            }
+            if wild.len() > 3 {
+                ui.label(small(format!("+ {} more in the Pokédex", wild.len() - 3)));
+            }
+        } else {
+            let other = w.other(&m.id);
+            if !other.is_empty() {
+                look_head(ui, "WAYS TO GET IT", "");
+                for o in other.iter().take(3) {
+                    other_row(ui, o);
+                }
+            } else if let Some(why) = w.unobtainable(&m.id) {
+                look_head(ui, "CAN'T BE CAUGHT RIGHT NOW", "");
+                ui.add(egui::Label::new(small(why)).wrap());
+            }
+        }
+        ui.add_space(6.0);
+    }
+
+    /// A place in the launcher: what's on its rare grass today, first.
+    fn peek_place_rare(&mut self, ui: &mut egui::Ui, group: &str, go: &mut Option<(Kind, String)>) {
+        let here: Vec<super::rare::RareSpot> = self
+            .rare_spots_today()
+            .into_iter()
+            .filter(|s| s.place == group || s.place.starts_with(&format!("{group} ")) || s.place.starts_with(&format!("{group}(")))
+            .collect();
+        if here.is_empty() {
+            return;
+        }
+        let reset = super::rare_app::countdown(super::rare_app::secs_to_reset());
+        look_head(ui, "ON RARE GRASS HERE TODAY", &format!("new list in {reset}"));
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+            for s in &here {
+                let label = format!("{} · {} tile{}", s.species.name, s.tiles, if s.tiles == 1 { "" } else { "s" });
+                let id = self.wiki.as_ref().and_then(|w| w.by_dex(s.species.dex).map(|m| m.id.clone()));
+                if link_chip(ui, &label, kit::C_GREEN).on_hover_text(&s.place).clicked() {
+                    if let Some(id) = id {
+                        *go = Some((Kind::Pokemon, id));
+                    }
+                }
+            }
+        });
+        ui.add_space(12.0);
+    }
+
+    /// Open a guide at a section (from the launcher's quick look).
+    pub(super) fn info_open_guide_at(&mut self, id: &str, sec: Option<usize>) {
+        if self.setup.tab != Tab::Info {
+            self.go_to(Tab::Info);
+        }
+        self.info_read(id, sec, None);
+    }
+
     fn info_quick_look(&mut self, ui: &mut egui::Ui, w: &Arc<Wiki>, cur: &(Kind, String)) {
         let mut go: Option<(Kind, String)> = None;
         let mut dex: Option<String> = None;
@@ -1119,6 +1373,7 @@ impl App {
             }
         });
         ui.add_space(12.0);
+        self.peek_place_rare(ui, group, go);
         // Pokémon here: best chance at any time, any area
         let mut best: BTreeMap<String, (u32, String)> = BTreeMap::new();
         for e in w.data.wild.iter().filter(|e| keys.contains(&e.area)) {
@@ -1849,6 +2104,44 @@ fn stat_box(ui: &mut egui::Ui, label: &str, value: &str, w: f32) {
     ui.painter().text(egui::pos2(r.min.x + 12.0, r.min.y + 35.0), Align2::LEFT_CENTER, value, crate::fonts::sans_bold_font(16.0), TEXT());
 }
 
+/// What a damaging move's type hits hard, and what shrugs it off (shown
+/// above its quick look in the launcher).
+fn peek_move_hits(ui: &mut egui::Ui, w: &Wiki, key: &str) {
+    let Some(m) = w.move_info(key) else { return };
+    if m.c.eq_ignore_ascii_case("status") {
+        return;
+    }
+    let fx = crate::dexextra::offense(&m.t);
+    let strong: Vec<&str> = fx.iter().filter(|(_, x)| *x > 100).map(|(t, _)| *t).collect();
+    let weak: Vec<&str> = fx.iter().filter(|(_, x)| *x > 0 && *x < 100).map(|(t, _)| *t).collect();
+    let none: Vec<&str> = fx.iter().filter(|(_, x)| *x == 0).map(|(t, _)| *t).collect();
+    look_head(ui, "SUPER EFFECTIVE AGAINST", &format!("{} moves", m.t));
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+        for t in &strong {
+            type_chip(ui, t, " ×2");
+        }
+        if strong.is_empty() {
+            ui.label(small("Nothing"));
+        }
+    });
+    let mut line = String::new();
+    if !weak.is_empty() {
+        line.push_str(&format!("Not very effective on {}", weak.join(", ")));
+    }
+    if !none.is_empty() {
+        if !line.is_empty() {
+            line.push_str(". ");
+        }
+        line.push_str(&format!("No effect on {}", none.join(", ")));
+    }
+    if !line.is_empty() {
+        ui.add_space(4.0);
+        ui.add(egui::Label::new(small(line)).wrap());
+    }
+    ui.add_space(12.0);
+}
+
 fn look_move(ui: &mut egui::Ui, w: &Wiki, key: &str, go: &mut Option<(Kind, String)>) {
     let Some(m) = w.move_info(key) else { return };
     look_title(ui, Kind::Move, &m.n);
@@ -1870,6 +2163,7 @@ fn look_move(ui: &mut egui::Ui, w: &Wiki, key: &str, go: &mut Option<(Kind, Stri
     ui.add_space(12.0);
     ui.add(egui::Label::new(RichText::new(&m.d).size(13.0).color(TEXT())).wrap());
     ui.add_space(12.0);
+    peek_move_hits(ui, w, key);
     // how you teach it
     let tm: Vec<&String> = w.data.tms.iter().filter(|(_, v)| v.as_str() == key).map(|(k, _)| k).collect();
     if let Some(t) = tm.first() {

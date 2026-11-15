@@ -44,6 +44,9 @@ pub(super) fn tab_meta(t: Tab) -> (&'static str, &'static str, Color32) {
         Tab::Bingo => ("🎯", "Shiny Bingo", kit::C_VIOLET),
         Tab::RareGrass => ("✨", "Rare Grass", kit::C_GREEN),
         Tab::Replay => ("🎬", "Shiny Replay", super::replay_app::ROSE),
+        Tab::Journal => ("📓", "Journal", super::journal_app::JOURNAL_COL),
+        Tab::Boxes => ("📦", "Pokémon Boxes", super::boxes_app::BOX_COL),
+        Tab::Nuzlocke => ("💀", "Nuzlocke Tracker", super::nuzlocke_app::NUZ_COL),
         Tab::Appearance => ("🎨", "Appearance", kit::C_PINK),
         Tab::Hotkeys => ("⌨", "Hotkeys", kit::C_SLATE),
         Tab::Advanced => ("⚙", "Advanced", kit::C_SLATE),
@@ -52,7 +55,7 @@ pub(super) fn tab_meta(t: Tab) -> (&'static str, &'static str, Color32) {
 
 /// Pages that are still experimental (marked in the sidebar).
 pub(super) fn is_experimental(t: Tab) -> bool {
-    matches!(t, Tab::Sim | Tab::Breed | Tab::Cards | Tab::Gotchi | Tab::Bingo | Tab::RareGrass | Tab::Replay)
+    matches!(t, Tab::Sim | Tab::Breed | Tab::Cards | Tab::Gotchi | Tab::Bingo | Tab::RareGrass | Tab::Replay | Tab::Journal | Tab::Boxes | Tab::Nuzlocke)
 }
 
 /// The App Store's and the Library's colours.
@@ -78,6 +81,9 @@ pub(super) fn app_of(t: Tab) -> Option<AppId> {
         Tab::Bingo => AppId::Bingo,
         Tab::RareGrass => AppId::Rare,
         Tab::Replay => AppId::Replay,
+        Tab::Journal => AppId::Journal,
+        Tab::Boxes => AppId::Boxes,
+        Tab::Nuzlocke => AppId::Nuzlocke,
         _ => return None,
     })
 }
@@ -98,6 +104,9 @@ pub(super) fn app_tab(a: AppId) -> Tab {
         AppId::Bingo => Tab::Bingo,
         AppId::Rare => Tab::RareGrass,
         AppId::Replay => Tab::Replay,
+        AppId::Journal => Tab::Journal,
+        AppId::Boxes => Tab::Boxes,
+        AppId::Nuzlocke => Tab::Nuzlocke,
     }
 }
 
@@ -118,7 +127,8 @@ pub(super) struct NavRow {
 
 impl App {
     /// The sidebar: Home, the store, the Library, Profile and Stats always;
-    /// then the apps that are open (closing one takes it off); then settings.
+    /// then the apps that are open (closing one takes it off). Settings are
+    /// behind the cog, top right.
     pub(super) fn nav_rows(&self) -> Vec<NavRow> {
         let row = |group, tab| NavRow { group, tab, parent: None, app: None };
         let mut v = vec![row(None, Tab::Home), row(None, Tab::Store), row(None, Tab::Library), row(None, Tab::Profile), row(None, Tab::Stats)];
@@ -137,10 +147,13 @@ impl App {
                 }
             }
         }
-        v.push(row(Some("SETTINGS"), Tab::Appearance));
-        v.push(row(None, Tab::Hotkeys));
-        v.push(row(None, Tab::Advanced));
         v
+    }
+
+    /// Open the settings window at `tab` (Appearance, Hotkeys or Advanced).
+    pub(super) fn open_settings(&mut self, tab: Tab) {
+        self.setup.settings_open = Some(tab);
+        self.setup.scroll_top = true;
     }
 
     /// The "nothing open" note in the sidebar (where open apps would be).
@@ -205,15 +218,32 @@ impl App {
 
 impl App {
     pub(super) fn nav_width(&self) -> f32 {
-        if self.cfg.appearance.nav_compact {
+        if self.nav_is_compact() {
             RAIL_W
         } else {
             NAV_W
         }
     }
 
+    /// The sidebar shows only icons: as set in Appearance (the same on every
+    /// page, the Journal included).
+    pub(super) fn nav_is_compact(&self) -> bool {
+        self.cfg.appearance.nav_compact
+    }
+
+    /// Fold or unfold the sidebar.
+    pub(super) fn nav_fold_toggle(&mut self) {
+        self.cfg.appearance.nav_compact = !self.cfg.appearance.nav_compact;
+        self.dirty = true;
+    }
+
     /// Open a page from the sidebar (same rules as the classic sidebar).
     pub(super) fn go_to(&mut self, tab: Tab) {
+        // settings live in their own window now
+        if matches!(tab, Tab::Appearance | Tab::Hotkeys | Tab::Advanced) {
+            self.open_settings(tab);
+            return;
+        }
         let current = self.setup.tab;
         let expandable = tab == Tab::Shiny;
         if tab == Tab::Store {
@@ -263,7 +293,7 @@ impl App {
         ));
 
         // Brand.
-        let compact = self.cfg.appearance.nav_compact && !self.takeover_open();
+        let compact = self.nav_is_compact() && !self.takeover_open();
         let logo_c = if compact { left.center() } else { rect.left_center() + egui::vec2(30.0, 0.0) };
         p.image(
             self.icon_tex.id(),
@@ -281,6 +311,17 @@ impl App {
         let (_, name, color) = tab_meta(tab);
         let mut x = if !self.takeover_open() { right.min.x + 28.0 } else { rect.min.x + 200.0 };
         let cy = right.center().y;
+        // the sidebar's fold button: a panel picture, first thing after the sidebar
+        // (its click is taken after the window-drag area, which would cover it)
+        let fold_r = Rect::from_center_size(egui::pos2(right.min.x + 26.0, cy), egui::vec2(32.0, 30.0));
+        if !self.takeover_open() {
+            let hov = ui.rect_contains_pointer(fold_r);
+            if hov {
+                p.rect_filled(fold_r, 7.0, theme::blend(PAGE(), TEXT(), 0.08));
+            }
+            panel_icon(&p, fold_r.center(), self.nav_is_compact(), if hov { TEXT() } else { theme::blend(PAGE(), TEXT(), 0.75) });
+            x = fold_r.max.x + 14.0;
+        }
         if is_shiny_tab(tab) && tab != Tab::Shiny {
             let g = p.text(egui::pos2(x, cy), Align2::LEFT_CENTER, "Shiny Hunter", crate::fonts::sans_font(14.0), MUTED());
             x = g.max.x + 10.0;
@@ -340,8 +381,27 @@ impl App {
             }
         }
 
+        // Settings: the cog, top right (opens the settings window).
+        let cog = Rect::from_center_size(egui::pos2(minb.min.x - 26.0, cy), egui::vec2(36.0, 34.0));
+        if !self.takeover_open() {
+            let resp = ui.interact(cog, ui.id().with("mhdr-cog"), Sense::click());
+            let open = self.setup.settings_open.is_some();
+            let hov = resp.hovered();
+            if hov || open {
+                p.rect_filled(cog, 8.0, theme::blend(PAGE(), TEXT(), if open { 0.12 } else { 0.08 }));
+            }
+            cog_icon(&p, cog.center(), 8.0, if hov || open { TEXT() } else { theme::blend(PAGE(), TEXT(), 0.75) });
+            if resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Settings: appearance, hotkeys and advanced").clicked() {
+                if open {
+                    self.setup.settings_open = None;
+                } else {
+                    self.open_settings(Tab::Appearance);
+                }
+            }
+        }
+
         // The overlay's status and its Start / Stop, always in reach.
-        let controls = Rect::from_min_max(egui::pos2(right.min.x + 240.0, rect.min.y), egui::pos2(minb.min.x - 10.0, rect.max.y));
+        let controls = Rect::from_min_max(egui::pos2(right.min.x + 240.0, rect.min.y), egui::pos2(cog.min.x - 8.0, rect.max.y));
         let mut drag_until = controls.max.x;
         if !self.takeover_open() && controls.width() > 160.0 {
             let used = ui
@@ -359,7 +419,7 @@ impl App {
                         } else {
                             (MUTED(), "Overlay stopped")
                         };
-                        let txt = format!("{} · {} encounters", self.target_label(), theme::thousands(self.cfg.count));
+                        let txt = format!("{} · {} {}", self.target_label(), theme::thousands(self.cfg.count), self.count_word());
                         // Two lines, right-aligned, drawn directly.
                         let f1 = crate::fonts::sans_font(12.5);
                         let f2 = crate::fonts::sans_font(12.0);
@@ -372,6 +432,10 @@ impl App {
                         p.galley(egui::pos2(x - g1.size().x, r.min.y), g1.clone(), TEXT());
                         p.circle_filled(egui::pos2(x - g1.size().x - 9.0, r.min.y + g1.size().y / 2.0), 4.0, dot);
                         p.galley(egui::pos2(x - g2.size().x, r.min.y + 18.0), g2, MUTED());
+                    }
+                    // your party (when there's room for it)
+                    if controls.width() > 640.0 {
+                        self.party_strip(ui);
                     }
                     ui.min_rect()
                 })
@@ -387,6 +451,12 @@ impl App {
         } else if dr.drag_started() {
             ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
+        if !self.takeover_open() {
+            let tip = if self.nav_is_compact() { "Show the sidebar's names" } else { "Fold the sidebar to icons" };
+            if ui.interact(fold_r, ui.id().with("mhdr-fold"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked() {
+                self.nav_fold_toggle();
+            }
+        }
         // Pinned apps, as a dock after the page name (when they live up here).
         if !self.takeover_open() {
             self.top_dock(ui, crumb_end + 22.0, cy, drag_until - 6.0);
@@ -395,13 +465,16 @@ impl App {
 
     /// The sidebar.
     pub(super) fn modern_sidebar(&mut self, ui: &mut egui::Ui) {
-        let compact = self.cfg.appearance.nav_compact;
+        let compact = self.nav_is_compact();
         let current = self.setup.tab;
         let parent_of = nav_parent;
         let rows = self.nav_rows();
         let mut go: Option<Tab> = None;
         // Room for the trainer card at the bottom.
         let footer_h = if compact { 96.0 } else { 108.0 };
+        // The search bar (Ctrl K), always at the top.
+        ui.add_space(6.0);
+        self.nav_search_bar(ui, compact);
         let list_h = (ui.available_height() - footer_h).max(80.0);
         ui.style_mut().spacing.scroll = egui::style::ScrollStyle::floating();
         egui::ScrollArea::vertical().id_salt("modern-nav").max_height(list_h).auto_shrink([false, true]).scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(ui, |ui| {
@@ -412,12 +485,9 @@ impl App {
             let mut open_rect: Option<egui::Rect> = None;
             let mut pins_done = false;
             for NavRow { group, tab, parent, app } in rows {
-                if !pins_done && (group == Some("OPEN APPS") || tab == Tab::Appearance) {
+                if !pins_done && group == Some("OPEN APPS") {
                     pins_done = true;
                     self.nav_pins(ui, compact);
-                }
-                if tab == Tab::Appearance {
-                    self.nav_none_open(ui, compact);
                 }
                 if let Some(g) = group {
                     if compact {
@@ -492,6 +562,11 @@ impl App {
                 }
                 ui.add_space(2.0);
             }
+            // no open apps: the pins and the "nothing open" note still show
+            if !pins_done {
+                self.nav_pins(ui, compact);
+            }
+            self.nav_none_open(ui, compact);
             if let Some(r) = open_rect {
                 let g = kit::glide_rect(ui.ctx(), egui::Id::new("nav-pill"), r, nav_anchor, kit::BASE);
                 ui.painter().set(pill_slot, egui::Shape::rect_filled(g, g.height() / 2.0, modern::nav_selected_fill()));
@@ -507,12 +582,14 @@ impl App {
             ui.add_space(4.0);
             let recent = self.saved_flash.is_some_and(|t| t.elapsed() < Duration::from_millis(1500));
             ui.horizontal(|ui| {
-                let fold = ui
-                    .add(egui::Button::new(RichText::new(if compact { "»" } else { "«" }).size(14.0).color(MUTED())).frame(false).min_size(egui::vec2(28.0, 22.0)))
-                    .on_hover_text(if compact { "Show the page names" } else { "Fold the sidebar to icons" });
-                if fold.clicked() {
-                    self.cfg.appearance.nav_compact = !compact;
-                    self.dirty = true;
+                // a framed button with the panel picture (the header has one too)
+                let (fr, fold) = ui.allocate_exact_size(egui::vec2(32.0, 28.0), Sense::click());
+                let hov = fold.hovered();
+                ui.painter().rect_filled(fr, 7.0, theme::blend(SIDEBAR(), TEXT(), if hov { 0.10 } else { 0.05 }));
+                ui.painter().rect_stroke(fr, 7.0, Stroke::new(1.0f32, theme::blend(SIDEBAR(), TEXT(), 0.12)));
+                panel_icon(ui.painter(), fr.center(), compact, if hov { TEXT() } else { theme::blend(SIDEBAR(), TEXT(), 0.75) });
+                if fold.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(if compact { "Show the page names" } else { "Fold the sidebar to icons" }).clicked() {
+                    self.nav_fold_toggle();
                 }
                 if !compact {
                     if recent {
@@ -584,4 +661,33 @@ fn sub_item(ui: &mut egui::Ui, icon: &str, label: &str, selected: bool, color: C
         if selected || hovered { TEXT() } else { theme::blend(SIDEBAR(), TEXT(), 0.7) },
     );
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// A sidebar-panel picture: a window with its left column (filled when the
+/// sidebar's open, an arrow showing which way it goes).
+pub(super) fn panel_icon(p: &egui::Painter, c: egui::Pos2, folded: bool, col: Color32) {
+    let r = Rect::from_center_size(c, egui::vec2(17.0, 14.0));
+    let st = Stroke::new(1.4f32, col);
+    p.rect_stroke(r, 3.0, st);
+    let x = r.min.x + 6.0;
+    p.line_segment([egui::pos2(x, r.min.y), egui::pos2(x, r.max.y)], st);
+    if !folded {
+        p.rect_filled(Rect::from_min_max(r.min + egui::vec2(1.5, 1.5), egui::pos2(x - 0.5, r.max.y - 1.5)), 1.5, col.gamma_multiply(0.45));
+    }
+    // a small chevron in the page part: « to fold, » to open
+    let cx = r.max.x - 4.5;
+    let d = if folded { 1.0 } else { -1.0 };
+    p.line_segment([egui::pos2(cx - d * 1.5, c.y - 2.5), egui::pos2(cx + d * 1.5, c.y)], st);
+    p.line_segment([egui::pos2(cx + d * 1.5, c.y), egui::pos2(cx - d * 1.5, c.y + 2.5)], st);
+}
+
+/// A cog: a ring with eight teeth and a hole.
+fn cog_icon(p: &egui::Painter, c: egui::Pos2, r: f32, col: Color32) {
+    let teeth = 8;
+    for k in 0..teeth {
+        let a = std::f32::consts::TAU * k as f32 / teeth as f32;
+        let d = egui::vec2(a.cos(), a.sin());
+        p.line_segment([c + d * (r * 0.62), c + d * (r * 1.08)], Stroke::new(r * 0.42, col));
+    }
+    p.circle_stroke(c, r * 0.62, Stroke::new(r * 0.36, col));
 }

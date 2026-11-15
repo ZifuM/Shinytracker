@@ -248,8 +248,8 @@ impl App {
                 let size = (br.height() * 0.78).min(48.0);
                 let f = fit(&p, &num, impact_font, size, 18.0, br.width() - 70.0);
                 sport(&p, pos2(br.min.x + 8.0, br.center().y + 1.0), Align2::LEFT_CENTER, &num, f.size, WHITE);
-                let lab = if v.counter_label == "ENCOUNTERS" { "ENC" } else { v.counter_label };
-                p.text(pos2(br.max.x - 6.0, br.min.y + 9.0), Align2::RIGHT_CENTER, lab, impact_font(10.0), if v.counter_label == "ENCOUNTERS" { SOFT } else { tone(v.counter_col) });
+                let lab = if v.counter_label == super::overlay_mod::EGGS_LABEL { "EGGS" } else if super::overlay_mod::plain_counter(v.counter_label) { "ENC" } else { v.counter_label };
+                p.text(pos2(br.max.x - 6.0, br.min.y + 9.0), Align2::RIGHT_CENTER, lab, impact_font(10.0), if super::overlay_mod::plain_counter(v.counter_label) { SOFT } else { tone(v.counter_col) });
             }
             if let Some((text, dry, t)) = &v.watch {
                 let wr = p.text(pos2(br.max.x - 6.0, br.max.y - 9.0), Align2::RIGHT_CENTER, text, impact_font(10.0), if *dry { GOLD } else { SOFT });

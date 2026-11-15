@@ -760,7 +760,7 @@ impl App {
             }
         }
         ui.add_space(6.0);
-        let masuda = e.shiny_one_in < breed::shiny_one_in(breed::shiny_rolls(s.shiny_charm, false)) - 0.5;
+        let masuda = e.shiny_one_in < breed::shiny_one_in(breed::shiny_rolls(s.shiny_charm, false, false)) - 0.5;
         let shiny_tag = match (masuda, s.shiny_charm) {
             (true, true) => "  Masuda + Charm",
             (true, false) => "  Masuda",
@@ -1517,7 +1517,7 @@ fn tips(w: &Wiki, dc: &breed::DayCare, s: &Setup, e: &Egg) -> Vec<Tip> {
             col: kit::C_VIOLET,
             text: format!(
                 "Hunting a shiny? A parent traded from another player makes it 1 in {} instead of 1 in {} (Masuda Method).",
-                thousands(breed::shiny_one_in(breed::shiny_rolls(s.shiny_charm, true)).round() as u32),
+                thousands(breed::shiny_one_in(breed::shiny_rolls(s.shiny_charm, true, false)).round() as u32),
                 thousands(e.shiny_one_in.round() as u32)
             ),
             gain: None,

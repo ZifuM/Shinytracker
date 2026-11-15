@@ -286,6 +286,14 @@ impl App {
             }
             ui.add_space(10.0);
             divider(ui);
+            ui.add_space(10.0);
+            self.dirty |= kit::toggle_row(
+                ui,
+                "Your party in the title bar",
+                "Pictures of your party next to the overlay's status: your party when the game opened (the game writes it then), kept up to date from the game's log. A \"?\" is one the log couldn't name; click a slot to set it.",
+                &mut self.cfg.show_party,
+            );            ui.add_space(10.0);
+            divider(ui);
             ui.add_space(12.0);
             self.pins_place_picker(ui);
         });

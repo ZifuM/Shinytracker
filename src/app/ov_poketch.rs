@@ -344,7 +344,7 @@ impl App {
                         txt = format!("{txt} {t}");
                     }
                     let f = pixel_font(6.5);
-                    let lr = label(&p, pos2(rx, nr.max.y + 9.0), Align2::LEFT_CENTER, &clip_text(&p, &txt, &f, room), 6.5, if v.counter_label == "ENCOUNTERS" { MID } else { tone(v.counter_col) });
+                    let lr = label(&p, pos2(rx, nr.max.y + 9.0), Align2::LEFT_CENTER, &clip_text(&p, &txt, &f, room), 6.5, if super::overlay_mod::plain_counter(v.counter_label) { MID } else { tone(v.counter_col) });
                     if let Some((_, _, tp)) = &v.timer {
                         tip(ui, lr, "pk-timer", tp);
                     }

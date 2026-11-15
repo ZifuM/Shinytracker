@@ -289,7 +289,7 @@ impl App {
                         lab = format!("{lab} | today {t}");
                     }
                     let f2 = mono_font(fs - 2.0);
-                    let lr = p.text(pos2(rx, nr.max.y + 6.0), Align2::LEFT_CENTER, clip_text(&p, &lab, &f2, room), f2, if v.counter_label == "ENCOUNTERS" { DIM } else { tone(v.counter_col) });
+                    let lr = p.text(pos2(rx, nr.max.y + 6.0), Align2::LEFT_CENTER, clip_text(&p, &lab, &f2, room), f2, if super::overlay_mod::plain_counter(v.counter_label) { DIM } else { tone(v.counter_col) });
                     if let Some((_, _, tp)) = &v.timer {
                         tip(ui, lr, "tm-timer", tp);
                     }
