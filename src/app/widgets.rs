@@ -111,6 +111,7 @@ fn lim_of(kind: &str) -> Option<Lim> {
         "eggmoves" => Some(Lim { min: (3, 2), start: (4, 2), max: (8, 5), tall_by: None }),
         "nextstep" => Some(Lim { min: (3, 2), start: (4, 3), max: (8, 5), tall_by: None }),
         "hatches" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 4), tall_by: None }),
+        "breedgoal" => Some(Lim { min: (3, 2), start: (4, 2), max: (8, 4), tall_by: None }),
         "quickcalc" => Some(Lim { min: (3, 2), start: (4, 3), max: (8, 5), tall_by: None }),
         "savedcalcs" => Some(Lim { min: (2, 1), start: (4, 2), max: (8, 6), tall_by: None }),
         "speedtiers" => Some(Lim { min: (3, 2), start: (4, 3), max: (8, 6), tall_by: None }),
@@ -346,6 +347,7 @@ pub(super) const DEFS: &[WidgetDef] = &[
     wd("eggmoves", "Egg move finder", "The egg moves a Pokémon you pick can get", "💥", Some(Breed), 1, true),
     wd("nextstep", "Next step", "The one next thing to do in your breeding plan", "👣", Some(Breed), 1, false),
     wd("hatches", "Hatch tracker", "Eggs hatched, and shinies from Eggs", "🐥", Some(Breed), 1, false),
+    wd("breedgoal", "Breeding goal", "What you're breeding for, your best baby so far and your best pair's odds (from your save)", "🎯", Some(Breed), 1, false),
     // Damage Calc
     wd("quickcalc", "Quick calc", "One Pokémon's best hit on another, right here", "🔢", Some(Calc), 2, true),
     wd("savedcalcs", "Saved calcs", "Calcs you saved from Quick calc", "⭐", Some(Calc), 1, false),
@@ -1194,6 +1196,7 @@ impl App {
             "rare" => self.f_rare(ui),
             "shinies" => self.f_shinies(ui),
             "breeding" => self.f_breeding(ui),
+            "breedgoal" => self.f_breedgoal(ui),
             "jump" => self.f_jump(ui),
             "clock" => self.f_clock(ui),
             "notes" => self.w_notes(ui, w, preview, &mut out),

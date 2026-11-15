@@ -213,9 +213,33 @@ impl App {
 
     fn overview_data(&self) -> Data {
         let today = local_day(now_unix());
+        let period = self.setup.stats_period;
+        let first = self.first_hunt_day().unwrap_or(today);
+        let from = match period.days() {
+            Some(n) => today - n + 1,
+            None => first.min(today),
+        };
+        let mut d = self.range_data(from, today);
+        d.prev = period.days().map(|n| sums(&d.days, &d.shinies, from - n, from - 1));
+        d
+    }
+
+    /// Every run's hunting days, together.
+    fn all_run_stats(&self) -> Vec<&stats::RunStats> {
         let mut all: Vec<&stats::RunStats> = vec![&self.cfg.run_stats];
         all.extend(self.cfg.saved_runs.iter().filter(|r| r.id != self.cfg.run_id).map(|r| &r.stats));
         all.extend(self.cfg.history.iter().filter(|h| !h.phase).filter_map(|h| h.stats.as_ref()));
+        all
+    }
+
+    /// The first day anything was hunted.
+    fn first_hunt_day(&self) -> Option<i64> {
+        self.all_run_stats().iter().flat_map(|st| st.days.iter().map(|d| d.day)).min()
+    }
+
+    /// Everything for the days `from` to `to` (no comparison).
+    fn range_data(&self, from: i64, to: i64) -> Data {
+        let all = self.all_run_stats();
         let mut days: BTreeMap<i64, (u64, u64)> = BTreeMap::new();
         let mut species: BTreeMap<u32, u64> = BTreeMap::new();
         let mut sessions = Vec::new();
@@ -236,23 +260,138 @@ impl App {
             .iter()
             .map(|h| Shiny { name: h.target.clone(), slug: h.slug.clone(), encounters: h.encounters, odds: h.odds_one_in, when: h.when_unix, method: h.method.clone(), phase: h.phase })
             .collect();
-        let period = self.setup.stats_period;
-        let first = days.keys().next().copied().unwrap_or(today);
-        let from = match period.days() {
-            Some(n) => today - n + 1,
-            None => first.min(today),
-        };
-        let now = sums(&days, &shinies, from, today);
-        let prev = period.days().map(|n| sums(&days, &shinies, from - n, from - 1));
+        let now = sums(&days, &shinies, from, to);
         // the clock over the range, from each run's hourly counts
         let mut clock = [0f64; 24];
-        let (h0, h1) = (from * 24, today * 24 + 23);
+        let (h0, h1) = (from * 24, to * 24 + 23);
         for st in &all {
             for (i, n) in st.hourly(h0, h1).iter().enumerate() {
                 clock[((h0 + i as i64).rem_euclid(24)) as usize] += *n as f64;
             }
         }
-        Data { today, from, days, sessions, clock, species, shinies, now, prev, life: self.lifetime_full() }
+        Data { today: to, from, days, sessions, clock, species, shinies, now, prev: None, life: self.lifetime_full() }
+    }
+
+    /// The stats share image's numbers for the days `from` to `to`, worked
+    /// out like the Overview shows them. `chip` / `span`: how the image
+    /// names the stretch ("LAST 30 DAYS" / "last 30 days"). `all_time`: the
+    /// totals include encounters from before tracking began, as on the page.
+    pub(super) fn share_overview(&self, from: i64, to: i64, chip: &str, span: &str, all_time: bool) -> crate::statshare::Overview {
+        use crate::statshare::{Overview, Pic};
+        let d = self.range_data(from, to);
+        let (a, b) = (from, to);
+        let in_range = |c: &&Shiny| (a..=b).contains(&local_day(c.when));
+        let enc = if all_time { d.life.encounters.max(d.now.enc) } else { d.now.enc };
+        let secs = if all_time { d.life.hunt_secs.max(d.now.secs) } else { d.now.secs };
+        let caught: Vec<&Shiny> = if all_time { d.shinies.iter().collect() } else { d.shinies.iter().filter(in_range).collect() };
+        // the chart: days for a short stretch, months for a long one
+        let span_days = b - a + 1;
+        let (bars, stars, axis) = if span_days <= 62 {
+            let bars: Vec<u64> = (a..=b).map(|day| d.days.get(&day).map(|v| v.0).unwrap_or(0)).collect();
+            let stars: Vec<usize> = (a..=b).enumerate().filter(|(_, day)| caught.iter().any(|c| local_day(c.when) == *day)).map(|(i, _)| i).collect();
+            (bars, stars, [fmt_day_short(a), fmt_day_short(a + span_days / 2), fmt_day_short(b)])
+        } else {
+            let (mut y, mut m) = month_key(a);
+            let end = month_key(b);
+            let mut keys = Vec::new();
+            while (y, m) <= end {
+                keys.push((y, m));
+                (y, m) = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
+            }
+            let bars: Vec<u64> = keys.iter().map(|k| d.days.range(a..=b).filter(|(day, _)| month_key(**day) == *k).map(|(_, v)| v.0).sum()).collect();
+            let stars: Vec<usize> = keys.iter().enumerate().filter(|(_, k)| caught.iter().any(|c| month_key(local_day(c.when)) == **k)).map(|(i, _)| i).collect();
+            let name = |k: &(i64, u32)| format!("{} {}", MONTHS[(k.1 - 1) as usize], k.0);
+            let mid = keys.get(keys.len() / 2).map(name).unwrap_or_default();
+            (bars, stars, [keys.first().map(name).unwrap_or_default(), mid, keys.last().map(name).unwrap_or_default()])
+        };
+        // luck: as on the page (all time when there's none in the stretch)
+        let lucky: Vec<&Shiny> = {
+            let r: Vec<&Shiny> = caught.iter().copied().filter(|c| !c.phase && c.mult().is_some()).collect();
+            if r.is_empty() { d.shinies.iter().filter(|c| !c.phase && c.mult().is_some()).collect() } else { r }
+        };
+        let luck = (!lucky.is_empty()).then(|| lucky.iter().filter_map(|c| c.mult()).sum::<f64>() / lucky.len() as f64);
+        let luckier = (!lucky.is_empty()).then(|| {
+            let f = lucky.iter().filter_map(|c| c.found()).sum::<f64>() / lucky.len() as f64;
+            ((1.0 - f) * 100.0).round() as u32
+        });
+        // highlights
+        const FULL: [&str; 7] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+        let start_unix = |day: i64| (day * 86_400 - stats::utc_offset_secs()).max(0) as u64;
+        let end_unix = start_unix(b + 1);
+        let sess: Vec<&Session> = d.sessions.iter().filter(|s| s.start >= start_unix(a) && s.start < end_unix).collect();
+        let best_day = d.days.range(a..=b).max_by_key(|(_, v)| v.0).filter(|(_, v)| v.0 > 0).map(|(day, v)| (v.0, fmt_day_short(*day), FULL[stats::weekday(*day)].to_string()));
+        let longest = sess.iter().map(|s| s.secs).max().filter(|s| *s > 0);
+        let fastest = sess.iter().filter(|s| s.secs >= 1800).map(|s| (s.encounters as f64 / (s.secs as f64 / 3600.0)).round() as u64).max();
+        // the shelf: the newest three, and a line naming them
+        let mut newest: Vec<&Shiny> = caught.clone();
+        newest.sort_by(|x, y| y.when.cmp(&x.when));
+        let shelf: Vec<Pic> = newest.iter().take(3).map(|c| Pic { name: c.name.clone(), sprite: c.slug.as_deref().and_then(|s| crate::share::sprite_frame(s, true)) }).collect();
+        let named: Vec<String> = newest.iter().take(2).map(|c| if c.phase { format!("{} (phase)", c.name) } else { c.name.clone() }).collect();
+        let mut shelf_line = named.join(" · ");
+        if newest.len() > 2 {
+            shelf_line.push_str(&format!(" · {} more", newest.len() - 2));
+        }
+        let mut weekdays = [0u64; 7];
+        for (day, (e, _)) in d.days.range(a..=b) {
+            weekdays[stats::weekday(*day)] += e;
+        }
+        let mut hours = [0u64; 24];
+        for (i, v) in d.clock.iter().enumerate() {
+            hours[i] = v.round() as u64;
+        }
+        Overview {
+            chip: chip.to_string(),
+            span: span.to_string(),
+            dates: format!("{} – {} {}", fmt_day_short(a), fmt_day_short(b), stats::civil_from_days(b).0),
+            encounters: enc,
+            secs,
+            shinies: caught.len() as u32,
+            pace: d.now.pace().map(|p| p.round() as u64),
+            days: d.now.days as u32,
+            bars,
+            stars,
+            axis,
+            luck,
+            luckier,
+            best_day,
+            longest,
+            fastest,
+            streak: longest_streak(&d.days, a, b),
+            shelf,
+            shelf_line,
+            hours,
+            weekdays,
+            met: self.met_most(a, b, all_time),
+        }
+    }
+
+    /// The Pokémon met most over the days `a` to `b`: each run's own
+    /// counts, the share that fell in those days (the whole run when it's
+    /// all inside them, or for all time).
+    fn met_most(&self, a: i64, b: i64, all_time: bool) -> Vec<(String, u64)> {
+        let mut by: BTreeMap<u32, f64> = BTreeMap::new();
+        for st in self.all_run_stats() {
+            let total: u64 = st.days.iter().map(|d| d.encounters).sum();
+            let inside: u64 = st.days.iter().filter(|d| (a..=b).contains(&d.day)).map(|d| d.encounters).sum();
+            let share = if all_time || total == 0 { 1.0 } else { inside as f64 / total as f64 };
+            if share <= 0.0 {
+                continue;
+            }
+            for (dex, n) in &st.species {
+                *by.entry(*dex).or_insert(0.0) += *n as f64 * share;
+            }
+        }
+        let mut v: Vec<(String, u64)> = by
+            .into_iter()
+            .filter_map(|(dex, n)| {
+                let name = self.species.iter().find(|s| s.dex == dex).map(|s| s.name.to_string())?;
+                let n = n.round() as u64;
+                (n > 0).then_some((name, n))
+            })
+            .collect();
+        v.sort_by(|x, y| y.1.cmp(&x.1));
+        v.truncate(3);
+        v
     }
 
     // ───────────────────────────── worlds ─────────────────────────────

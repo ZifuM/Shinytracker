@@ -98,6 +98,20 @@ impl App {
         self.setup.scroll_top = true;
     }
 
+    /// The New hunt guide with `slug` picked as the target (a fresh hunt),
+    /// on its next step. Nothing changes until it's started there.
+    pub(super) fn open_hunt_wizard_for(&mut self, slug: &str) {
+        self.open_hunt_wizard();
+        let same = self.cfg.target.as_deref() == Some(slug);
+        if let Some(w) = self.setup.hunt_wizard.as_mut() {
+            w.target = Some(slug.to_string());
+            if !same {
+                w.from = From::Zero;
+            }
+            w.step = Step::Method;
+        }
+    }
+
     /// The steps that apply to the choices so far.
     fn wizard_steps(w: &HuntWizard) -> Vec<Step> {
         let mut v = vec![Step::Target, Step::Method];

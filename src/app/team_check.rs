@@ -8,7 +8,8 @@ use super::team_home::{caps, chip, small, soft, ACCENT};
 use super::ui_kit::{self as kit, CARD, CARD_HOVER, LINE, MUTED, TEXT};
 use super::App;
 use crate::battle::{self, World, STATS};
-use crate::teams::{Member, Team};
+use super::team_game::{find, member_done, Found, Kind, Mark, Snap};
+use crate::teams::{GamePick, Member, Team};
 use crate::theme;
 use crate::wiki::Wiki;
 use eframe::egui::{self, Align2, Color32, Rect, RichText, Sense, Stroke};
@@ -80,6 +81,19 @@ fn item_where(w: &Wiki, name: &str, n: usize) -> (String, u32) {
     (spots.join("  ·  "), shop)
 }
 
+/// The species' family up to it, base first ("gible", "gabite", "garchomp").
+pub(super) fn chain_of(w: &Wiki, id: &str) -> Vec<String> {
+    let mut chain: Vec<String> = vec![id.to_string()];
+    while let Some(e) = w.evolves_from(chain.last().unwrap()) {
+        if e.from.is_empty() || chain.contains(&e.from) || chain.len() > 4 {
+            break;
+        }
+        chain.push(e.from.clone());
+    }
+    chain.reverse();
+    chain
+}
+
 /// Every step for one member.
 pub(super) fn steps(w: &Wiki, world: World, m: &Member, story: Option<usize>) -> Vec<Step> {
     let mut out = Vec::new();
@@ -88,14 +102,7 @@ pub(super) fn steps(w: &Wiki, world: World, m: &Member, story: Option<usize>) ->
     let Some(id) = wiki_id(&m.species) else { return out };
     let name = m.species.clone();
     // ── catch: the earliest in the family you can find
-    let mut chain: Vec<String> = vec![id.clone()];
-    while let Some(e) = w.evolves_from(chain.last().unwrap()) {
-        if e.from.is_empty() || chain.contains(&e.from) || chain.len() > 4 {
-            break;
-        }
-        chain.push(e.from.clone());
-    }
-    chain.reverse(); // base first
+    let chain = chain_of(w, &id);
     let ok_setting = |s: &str| match s {
         "modern" => world == World::Modern,
         _ => true,
@@ -294,18 +301,21 @@ pub(super) fn steps(w: &Wiki, world: World, m: &Member, story: Option<usize>) ->
     out
 }
 
-/// (done, total) steps for a team's checklist.
-pub(super) fn team_progress(w: Option<&Wiki>, t: &Team) -> (usize, usize) {
+/// (done, total) steps for a team's checklist: ticked by you, or done in
+/// your game (`snap`, unless the team is ticked by hand only).
+pub(super) fn team_progress(w: Option<&Wiki>, t: &Team, snap: Option<&Snap>) -> (usize, usize) {
     let Some(w) = w else { return (0, 0) };
     let mut done = 0;
     let mut total = 0;
     for m in &t.members {
-        for s in steps(w, t.world, m, None) {
+        let ss = steps(w, t.world, m, None);
+        let f = snap.filter(|_| !t.hand_only).map(|sn| find(w, m, &ss, sn));
+        for (i, s) in ss.iter().enumerate() {
             if s.optional {
                 continue;
             }
             total += 1;
-            if m.done.contains(&s.key) {
+            if m.done.contains(&s.key) || f.as_ref().is_some_and(|f| f.kind(i) == Kind::Game) {
                 done += 1;
             }
         }
@@ -342,6 +352,11 @@ impl App {
         }
         let story = self.story_stage();
         let all: Vec<Vec<Step>> = t.members.iter().map(|m| steps(&w, t.world, m, story)).collect();
+        // what your game already has
+        let found = self.team_found(&w, &t, &all);
+        let snap = found.as_ref().map(|f| f.0.clone());
+        let fs: Vec<Option<&Found>> = (0..t.members.len()).map(|i| found.as_ref().and_then(|f| f.1.get(i))).collect();
+        let reads_game = !t.hand_only;
         // ── the summary
         let mut done = 0;
         let mut total = 0;
@@ -349,10 +364,23 @@ impl App {
         let mut maybe = 0;
         let mut shards = 0;
         let mut warn = 0;
-        for (m, ss) in t.members.iter().zip(&all) {
-            for s in ss {
+        let (mut by_game, mut by_you, mut halves, mut have) = (0, 0, 0, 0);
+        for ((m, ss), f) in t.members.iter().zip(&all).zip(&fs) {
+            if f.is_some_and(|f| f.pick.is_some()) {
+                have += 1;
+            }
+            for (k, s) in ss.iter().enumerate() {
                 total += 1;
-                let d = m.done.contains(&s.key);
+                let mine = m.done.contains(&s.key);
+                let kind = f.map_or(Kind::No, |f| f.kind(k));
+                let d = mine || kind == Kind::Game;
+                if mine {
+                    by_you += 1;
+                } else if kind == Kind::Game {
+                    by_game += 1;
+                } else if kind == Kind::Half {
+                    halves += 1;
+                }
                 if d {
                     done += 1;
                 } else {
@@ -368,6 +396,7 @@ impl App {
         let hide = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("team-hide-done")).unwrap_or(false));
         let mut set_hide = hide;
         let mut tick_all: Option<bool> = None;
+        let mut set_game: Option<bool> = None;
         kit::card(ui, |ui| {
             ui.horizontal(|ui| {
                 // progress ring
@@ -390,10 +419,25 @@ impl App {
                     ui.add_space(6.0);
                     let head = if total > 0 && done == total { "Team ready!".to_string() } else { format!("{done} of {total} steps done") };
                     ui.label(RichText::new(head).font(crate::fonts::sans_bold_font(20.0)).color(TEXT()));
-                    ui.label(small("Everything it takes to have this team in your game, from the game's own data. Tick things off as you go."));
+                    if snap.is_some() {
+                        let world = snap.as_ref().map(|s| s.world.clone()).filter(|w| !w.is_empty()).map_or(String::new(), |w| format!(" (world: {w})"));
+                        ui.label(small(&format!(
+                            "{by_game} ticked from the world you're playing{world}, {by_you} by you. Catches tick straight away; the rest when the game next saves (every few minutes)."
+                        )));
+                    } else if reads_game {
+                        ui.label(small("Everything it takes to have this team in your game. Once the app has read your save, steps you've already done tick themselves."));
+                    } else {
+                        ui.label(small("Everything it takes to have this team in your game, from the game's own data. Tick things off as you go."));
+                    }
                     ui.add_space(8.0);
                     ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
+                        if snap.is_some() {
+                            pill(ui, &format!("✔  {have} of {} already in this world's party or boxes", t.members.len()), kit::C_GREEN);
+                            if halves > 0 {
+                                pill(ui, &format!("{halves} half done: in your Bag"), kit::C_GOLD);
+                            }
+                        }
                         if money > 0 {
                             pill(ui, &format!("💰  {} to spend", fmt_money(money)), kit::C_GOLD);
                         }
@@ -412,17 +456,39 @@ impl App {
                     });
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if soft(ui, "Untick all").clicked() {
-                        tick_all = Some(false);
-                    }
-                    if chip(ui, if hide { "Showing what's left" } else { "Hide done" }, hide, ACCENT).clicked() {
-                        set_hide = !hide;
-                    }
+                    ui.vertical(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if soft(ui, "Untick all").on_hover_text("Your own ticks (ones from your game stay)").clicked() {
+                                tick_all = Some(false);
+                            }
+                            if chip(ui, if hide { "Showing what's left" } else { "Hide done" }, hide, ACCENT).clicked() {
+                                set_hide = !hide;
+                            }
+                        });
+                        ui.add_space(8.0);
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let mut on = reads_game;
+                            if kit::toggle(ui, &mut on)
+                                .on_hover_text("Steps you've already done in the game tick themselves, from your save (read only). Off: you tick everything yourself.")
+                                .changed()
+                            {
+                                set_game = Some(on);
+                            }
+                            ui.add_space(6.0);
+                            ui.label(RichText::new("Tick off from my game").font(crate::fonts::sans_bold_font(12.0)).color(if on { TEXT() } else { MUTED() }));
+                        });
+                    });
                 });
             });
         });
         if set_hide != hide {
             ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("team-hide-done"), set_hide));
+        }
+        if let Some(on) = set_game {
+            if let Some(tm) = self.setup.team.team() {
+                tm.hand_only = !on;
+            }
+            self.setup.team.touch();
         }
         if let Some(on) = tick_all {
             if let Some(tm) = self.setup.team.team() {
@@ -440,6 +506,7 @@ impl App {
         let mut toggles: Vec<(usize, String)> = Vec::new();
         let mut go: Option<Go> = None;
         let mut hunt: Option<String> = None;
+        let mut picks: Vec<(usize, GamePick)> = Vec::new();
         let idx: Vec<usize> = (0..t.members.len()).collect();
         for row in idx.chunks(cols) {
             ui.horizontal_top(|ui| {
@@ -447,10 +514,20 @@ impl App {
                 for &i in row {
                     ui.allocate_ui_with_layout(egui::vec2(cw, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
                         ui.set_width(cw);
-                        self.check_card(ui, &t, i, &all[i], set_hide, &mut toggles, &mut go, &mut hunt);
+                        self.check_card(ui, &t, i, &all[i], fs[i], snap.as_deref(), set_hide, &mut toggles, &mut go, &mut hunt, &mut picks);
                     });
                 }
             });
+        }
+        if !picks.is_empty() {
+            if let Some(tm) = self.setup.team.team() {
+                for (i, p) in picks {
+                    if let Some(m) = tm.members.get_mut(i) {
+                        m.game_pick = p;
+                    }
+                }
+            }
+            self.setup.team.touch();
         }
         if !toggles.is_empty() {
             if let Some(tm) = self.setup.team.team() {
@@ -482,9 +559,22 @@ impl App {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn check_card(&mut self, ui: &mut egui::Ui, t: &Team, i: usize, ss: &[Step], hide: bool, toggles: &mut Vec<(usize, String)>, go: &mut Option<Go>, hunt: &mut Option<String>) {
+    fn check_card(
+        &mut self,
+        ui: &mut egui::Ui,
+        t: &Team,
+        i: usize,
+        ss: &[Step],
+        f: Option<&Found>,
+        snap: Option<&Snap>,
+        hide: bool,
+        toggles: &mut Vec<(usize, String)>,
+        go: &mut Option<Go>,
+        hunt: &mut Option<String>,
+        picks: &mut Vec<(usize, GamePick)>,
+    ) {
         let m = &t.members[i];
-        let done = ss.iter().filter(|s| m.done.contains(&s.key)).count();
+        let done = member_done(m, ss, f);
         kit::card(ui, |ui| {
             // head
             let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 52.0), Sense::hover());
@@ -509,13 +599,19 @@ impl App {
             if hresp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Make it your Shiny Hunter target").clicked() {
                 *hunt = Some(m.species.clone());
             }
+            // the Pokémon in your game it is
+            if let (Some(f), Some(snap)) = (f, snap) {
+                ui.add_space(4.0);
+                using_row(ui, m, f, snap, i, picks);
+            }
             ui.add_space(8.0);
-            for s in ss {
-                let on = m.done.contains(&s.key);
-                if hide && on {
+            for (k, s) in ss.iter().enumerate() {
+                let mine = m.done.contains(&s.key);
+                let mark = f.and_then(|f| f.marks.get(k));
+                if hide && (mine || mark.is_some_and(|x| x.kind == Kind::Game)) {
                     continue;
                 }
-                self.check_row(ui, s, on, i, toggles, go);
+                self.check_row(ui, s, mine, mark, i, toggles, go);
             }
             if hide && done == ss.len() {
                 ui.label(RichText::new("✔ All done").size(13.0).color(kit::C_GREEN));
@@ -523,10 +619,26 @@ impl App {
         });
     }
 
-    fn check_row(&mut self, ui: &mut egui::Ui, s: &Step, on: bool, i: usize, toggles: &mut Vec<(usize, String)>, go: &mut Option<Go>) {
+    #[allow(clippy::too_many_arguments)]
+    fn check_row(&mut self, ui: &mut egui::Ui, s: &Step, mine: bool, mark: Option<&Mark>, i: usize, toggles: &mut Vec<(usize, String)>, go: &mut Option<Go>) {
+        let kind = mark.map_or(Kind::No, |m| m.kind);
+        let by_game = kind == Kind::Game && !mine;
+        let on = mine || by_game;
+        let half = kind == Kind::Half && !on;
         let full = ui.available_width();
         let tx = 40.0;
-        let dg = ui.painter().layout(s.detail.clone(), crate::fonts::sans_font(11.5), MUTED(), full - tx - 8.0);
+        // how far along, from your game
+        let detail = match mark {
+            Some(m) if m.kind == Kind::No && !m.note.is_empty() => {
+                if s.detail.is_empty() {
+                    format!("In your game: {}", m.note)
+                } else {
+                    format!("{}  ·  in your game: {}", s.detail, m.note)
+                }
+            }
+            _ => s.detail.clone(),
+        };
+        let dg = ui.painter().layout(detail, crate::fonts::sans_font(11.5), MUTED(), full - tx - 8.0);
         let h = 24.0 + dg.size().y + if s.links.is_empty() { 8.0 } else { 30.0 };
         let (r, resp) = ui.allocate_exact_size(egui::vec2(full, h), Sense::click());
         let ht = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered(), kit::QUICK);
@@ -536,8 +648,12 @@ impl App {
         }
         // the tick
         let b = Rect::from_center_size(egui::pos2(r.min.x + 18.0, r.min.y + 14.0), egui::vec2(20.0, 20.0));
-        let col = if s.warn { kit::C_RED } else { ACCENT };
-        if on {
+        let col = if s.warn { kit::C_RED } else if by_game { kit::C_GREEN } else { ACCENT };
+        if half {
+            p.rect_filled(b, 6.0, super::charts::faint(kit::C_GOLD, 0.18));
+            p.rect_filled(Rect::from_min_max(b.min, egui::pos2(b.center().x, b.max.y)), egui::Rounding { nw: 6.0, sw: 6.0, ne: 0.0, se: 0.0 }, kit::C_GOLD);
+            p.rect_stroke(b, 6.0, Stroke::new(1.5f32, kit::C_GOLD));
+        } else if on {
             p.rect_filled(b, 6.0, col);
             p.add(egui::Shape::line(vec![b.min + egui::vec2(5.0, 10.5), b.min + egui::vec2(8.5, 14.0), b.min + egui::vec2(15.0, 6.5)], Stroke::new(2.2f32, Color32::WHITE)));
         } else {
@@ -550,6 +666,22 @@ impl App {
         p.galley(egui::pos2(r.min.x + tx, r.min.y + 14.0 - g.size().y / 2.0), g, ink);
         if on {
             p.line_segment([egui::pos2(r.min.x + tx + 22.0, r.min.y + 14.0), egui::pos2(r.min.x + tx + tw, r.min.y + 14.0)], Stroke::new(1.0f32, ink));
+        }
+        // where the tick came from
+        let tag = if by_game {
+            Some((mark.map(|m| m.note.as_str()).filter(|n| !n.is_empty()).map_or("from your game".to_string(), |n| format!("from your game · {n}")), kit::C_GREEN))
+        } else if half {
+            Some((mark.map(|m| m.note.clone()).unwrap_or_default(), kit::C_GOLD))
+        } else {
+            None
+        };
+        if let Some((text, c)) = tag.filter(|t| !t.0.is_empty()) {
+            let tg = p.layout_no_wrap(text, crate::fonts::sans_bold_font(10.5), super::charts::ink(c));
+            let tr = Rect::from_min_size(egui::pos2(r.min.x + tx + tw + 8.0, r.min.y + 14.0 - tg.size().y / 2.0 - 2.0), tg.size() + egui::vec2(12.0, 4.0));
+            if tr.max.x < r.max.x - 70.0 {
+                p.rect_filled(tr, tr.height() / 2.0, super::charts::faint(c, 0.16));
+                p.galley(tr.min + egui::vec2(6.0, 2.0), tg, Color32::WHITE);
+            }
         }
         if s.money > 0 && !on {
             p.text(egui::pos2(r.max.x - 8.0, r.min.y + 14.0), Align2::RIGHT_CENTER, fmt_money(s.money), crate::fonts::sans_bold_font(11.5), super::charts::ink(kit::C_GOLD));
@@ -577,11 +709,63 @@ impl App {
             }
             x = lr.max.x + 6.0;
         }
-        if resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(if on { "Mark as not done" } else { "Mark as done" }).clicked() && !link_hit {
+        if by_game {
+            let _ = resp.on_hover_text("Done in your game: this ticks itself off from your save");
+        } else if resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(if on { "Mark as not done" } else { "Mark as done" }).clicked() && !link_hit {
             toggles.push((i, s.key.clone()));
         }
         let _ = caps;
     }
+}
+
+/// "Using: GABBY · Gabite Lv 41 · Box 3   Change ›": the Pokémon in your
+/// game a member is, and a menu to pick another.
+fn using_row(ui: &mut egui::Ui, m: &Member, f: &Found, snap: &Snap, i: usize, picks: &mut Vec<(usize, GamePick)>) {
+    let line = |o: &super::team_game::Owned| {
+        let nick = if o.m.nickname.trim().is_empty() { o.m.species.clone() } else { format!("{} · {}", o.m.nickname.trim(), o.m.species) };
+        format!("{nick} Lv {} · {}", o.m.level, o.at)
+    };
+    let text = match f.pick.map(|k| &snap.owned[k]) {
+        Some(o) => format!("Using: {}{}", line(o), if m.game_pick == GamePick::Auto { "  (the one furthest along)" } else { "" }),
+        None if m.game_pick == GamePick::Nothing => "Not using any of yours".to_string(),
+        None if !f.family.is_empty() => "The one you picked isn't in your game now".to_string(),
+        None => "Not in your party or boxes yet".to_string(),
+    };
+    egui::Frame::none().fill(kit::sunken()).rounding(8.0).inner_margin(egui::Margin::symmetric(10.0, 6.0)).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.horizontal(|ui| {
+            let ink = if f.pick.is_some() { TEXT() } else { MUTED() };
+            ui.label(RichText::new(text).font(crate::fonts::sans_font(11.5)).color(ink));
+            if f.family.is_empty() && m.game_pick == GamePick::Auto {
+                return;
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.menu_button(RichText::new("Change ›").font(crate::fonts::sans_bold_font(11.5)).color(theme::blend(MUTED(), kit::C_VIOLET, 0.6)), |ui| {
+                    ui.set_min_width(300.0);
+                    if ui.selectable_label(m.game_pick == GamePick::Auto, "The one furthest along (picked for you)").clicked() {
+                        picks.push((i, GamePick::Auto));
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    for &k in f.family.iter().take(16) {
+                        let o = &snap.owned[k];
+                        if ui.selectable_label(m.game_pick == GamePick::Pid(o.pid), line(o)).clicked() {
+                            picks.push((i, GamePick::Pid(o.pid)));
+                            ui.close_menu();
+                        }
+                    }
+                    if f.family.len() > 16 {
+                        ui.label(small(&format!("and {} more", f.family.len() - 16)));
+                    }
+                    ui.separator();
+                    if ui.selectable_label(m.game_pick == GamePick::Nothing, "None of these").clicked() {
+                        picks.push((i, GamePick::Nothing));
+                        ui.close_menu();
+                    }
+                });
+            });
+        });
+    });
 }
 
 fn pill(ui: &mut egui::Ui, text: &str, col: Color32) {

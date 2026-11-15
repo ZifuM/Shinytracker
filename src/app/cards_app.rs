@@ -139,10 +139,12 @@ impl Pics {
         }
         while self.busy < 4 {
             let Some(key) = self.queue.pop_front() else { break };
-            // a card's picture, a booster's art ("pack:<name>"), or a card
-            // you don't have yet, darkened to grey ("grey:<id>")
-            let grey = key.0.starts_with("grey:");
-            let (url, file) = if let Some(name) = key.0.strip_prefix("pack:") {
+            // a card's picture, a booster's art ("pack:<name>", or in grey
+            // for a set not out yet: "greypack:<name>"), or a card you don't
+            // have yet, darkened to grey ("grey:<id>")
+            let grey = key.0.starts_with("grey:") || key.0.starts_with("greypack:");
+            let pack_grey = key.0.starts_with("greypack:");
+            let (url, file) = if let Some(name) = key.0.strip_prefix("pack:").or_else(|| key.0.strip_prefix("greypack:")) {
                 (cards::pack_art_url(name), crate::config::cache_dir().join("cards").join("packs").join(format!("{name}.jpg")))
             } else {
                 let id = key.0.trim_start_matches("grey:");
@@ -168,7 +170,8 @@ impl Pics {
                     if grey {
                         for px in i.pixels_mut() {
                             let l = 0.30 * px[0] as f32 + 0.59 * px[1] as f32 + 0.11 * px[2] as f32;
-                            let v = (l * 0.42 + 10.0).min(255.0) as u8;
+                            // a pack to come: a lighter grey, so its art still shows
+                            let v = if pack_grey { (l * 0.62 + 14.0).min(255.0) as u8 } else { (l * 0.42 + 10.0).min(255.0) as u8 };
                             px[0] = v;
                             px[1] = v;
                             px[2] = v;
@@ -187,6 +190,11 @@ impl Pics {
     pub fn reset(&mut self) {
         self.tex.clear();
         self.queue.clear();
+    }
+
+    /// Booster arts that weren't on this PC: look again.
+    pub fn forget_missing_packs(&mut self) {
+        self.tex.retain(|k, p| !((k.0.starts_with("pack:") || k.0.starts_with("greypack:")) && matches!(p, Pic::Failed)));
     }
 
     /// Keep downloads moving (called every frame).
@@ -274,10 +282,16 @@ pub(super) struct CardsState {
     pub holo_played: bool,
     /// The cards made it out of the pack (sound played).
     pub out_played: bool,
+    /// Every set's booster art fetched (once a run), so none is ever blank;
+    /// and when to look for the new pictures.
+    pub packs_fetched: bool,
+    pub packs_done: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     /// The tear sound: how far along it last played, and when.
     tear_sound: (f32, Option<Instant>, u32),
     /// Saving every card picture and pack art to this PC.
     pub save_all: Vec<SaveAll>,
+    /// When new sets coming out were last looked at.
+    pub last_release_check: Option<Instant>,
     /// Each set's art on this PC: (files, bytes), and when that was checked.
     pub saved: Option<(Vec<(usize, u64)>, Instant)>,
     /// The settings popup (card art, playmat) is open.
@@ -366,7 +380,7 @@ impl App {
         }
         let gains = self.setup.cards.file().met(today(), &dex, rare_grass);
         if self.setup.cards.note_gains(gains) {
-            self.play(crate::sound::Sfx::Goal);
+            self.play_popup(crate::sound::Sfx::Goal);
         }
     }
 
@@ -402,7 +416,7 @@ impl App {
             pack |= self.setup.cards.note_gains(gains);
         }
         if pack {
-            self.play(crate::sound::Sfx::Goal);
+            self.play_popup(crate::sound::Sfx::Goal);
         }
         self.setup.cards.touch();
     }
@@ -451,15 +465,97 @@ impl App {
                 self.setup.cards.last_secs = secs;
                 let gains = self.setup.cards.file().hunt_time(today(), secs);
                 if !gains.is_empty() && self.setup.cards.note_gains(gains) {
-                    self.play(crate::sound::Sfx::Goal);
+                    self.play_popup(crate::sound::Sfx::Goal);
                 }
             }
+        }
+        // every booster's art, the sets to come too
+        if !self.setup.cards.packs_fetched {
+            self.setup.cards.packs_fetched = true;
+            self.cards_fetch_pack_art(ctx);
+        }
+        // the boosters that were missing load again now they're here
+        if self.setup.cards.packs_done.as_ref().is_some_and(|d| d.load(std::sync::atomic::Ordering::Relaxed)) {
+            self.setup.cards.packs_done = None;
+            self.setup.cards.pics.forget_missing_packs();
+            self.setup.cards.saved = None;
+        }
+        // new sets coming out
+        if self.setup.cards.last_release_check.map_or(true, |t| t.elapsed() > Duration::from_secs(2)) {
+            self.setup.cards.last_release_check = Some(Instant::now());
+            self.cards_release_tick(ctx);
         }
         // drop old XP pop-ups
         while self.setup.cards.gains.front().is_some_and(|g| g.1.elapsed() > Duration::from_secs(4)) {
             self.setup.cards.gains.pop_front();
         }
         self.setup.cards.save_tick(false);
+    }
+
+    /// Every set's booster art that isn't on this PC yet (a few small
+    /// pictures), so the packs, the ones still to come included, are never
+    /// blank. The card pictures themselves still download only when asked.
+    fn cards_fetch_pack_art(&mut self, ctx: &egui::Context) {
+        let dir = crate::config::cache_dir().join("cards").join("packs");
+        let todo: Vec<(String, std::path::PathBuf)> = cards::SETS
+            .iter()
+            .flat_map(|s| s.packs.iter())
+            .map(|name| (cards::pack_art_url(name), dir.join(format!("{name}.jpg"))))
+            .filter(|(_, f)| !f.exists())
+            .collect();
+        if todo.is_empty() {
+            return;
+        }
+        let c = ctx.clone();
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.setup.cards.packs_done = Some(done.clone());
+        std::thread::spawn(move || {
+            for (url, file) in todo {
+                let ok = crate::sprites::fetch(&url).ok().filter(|b| b.len() > 100 && b.starts_with(&[0xFF, 0xD8]));
+                if let Some(b) = ok {
+                    if let Some(parent) = file.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = std::fs::write(&file, &b);
+                }
+            }
+            done.store(true, std::sync::atomic::Ordering::Relaxed);
+            c.request_repaint();
+        });
+    }
+
+    /// A set that's just come out: tell the player if they asked, and get
+    /// its art if they asked for that. Each set once (also when the app
+    /// wasn't open at the time).
+    fn cards_release_tick(&mut self, ctx: &egui::Context) {
+        let now = crate::config::now_unix();
+        for s in cards::SETS.iter().filter(|s| s.release > 0 && s.out_at(now)) {
+            let file = self.setup.cards.file();
+            if file.seen_out.iter().any(|x| x == s.id) {
+                continue;
+            }
+            file.seen_out.push(s.id.to_string());
+            let tell = file.notify.iter().any(|x| x == s.id);
+            let get = file.auto_get.iter().any(|x| x == s.id);
+            self.setup.cards.touch();
+            if get {
+                self.cards_download_set(ctx, s.id);
+            }
+            if tell {
+                self.notify(super::notices::Notice {
+                    id: "cards-new-set",
+                    icon: "🃏",
+                    title: format!("{} is out!", s.name),
+                    body: if get { "Its card art is downloading. Open a pack in the Card Collector.".to_string() } else { "A new booster to open in the Card Collector.".to_string() },
+                    progress: None,
+                    action: Some(("Open packs", super::notices::NoticeAction::OpenPacks)),
+                    expires: Some(Instant::now() + Duration::from_secs(30)),
+                    accent: GOLD,
+                });
+                self.app_toast(format!("🃏  {} is out! Open a pack in the Card Collector", s.name));
+                self.play_popup(crate::sound::Sfx::Milestone);
+            }
+        }
     }
 
     // ───────────────────────────── drawing cards ─────────────────────────────
@@ -546,7 +642,8 @@ impl App {
         if self.setup.cards.opening.is_some() {
             return self.cards_opening(ui);
         }
-        kit::page_header(ui, "CARD COLLECTOR", "Hunting earns XP. Fill the bar for a booster pack of the original cards, and collect all 232.");
+        let n_out = cards::all_out().len();
+        kit::page_header(ui, "CARD COLLECTOR", &format!("Hunting earns XP. Fill the bar for a booster pack of the original cards, and collect all {n_out}."));
         if let Some(e) = self.setup.cards.load_error.clone() {
             kit::pill(ui, &e, kit::PillKind::Warn);
             ui.add_space(8.0);
@@ -632,13 +729,13 @@ impl App {
 
             // ── collection
             let r = col(2);
-            let total = cards::all().len();
+            let total = cards::all_out().len();
             let have = f.unique(None);
             hero_head(ui, r, "📚", kit::C_CYAN, "Collection", &format!("{}%", (have * 100) / total.max(1)));
             hero_big(ui, r, &have.to_string(), &format!("/ {total} cards"));
             let br = hero_row(r, 10.0);
             kit::paint_bar(ui.painter(), br, have as f32 / total.max(1) as f32);
-            let sets: Vec<String> = cards::SETS.iter().map(|s| format!("{} {}/{}", s.name, f.unique(Some(s.id)), cards::of_set(s.id).len())).collect();
+            let sets: Vec<String> = cards::sets_out().iter().map(|s| format!("{} {}/{}", s.name, f.unique(Some(s.id)), cards::of_set(s.id).len())).collect();
             hero_foot(ui, r, &sets.join("  ·  "), 1.0);
         });
         if open {
@@ -657,7 +754,8 @@ impl App {
         // width, then five same-size drop-downs (set, rarity, type, show,
         // sort). Each lights up in its colour when it's narrowing the list.
         {
-            let all = cards::all();
+            let all = cards::all_out();
+            let out = cards::sets_out();
             let owned = |c: &Card| f.count(&c.id) > 0;
             let tally = |keep: &dyn Fn(&Card) -> bool| {
                 let (h, n) = all.iter().filter(|c| keep(c)).fold((0, 0), |(h, n), c| (h + owned(c) as usize, n + 1));
@@ -665,7 +763,7 @@ impl App {
             };
             let s = &self.setup.cards;
             // (key, value shown, colour when on, is it narrowing?)
-            let set_v = s.set.and_then(|id| cards::SETS.iter().find(|x| x.id == id));
+            let set_v = s.set.and_then(|id| out.iter().copied().find(|x| x.id == id));
             let pills: [(&str, String, Color32, bool); 5] = [
                 ("Set", set_v.map_or("All".into(), |x| x.name.to_string()), set_v.map_or(kit::primary(), |x| Color32::from_rgb(x.col[0], x.col[1], x.col[2])), set_v.is_some()),
                 ("Rarity", s.rarity.map_or("Any".into(), |r| r.name().to_string()), s.rarity.map_or(kit::primary(), rarity_col), s.rarity.is_some()),
@@ -678,7 +776,7 @@ impl App {
             // each pill is as wide as its longest choice (plus the dot), so
             // picking something never shifts the row
             let choices: [Vec<&str>; 5] = [
-                std::iter::once("All").chain(cards::SETS.iter().map(|x| x.name)).collect(),
+                std::iter::once("All").chain(out.iter().map(|x| x.name)).collect(),
                 vec!["Any", "Common", "Uncommon", "Rare", "Holo Rare"],
                 std::iter::once("Any").chain(GROUPS.iter().copied()).collect(),
                 vec!["All", "Owned", "Missing", "Duplicates"],
@@ -736,7 +834,7 @@ impl App {
                 let s = &self.setup.cards;
                 let items: Vec<(String, Option<Color32>, String, bool)> = match k {
                     0 => std::iter::once(("All sets".to_string(), None, tally(&|_| true), s.set.is_none()))
-                        .chain(cards::SETS.iter().map(|x| (x.name.to_string(), Some(Color32::from_rgb(x.col[0], x.col[1], x.col[2])), tally(&|c: &Card| c.set == x.id), s.set == Some(x.id))))
+                        .chain(out.iter().map(|x| (x.name.to_string(), Some(Color32::from_rgb(x.col[0], x.col[1], x.col[2])), tally(&|c: &Card| c.set == x.id), s.set == Some(x.id))))
                         .collect(),
                     1 => std::iter::once(("Any rarity".to_string(), None, tally(&|_| true), s.rarity.is_none()))
                         .chain([Rarity::Common, Rarity::Uncommon, Rarity::Rare, Rarity::Holo].into_iter().map(|r| (r.name().to_string(), Some(rarity_col(r)), tally(&|c: &Card| c.rarity == r), s.rarity == Some(r))))
@@ -769,7 +867,7 @@ impl App {
             if let Some((k, i)) = pick {
                 let s = &mut self.setup.cards;
                 match k {
-                    0 => s.set = if i == 0 { None } else { Some(cards::SETS[i - 1].id) },
+                    0 => s.set = if i == 0 { None } else { out.get(i - 1).map(|x| x.id) },
                     1 => s.rarity = [None, Some(Rarity::Common), Some(Rarity::Uncommon), Some(Rarity::Rare), Some(Rarity::Holo)][i],
                     2 => s.group = if i == 0 { None } else { Some(GROUPS[i - 1].to_string()) },
                     3 => s.show = [Show::All, Show::Owned, Show::Missing, Show::Dupes][i],
@@ -789,8 +887,8 @@ impl App {
         let s = &self.setup.cards;
         let q = s.query.trim().to_lowercase();
         let num: Option<u16> = q.parse().ok();
-        let mut list: Vec<&'static Card> = cards::all()
-            .iter()
+        let mut list: Vec<&'static Card> = cards::all_out()
+            .into_iter()
             .filter(|c| s.set.map_or(true, |x| c.set == x))
             .filter(|c| s.rarity.map_or(true, |r| c.rarity == r))
             .filter(|c| s.group.as_deref().map_or(true, |g| c.group() == g))
@@ -811,7 +909,7 @@ impl App {
         let any = s.set.is_some() || s.rarity.is_some() || s.group.is_some() || s.show != Show::All || !s.query.is_empty();
         let mut clear = false;
         ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("Showing {} of {} cards", list.len(), cards::all().len())).size(kit::fs(12.0)).color(MUTED()));
+            ui.label(RichText::new(format!("Showing {} of {} cards", list.len(), cards::all_out().len())).size(kit::fs(12.0)).color(MUTED()));
             if any {
                 ui.add_space(6.0);
                 if super::w_kit::link(ui, "Clear filters") {
@@ -971,6 +1069,10 @@ impl App {
                 };
                 line(ui, "Number", format!("{} of {}", c.num, cards::of_set(c.set).len()));
                 line(ui, "Rarity", format!("{} {}", c.rarity.symbol(), c.rarity.name()));
+                if let Some(n) = cards::packs_per(c) {
+                    let n = if n < 10.0 { format!("{n:.1}") } else { format!("{}", n.round() as u64) };
+                    line(ui, "Pull rate", format!("about 1 in {n} {} packs", cards::set(c.set).map_or("", |s| s.name)));
+                }
                 match c.kind {
                     Kind::Pokemon => line(ui, "Pokémon", format!("{} · {} type · {} HP", c.stage, c.ty, c.hp)),
                     Kind::Trainer => line(ui, "Kind", "Trainer".into()),
@@ -1030,6 +1132,15 @@ impl App {
     fn cards_packs(&mut self, ui: &mut egui::Ui) {
         let f = self.setup.cards.file().clone();
         let mut open: Option<&'static str> = None;
+        let here = self.cards_art_here();
+        let jobs: Vec<(&'static str, usize, usize)> = {
+            use std::sync::atomic::Ordering;
+            self.setup.cards.save_all.iter().map(|j| (j.set, j.done.load(Ordering::Relaxed), j.total)).collect()
+        };
+        let now = crate::config::now_unix();
+        let mut get: Option<&'static str> = None;
+        let mut notify: Option<(&'static str, bool)> = None;
+        let mut auto: Option<(&'static str, bool)> = None;
         kit::card(ui, |ui| {
             ui.set_width(ui.available_width());
             head(ui, "🎁", kit::C_PINK, if f.packs > 0 { "Pick a booster to open" } else { "Booster packs" }, None);
@@ -1037,15 +1148,23 @@ impl App {
             note(
                 ui,
                 if f.packs > 0 {
-                    format!("You have {} pack{}. Each has 11 cards: a rare (holo one time in three), 3 uncommons, 5 commons and 2 Energy.", f.packs, if f.packs == 1 { "" } else { "s" })
+                    format!("You have {} pack{}. Each has 11 cards: a rare (holo one time in three), 3 uncommons and 7 commons, 2 of them Energy in sets that have Energy. A new set comes out every Monday.", f.packs, if f.packs == 1 { "" } else { "s" })
                 } else {
                     format!("No packs right now. {} more XP for the next one: keep hunting, or finish a mission.", XP_PER_PACK - f.xp)
                 },
             );
             ui.add_space(14.0);
+            // as many to a row as fit, the ones out first, then the ones coming
+            let per = (((ui.available_width() + 30.0) / 200.0).floor() as usize).max(1);
+            let mut tiles: Vec<(usize, bool)> = cards::SETS.iter().enumerate().map(|(k, s)| (k, s.out_at(now))).collect();
+            tiles.sort_by_key(|t| !t.1);
+            let more_soon = cards::sets_coming().is_empty();
+            let n_tiles = tiles.len() + more_soon as usize;
+            for row_start in (0..n_tiles).step_by(per) {
             ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 30.0;
-                for s in cards::SETS.iter() {
+                ui.spacing_mut().item_spacing = vec2(30.0, 22.0);
+                for &(k, _) in tiles.iter().skip(row_start).take(per).filter(|t| t.1) {
+                    let s = &cards::SETS[k];
                     ui.vertical(|ui| {
                         let (r, resp) = ui.allocate_exact_size(vec2(170.0, 295.0), Sense::click());
                         let ht = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered() && f.packs > 0, kit::QUICK);
@@ -1053,6 +1172,12 @@ impl App {
                         let wob = if ht > 0.0 { (t * 9.0).sin() * 1.5 * ht } else { 0.0 };
                         let pr = r.translate(vec2(wob, -6.0 * ht));
                         self.draw_booster(ui, pr, s, f.packs > 0);
+                        // just out: NEW for a week
+                        if s.release > 0 && now < s.release + 7 * 86_400 {
+                            let b = Rect::from_center_size(pos2(pr.max.x - 8.0, pr.min.y + 10.0), vec2(52.0, 22.0));
+                            ui.painter().rect_filled(b, 11.0, kit::C_PINK);
+                            ui.painter().text(b.center(), Align2::CENTER_CENTER, "NEW", crate::fonts::sans_bold_font(11.5), Color32::WHITE);
+                        }
                         if ht > 0.0 {
                             ui.ctx().request_repaint();
                         }
@@ -1067,26 +1192,111 @@ impl App {
                         if (pill_button(ui, br, if can { "Open this one" } else { "🔒  No packs" }, can, ("open-set", s.id)).clicked() || resp.clicked()) && can {
                             open = Some(s.id);
                         }
+                        // a new set's card art, to download
+                        let all = set_art(s.id).len();
+                        let got = here.get(k).map_or(0, |h| h.0);
+                        if s.release > 0 && got < all {
+                            ui.add_space(2.0);
+                            match jobs.iter().find(|j| j.0 == s.id) {
+                                Some((_, d, tot)) => {
+                                    ui.label(RichText::new(format!("Downloading its art… {}%", d * 100 / (*tot).max(1))).size(kit::fs(11.5)).color(MUTED()));
+                                }
+                                None => {
+                                    if ui.link(RichText::new("⬇  Download its card pictures").size(kit::fs(11.5))).on_hover_text("Its card pictures and pack art, kept on this PC. Without them the cards are drawn by the app.").clicked() {
+                                        get = Some(s.id);
+                                    }
+                                }
+                            }
+                        }
                     });
                 }
-                // the next sets are on their way
-                ui.vertical(|ui| {
-                    let (r, resp) = ui.allocate_exact_size(vec2(170.0, 295.0), Sense::hover());
-                    let t = ui.input(|i| i.time) as f32;
-                    coming_soon_pack(ui.painter(), r, t, resp.hovered());
-                    if resp.hovered() {
-                        ui.ctx().request_repaint();
-                    }
-                    resp.on_hover_text("More card sets are on the way");
-                    ui.add_space(6.0);
-                    ui.label(RichText::new("More sets").font(crate::fonts::sans_bold_font(13.5)).color(TEXT()));
-                    ui.label(RichText::new("Coming soon").size(kit::fs(11.5)).color(MUTED()));
-                    ui.add_space(4.0);
-                    let (br, _) = ui.allocate_exact_size(vec2(170.0, 32.0), Sense::hover());
-                    let _ = pill_button(ui, br, "🔒  Coming soon", false, "open-set-soon");
-                });
+                // the next sets, coming one a week
+                for &(k, _) in tiles.iter().skip(row_start).take(per).filter(|t| !t.1) {
+                    let s = &cards::SETS[k];
+                    ui.vertical(|ui| {
+                        let (r, resp) = ui.allocate_exact_size(vec2(170.0, 295.0), Sense::hover());
+                        // its booster, in grey (drawn by the app until the art is here)
+                        let t = ui.input(|i| i.time);
+                        let art = s.packs[((t / 4.0) as usize + s.id.len()) % s.packs.len()];
+                        let pp = ui.painter_at(r.expand(8.0));
+                        pp.add(kit::shadow_tier(2).as_shape(r, 6.0));
+                        match self.setup.cards.pics.get(ui.ctx(), &format!("greypack:{art}"), true) {
+                            Some(tex) => super::store::paint_image(&pp, &tex, r, egui::Rounding::same(4.0), 1.0, false),
+                            None => {
+                                self.draw_booster_painted(&pp, r, s);
+                                pp.rect_filled(r, 6.0, Color32::from_rgba_unmultiplied(30, 32, 42, 175));
+                            }
+                        }
+                        for name in s.packs {
+                            let _ = self.setup.cards.pics.get(ui.ctx(), &format!("greypack:{name}"), true);
+                        }
+                        let p = ui.painter();
+                        // the lock and how long to go
+                        let c = pos2(r.center().x, r.center().y - 30.0);
+                        p.circle_filled(c, 30.0, Color32::from_black_alpha(90));
+                        lock_icon(p, c, 22.0, Color32::from_white_alpha(220));
+                        let left = s.release.saturating_sub(now);
+                        let band = Rect::from_center_size(pos2(r.center().x, r.center().y + 28.0), vec2(r.width() - 24.0, 30.0));
+                        p.rect_filled(band, 15.0, Color32::from_black_alpha(140));
+                        p.text(band.center(), Align2::CENTER_CENTER, countdown(left), crate::fonts::sans_bold_font(14.0), GOLD);
+                        if left < 3600 {
+                            ui.ctx().request_repaint_after(Duration::from_secs(1));
+                        }
+                        let _ = resp.on_hover_text(format!("{} comes out {}", s.name, release_when(s.release)));
+                        ui.add_space(6.0);
+                        ui.label(RichText::new(format!("{} ({})", s.name, s.year)).font(crate::fonts::sans_bold_font(13.5)).color(MUTED()));
+                        ui.label(RichText::new(format!("Out {}", release_when(s.release))).size(kit::fs(11.5)).color(MUTED()));
+                        ui.add_space(4.0);
+                        let on = f.notify.iter().any(|x| x == s.id);
+                        let (br, _) = ui.allocate_exact_size(vec2(170.0, 32.0), Sense::hover());
+                        if pill_button(ui, br, if on { "🔔  I'll tell you" } else { "🔔  Tell me when it's out" }, on, ("notify-set", s.id))
+                            .on_hover_text(if on { "A pop-up in the app when it comes out. Click to turn it off." } else { "A pop-up in the app when it comes out" })
+                            .clicked()
+                        {
+                            notify = Some((s.id, !on));
+                        }
+                        let mut a = f.auto_get.iter().any(|x| x == s.id);
+                        if kit::checkbox(ui, &mut a, "Download its cards then").on_hover_text("When it comes out, its card pictures download by themselves (its booster art is already here)").changed() {
+                            auto = Some((s.id, a));
+                        }
+                    });
+                }
+                // none left to come: more on the way
+                if more_soon && row_start + per >= n_tiles {
+                    ui.vertical(|ui| {
+                        let (r, resp) = ui.allocate_exact_size(vec2(170.0, 295.0), Sense::hover());
+                        let t = ui.input(|i| i.time) as f32;
+                        coming_soon_pack(ui.painter(), r, t, resp.hovered());
+                        resp.on_hover_text("More card sets are on the way");
+                        ui.add_space(6.0);
+                        ui.label(RichText::new("More sets").font(crate::fonts::sans_bold_font(13.5)).color(TEXT()));
+                        ui.label(RichText::new("Coming soon").size(kit::fs(11.5)).color(MUTED()));
+                    });
+                }
             });
+            ui.add_space(22.0);
+            }
         });
+        if let Some(set) = get {
+            let ctx = ui.ctx().clone();
+            self.cards_download_set(&ctx, set);
+        }
+        if let Some((set, on)) = notify {
+            let file = self.setup.cards.file();
+            file.notify.retain(|x| x != set);
+            if on {
+                file.notify.push(set.to_string());
+            }
+            self.setup.cards.touch();
+        }
+        if let Some((set, on)) = auto {
+            let file = self.setup.cards.file();
+            file.auto_get.retain(|x| x != set);
+            if on {
+                file.auto_get.push(set.to_string());
+            }
+            self.setup.cards.touch();
+        }
         ui.add_space(16.0);
         // the last packs opened: one small tile each, its cards fanned
         // (best on top), in a grid
@@ -1279,6 +1489,7 @@ impl App {
             let parts: Vec<String> = cards::SETS
                 .iter()
                 .zip(here.iter())
+                .filter(|(s, _)| s.out())
                 .map(|(s, (n, _))| {
                     let all = set_art(s.id).len();
                     format!("{}: {}", s.name, if *n >= all { "downloaded" } else if *n == 0 { "not downloaded" } else { "partly downloaded" })
@@ -1349,53 +1560,61 @@ impl App {
             label(y, "CARD ART");
             y += 16.0;
             let row_h = 92.0;
-            for (k, set) in cards::SETS.iter().enumerate() {
-                let row = Rect::from_min_size(pos2(inner.min.x, y), vec2(inner.width(), row_h));
-                p.rect_filled(row, 12.0, kit::sunken());
-                // the set's booster, small
-                let br = Rect::from_min_size(row.min + vec2(12.0, 10.0), vec2(42.0, 72.0));
-                match self.setup.cards.pics.get(ui.ctx(), &format!("pack:{}", set.packs[0]), true) {
-                    Some(t) => super::store::paint_image(&p, &t, br, egui::Rounding::same(3.0), 1.0, false),
-                    None => self.draw_booster_painted(&p, br, set),
-                }
-                let tx = br.max.x + 14.0;
-                p.text(pos2(tx, row.min.y + 24.0), Align2::LEFT_CENTER, format!("{} ({})", set.name, set.year), crate::fonts::sans_bold_font(14.0), TEXT());
-                let files = set_art(set.id).len();
-                let (have, bytes) = here.get(k).copied().unwrap_or((0, 0));
-                let job = self.setup.cards.save_all.iter().find(|j| j.set == set.id);
-                let mb = |b: u64| format!("{:.0} MB", (b as f64 / 1_048_576.0).max(1.0));
-                let status = match job {
-                    Some(j) => format!("Downloading… {} of {}", j.done.load(Ordering::Relaxed), j.total),
-                    None if have >= files => format!("Downloaded · {} on this PC", mb(bytes)),
-                    None if have == 0 => format!("{} cards and {} booster arts · not downloaded", cards::of_set(set.id).len(), set.packs.len()),
-                    None => format!("Partly downloaded ({have} of {files} files) · {}", mb(bytes)),
-                };
-                p.text(pos2(tx, row.min.y + 46.0), Align2::LEFT_CENTER, status, crate::fonts::sans_font(12.0), MUTED());
-                if let Some(j) = job {
-                    let fr = j.done.load(Ordering::Relaxed) as f32 / j.total.max(1) as f32;
-                    kit::paint_bar(&p, Rect::from_min_size(pos2(tx, row.min.y + 64.0), vec2(row.max.x - 150.0 - tx, 6.0)), fr);
-                    ui.ctx().request_repaint_after(Duration::from_millis(200));
-                }
-                // buttons on the right
-                let bw = 120.0;
-                let b1 = Rect::from_min_size(pos2(row.max.x - bw - 14.0, row.center().y - 30.0 + if have > 0 && have < files { 0.0 } else { 14.0 }), vec2(bw, 32.0));
-                if job.is_none() {
-                    if have < files {
-                        if pill_button(ui, b1, if have == 0 { "⬇  Download" } else { "⬇  Finish" }, true, ("cards-get", set.id)).clicked() {
-                            get = Some(set.id);
-                        }
-                        if have > 0 {
-                            let b2 = b1.translate(vec2(0.0, 38.0));
-                            if pill_button(ui, b2, "Remove", false, ("cards-rm", set.id)).clicked() {
-                                remove = Some(set.id);
+            // two rows show; more sets scroll
+            let list_h = row_h * 2.0 + 10.0;
+            let area = Rect::from_min_size(pos2(inner.min.x, y), vec2(inner.width(), list_h));
+            let mut lu = ui.new_child(egui::UiBuilder::new().max_rect(area).layout(egui::Layout::top_down(egui::Align::LEFT)));
+            egui::ScrollArea::vertical().id_salt("cards-art-rows").max_height(list_h).auto_shrink([false, false]).show(&mut lu, |ui| {
+                ui.spacing_mut().item_spacing.y = 10.0;
+                for (k, set) in cards::SETS.iter().enumerate().filter(|(_, s)| s.out()) {
+                    let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::hover());
+                    let p = ui.painter().clone();
+                    p.rect_filled(row, 12.0, kit::sunken());
+                    // the set's booster, small
+                    let br = Rect::from_min_size(row.min + vec2(12.0, 10.0), vec2(42.0, 72.0));
+                    match self.setup.cards.pics.get(ui.ctx(), &format!("pack:{}", set.packs[0]), true) {
+                        Some(t) => super::store::paint_image(&p, &t, br, egui::Rounding::same(3.0), 1.0, false),
+                        None => self.draw_booster_painted(&p, br, set),
+                    }
+                    let tx = br.max.x + 14.0;
+                    p.text(pos2(tx, row.min.y + 24.0), Align2::LEFT_CENTER, format!("{} ({})", set.name, set.year), crate::fonts::sans_bold_font(14.0), TEXT());
+                    let files = set_art(set.id).len();
+                    let (have, bytes) = here.get(k).copied().unwrap_or((0, 0));
+                    let job = self.setup.cards.save_all.iter().find(|j| j.set == set.id);
+                    let mb = |b: u64| format!("{:.0} MB", (b as f64 / 1_048_576.0).max(1.0));
+                    let status = match job {
+                        Some(j) => format!("Downloading… {} of {}", j.done.load(Ordering::Relaxed), j.total),
+                        None if have >= files => format!("Downloaded · {} on this PC", mb(bytes)),
+                        None if have == 0 => format!("{} cards and {} booster arts · not downloaded", cards::of_set(set.id).len(), set.packs.len()),
+                        None => format!("Partly downloaded ({have} of {files} files) · {}", mb(bytes)),
+                    };
+                    p.text(pos2(tx, row.min.y + 46.0), Align2::LEFT_CENTER, status, crate::fonts::sans_font(12.0), MUTED());
+                    if let Some(j) = job {
+                        let fr = j.done.load(Ordering::Relaxed) as f32 / j.total.max(1) as f32;
+                        kit::paint_bar(&p, Rect::from_min_size(pos2(tx, row.min.y + 64.0), vec2(row.max.x - 150.0 - tx, 6.0)), fr);
+                        ui.ctx().request_repaint_after(Duration::from_millis(200));
+                    }
+                    // buttons on the right
+                    let bw = 120.0;
+                    let b1 = Rect::from_min_size(pos2(row.max.x - bw - 14.0, row.center().y - 30.0 + if have > 0 && have < files { 0.0 } else { 14.0 }), vec2(bw, 32.0));
+                    if job.is_none() {
+                        if have < files {
+                            if pill_button(ui, b1, if have == 0 { "⬇  Download" } else { "⬇  Finish" }, true, ("cards-get", set.id)).clicked() {
+                                get = Some(set.id);
                             }
+                            if have > 0 {
+                                let b2 = b1.translate(vec2(0.0, 38.0));
+                                if pill_button(ui, b2, "Remove", false, ("cards-rm", set.id)).clicked() {
+                                    remove = Some(set.id);
+                                }
+                            }
+                        } else if pill_button(ui, b1, "🗑  Remove", false, ("cards-rm", set.id)).clicked() {
+                            remove = Some(set.id);
                         }
-                    } else if pill_button(ui, b1, "🗑  Remove", false, ("cards-rm", set.id)).clicked() {
-                        remove = Some(set.id);
                     }
                 }
-                y += row_h + 10.0;
-            }
+            });
+            y += list_h + 10.0;
             // ── xp bar
             y += 8.0;
             label(y, "XP BAR ON THE OVERLAY");
@@ -1625,6 +1844,19 @@ impl App {
 
     /// The pack being torn: the body, the part of the top still on, and the
     /// torn part curling up (or flying off once it's all torn, `fly` 0 to 1).
+    /// A card sound (see `sound::CardSnd`), with the app's sounds on, at
+    /// their volume, on their device.
+    fn card_sound(&mut self, k: crate::sound::CardSnd) {
+        let snd = &self.cfg.sounds;
+        if !snd.enabled {
+            return;
+        }
+        let (vol, dev) = (snd.volume, snd.device.clone());
+        let ts = &mut self.setup.cards.tear_sound;
+        ts.2 = ts.2.wrapping_add(1);
+        crate::sound::play_card(k, ts.2, vol, &dev);
+    }
+
     fn draw_pack_tearing(&mut self, ui: &egui::Ui, pr: Rect, op_art: &str, set: &cards::Set, tear: f32, from_right: bool, fly: f32, alpha: f32) {
         const STRIP: f32 = 0.12;
         let tex = self.setup.cards.pics.get(ui.ctx(), &format!("pack:{op_art}"), true).map(|t| t.id());
@@ -2015,6 +2247,26 @@ impl App {
                 crate::sound::play_tear(ts.2, false, vol * (0.55 + 0.15 * speed).min(1.0), &dev);
                 ts.0 = nt;
                 ts.1 = Some(Instant::now());
+            }
+        }
+        // the cards' own sounds: turning the first over, each one flicked
+        // onto the pile, the back two sliding round, and a riffle as they're
+        // all laid out
+        {
+            use crate::sound::CardSnd;
+            let snd = if set_stage == Some(Stage::Reveal) {
+                Some(CardSnd::Flip)
+            } else if start_move {
+                Some(CardSnd::Slide)
+            } else if next && at + 1 < order.len() {
+                Some(CardSnd::Flick)
+            } else if (next || skip) && stage == Stage::Reveal {
+                Some(CardSnd::Riffle(n.min(12) as u8))
+            } else {
+                None
+            };
+            if let Some(k) = snd {
+                self.card_sound(k);
             }
         }
         if let Some(op) = self.setup.cards.opening.as_mut() {
@@ -2522,6 +2774,42 @@ fn rounded_pts(r: Rect, round: f32, steps: usize) -> Vec<egui::Pos2> {
         }
     }
     dense
+}
+
+/// A padlock, `size` tall, centred on `c`.
+fn lock_icon(p: &egui::Painter, c: egui::Pos2, size: f32, col: Color32) {
+    let body = Rect::from_center_size(c + vec2(0.0, size * 0.18), vec2(size * 0.8, size * 0.6));
+    // the shackle: a half ring over the body
+    let r = size * 0.26;
+    let top = pos2(c.x, body.min.y);
+    let pts: Vec<egui::Pos2> = (0..=16).map(|i| {
+        let a = std::f32::consts::PI * (i as f32 / 16.0);
+        pos2(top.x - r * a.cos(), top.y - r * a.sin())
+    }).collect();
+    let mut shackle = vec![pos2(top.x - r, top.y + 1.0)];
+    shackle.extend(pts);
+    shackle.push(pos2(top.x + r, top.y + 1.0));
+    p.add(egui::Shape::line(shackle, Stroke::new(size * 0.12, col)));
+    p.rect_filled(body, size * 0.12, col);
+    p.circle_filled(body.center() - vec2(0.0, size * 0.04), size * 0.07, Color32::from_black_alpha(160));
+}
+
+/// "Mon 23 Nov, 6:00 pm" (local time).
+fn release_when(unix: u64) -> String {
+    let day = crate::stats::local_day(unix);
+    format!("{} {}, {}", crate::stats::WEEKDAYS[crate::stats::weekday(day)], crate::stats::fmt_day_short(day), crate::stats::fmt_clock(unix))
+}
+
+/// How long until it's out: "6d 18h", "5h 12m", "12:05".
+fn countdown(secs: u64) -> String {
+    let (d, h, m, s) = (secs / 86_400, (secs % 86_400) / 3600, (secs % 3600) / 60, secs % 60);
+    if d > 0 {
+        format!("IN {d}d {h}h")
+    } else if h > 0 {
+        format!("IN {h}h {m}m")
+    } else {
+        format!("IN {m}:{s:02}")
+    }
 }
 
 /// A booster that isn't out yet: a dark foil wrapper inside a dashed

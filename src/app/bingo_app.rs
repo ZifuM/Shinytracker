@@ -308,7 +308,7 @@ impl App {
             expires: Some(now + Duration::from_secs(10)),
             accent: GOLD,
         });
-        self.play(crate::sound::Sfx::Goal);
+        self.play_popup(crate::sound::Sfx::Goal);
     }
 
     // ───────────────────────────── drawing ─────────────────────────────

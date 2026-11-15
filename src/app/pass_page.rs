@@ -400,7 +400,7 @@ impl App {
             }
             Kind2::Packs(n) => {
                 // a booster (Base Set or Base Set 2, by tier), with "×n" for more than one
-                let set = &crate::cards::SETS[rw.tier as usize % crate::cards::SETS.len()];
+                let set = &crate::cards::SETS[rw.tier as usize % 2];
                 let bh = r.height() - 12.0;
                 let br = Rect::from_center_size(r.center(), vec2(bh * 170.0 / 295.0, bh));
                 p.add(kit::shadow_tier(2).as_shape(br, 4.0));

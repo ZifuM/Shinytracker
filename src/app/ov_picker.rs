@@ -5,7 +5,7 @@
 //!
 //! The Card Collector's XP bar stays pinned under the Shiny Hunter overlay
 //! (left or right end, or off), so it can only open with it. Pokégotchi is
-//! its own window.
+//! its own window, and so is the Team Planner checklist (off unless ticked).
 
 use super::gotchi_app::mock_game;
 use super::store::{app_col, app_icon, pill_button};
@@ -17,12 +17,13 @@ use crate::theme;
 use eframe::egui::{self, pos2, vec2, Align2, Color32, Rect, Sense, Stroke};
 
 /// The overlays, in the picker's order.
-const TILES: [AppId; 3] = [AppId::Shiny, AppId::Cards, AppId::Gotchi];
+const TILES: [AppId; 4] = [AppId::Shiny, AppId::Cards, AppId::Gotchi, AppId::Team];
 
 fn title(a: AppId) -> &'static str {
     match a {
         AppId::Cards => "Card Collector XP bar",
         AppId::Gotchi => "Pokégotchi",
+        AppId::Team => "Team checklist",
         _ => "Shiny Hunter overlay",
     }
 }
@@ -31,6 +32,7 @@ fn blurb(a: AppId) -> &'static str {
     match a {
         AppId::Cards => "Your XP to the next booster pack, pinned under the shiny counter.",
         AppId::Gotchi => "Your pet in its own little window. Drag it anywhere.",
+        AppId::Team => "Your team's next steps, ticked off from your game as you play.",
         _ => "Your count, odds and the shiny alert, on top of the game.",
     }
 }
@@ -81,14 +83,24 @@ impl App {
         let mut bar = if has_cards { Some(self.setup.cards.file().bar.clone()) } else { None };
         let mut gov = if has_gotchi { Some(self.setup.gotchi.file().overlay.clone()) } else { None };
         let pet = has_gotchi && self.setup.gotchi.file().partner().is_some();
+        // the Team Planner checklist
+        let has_team = self.has_app(AppId::Team);
+        let mut tov = self.cfg.team_ov.clone();
+        let teams: Vec<(u64, String)> = if has_team {
+            self.setup.team.teams().teams.iter().filter(|t| !t.members.is_empty()).map(|t| (t.id, t.name.clone())).collect()
+        } else {
+            Vec::new()
+        };
+        let team_now = if has_team { self.team_ov_team().filter(|t| !t.members.is_empty()) } else { None };
+        let team_pv = if team_now.is_some() { self.team_ov_data() } else { None };
         let hunt = self.target_label();
         let count = self.cfg.count;
         egui::Area::new(egui::Id::new("ov-picker")).order(egui::Order::Foreground).fixed_pos(screen.min).show(ctx, |ui| {
             kit::settings_style(ui);
             let (sr, scrim) = ui.allocate_exact_size(screen.size(), Sense::click());
             ui.painter().rect_filled(sr, 0.0, Color32::from_black_alpha(170));
-            let w = 960.0f32.min(sr.width() - 40.0);
-            let h = 510.0f32.min(sr.height() - 40.0);
+            let w = 1180.0f32.min(sr.width() - 40.0);
+            let h = 560.0f32.min(sr.height() - 40.0);
             let panel = Rect::from_center_size(sr.center(), vec2(w, h));
             let _ = ui.interact(panel, ui.id().with("ov-picker-panel"), Sense::click());
             let p = ui.painter().clone();
@@ -128,7 +140,8 @@ impl App {
                 // can it be ticked, and is it?
                 let (usable, ticked, why) = match a {
                     AppId::Cards => (installed && shiny, bar.as_ref().is_some_and(|b| b.on), if !shiny { Some("Opens with the Shiny Hunter overlay") } else { None }),
-                    AppId::Gotchi => (installed && pet, gov.as_ref().is_some_and(|g| g.show), if installed && !pet { Some("Adopt a shiny in Pokégotchi first") } else { None }),
+                    AppId::Gotchi => (installed && pet, gov.as_ref().is_some_and(|g| g.show), if installed && !pet { Some("Adopt a shiny first") } else { None }),
+                    AppId::Team => (installed && team_now.is_some(), tov.show, if installed && team_now.is_none() { Some("Make a team first") } else { None }),
                     _ => (true, shiny, None),
                 };
                 let on = usable && ticked;
@@ -160,6 +173,14 @@ impl App {
                             pc.rect_filled(spot, 8.0, Color32::from_rgba_unmultiplied(16, 18, 30, 228));
                             super::cards_app::xp_bar(&pc, spot.shrink2(vec2(10.0, 8.5)), 0.6, t, None);
                         }
+                    }
+                    AppId::Team => {
+                        let d = team_pv.clone().unwrap_or_else(super::team_ov::sample);
+                        let k = 0.75;
+                        let focus = tov.focus.filter(|f| *f < d.members.len()).unwrap_or(0);
+                        let ps = super::team_ov::panel_size(&d, tov.look, focus) * k;
+                        let spot = Rect::from_min_size(pos2(pv.max.x - ps.x.min(pv.width() - 12.0) - 8.0, pv.min.y + 8.0), vec2(ps.x.min(pv.width() - 12.0), ps.y));
+                        self.team_ov_paint(&pc, spot, &d, tov.look, focus, k);
                     }
                     _ => {
                         let mut g = gov.clone().unwrap_or_default();
@@ -210,11 +231,11 @@ impl App {
                     }
                     tile_click = false;
                 } else if let Some(why) = why {
-                    p.text(pos2(orow.min.x, orow.center().y), Align2::LEFT_CENTER, why, crate::fonts::sans_font(12.0), kit::C_GOLD);
-                    if *a == AppId::Gotchi {
+                    p.with_clip_rect(Rect::from_min_max(orow.min, pos2(orow.max.x - 78.0, orow.max.y))).text(pos2(orow.min.x, orow.center().y), Align2::LEFT_CENTER, why, crate::fonts::sans_font(12.0), kit::C_GOLD);
+                    if *a == AppId::Gotchi || *a == AppId::Team {
                         let b = Rect::from_min_size(pos2(orow.max.x - 70.0, orow.min.y), vec2(70.0, orow.height()));
-                        if pill_button(ui, b, "Open", false, "ov-open-gotchi").clicked() {
-                            open_app = Some(Tab::Gotchi);
+                        if pill_button(ui, b, "Open", false, ("ov-open", i)).clicked() {
+                            open_app = Some(if *a == AppId::Gotchi { Tab::Gotchi } else { Tab::Team });
                         }
                     }
                     tile_click = false;
@@ -235,6 +256,33 @@ impl App {
                                     g.show = true;
                                     tile_click = false;
                                 }
+                            }
+                        }
+                        AppId::Team => {
+                            use crate::config::TeamLook;
+                            if kit::segmented(&mut cu, &mut tov.look, &[(TeamLook::Strip, "Strip"), (TeamLook::Card, "Card"), (TeamLook::Bar, "Bar")]) {
+                                tov.show = true;
+                                tile_click = false;
+                            }
+                            // which team, just above
+                            let trow = Rect::from_min_size(pos2(orow.min.x, orow.min.y - 38.0), vec2(orow.width(), 30.0));
+                            let mut tu = ui.new_child(egui::UiBuilder::new().max_rect(trow).layout(egui::Layout::left_to_right(egui::Align::Center)));
+                            let cur = team_now.as_ref().map(|t| t.name.clone()).unwrap_or_default();
+                            let mut chosen: Option<u64> = None;
+                            egui::ComboBox::from_id_salt("ov-team-pick").selected_text(format!("Team: {cur}")).width(trow.width()).show_ui(&mut tu, |ui| {
+                                for (id, name) in &teams {
+                                    if ui.selectable_label(team_now.as_ref().is_some_and(|t| t.id == *id), name).clicked() {
+                                        chosen = Some(*id);
+                                    }
+                                }
+                            });
+                            if let Some(id) = chosen {
+                                tov.team = Some(id);
+                                tov.focus = None;
+                                tov.show = true;
+                            }
+                            if tu.min_rect().contains(ui.input(|i| i.pointer.interact_pos().unwrap_or_default())) {
+                                tile_click = false;
                             }
                         }
                         _ => {
@@ -264,6 +312,7 @@ impl App {
                                 g.show = !g.show;
                             }
                         }
+                        AppId::Team => tov.show = !tov.show,
                         _ => shiny = !shiny,
                     }
                 }
@@ -271,7 +320,10 @@ impl App {
             }
             // footer
             let fy = inner.max.y - foot_h / 2.0;
-            let picked = shiny as usize + (shiny && bar.as_ref().is_some_and(|b| b.on)) as usize + (pet && gov.as_ref().is_some_and(|g| g.show)) as usize;
+            let picked = shiny as usize
+                + (shiny && bar.as_ref().is_some_and(|b| b.on)) as usize
+                + (pet && gov.as_ref().is_some_and(|g| g.show)) as usize
+                + (has_team && team_now.is_some() && tov.show) as usize;
             let note = match self.cfg.keybinds.get(crate::hotkeys::HotAction::StartStop) {
                 Some(k) => format!("{picked} picked · in the game, {} opens your picks straight away", k.text()),
                 None => format!("{picked} picked"),
@@ -338,6 +390,12 @@ impl App {
                 self.setup.cards.touch();
             }
         }
+        if tov != self.cfg.team_ov {
+            self.cfg.team_ov = tov;
+            self.setup.team_ov.seen = None;
+            self.setup.team_ov.data = None;
+            self.dirty = true;
+        }
         if let Some(g) = gov {
             if g != self.setup.gotchi.file().overlay {
                 self.setup.gotchi.file().overlay = g;
@@ -355,6 +413,11 @@ impl App {
             }
             if picks.2 != self.setup.gotchi.shown {
                 self.setup.gotchi.shown = picks.2;
+                self.dirty = true;
+            }
+            let team = self.team_ov_pick();
+            if team != self.setup.team_ov.shown {
+                self.setup.team_ov.shown = team;
                 self.dirty = true;
             }
         }

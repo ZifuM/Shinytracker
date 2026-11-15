@@ -764,6 +764,8 @@ pub const OVERLAY_TITLE: &str = "Shiny Hunter overlay";
 pub const CARD_BAR_TITLE: &str = "Card Collector XP bar";
 /// The Pokégotchi on the overlay.
 pub const GOTCHI_TITLE: &str = "Pokegotchi overlay";
+/// The Team Planner checklist on the overlay.
+pub const TEAM_TITLE: &str = "Team checklist overlay";
 
 /// Like `ensure_overlay_keeper`, for another overlay window by its title.
 pub fn ensure_keeper_titled(title: &str, last: &mut Option<isize>, borderless_fix: &std::sync::Arc<std::sync::atomic::AtomicBool>) {

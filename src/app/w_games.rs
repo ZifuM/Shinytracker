@@ -71,10 +71,11 @@ impl App {
             fit::label(&p, top, &words, b.bold(14.0), if f.packs > 0 { TEXT() } else { MUTED() }, Align2::LEFT_CENTER);
         }
         let mut open: Option<&'static str> = None;
-        let n = cards::SETS.len();
+        let sets = cards::sets_out();
+        let n = sets.len();
         // packs keep their shape (1 : 1.45), side by side
         let slots = fit::cols(room, n, b.px(12.0));
-        for (k, (s, slot)) in cards::SETS.iter().zip(slots.iter()).enumerate() {
+        for (k, (s, slot)) in sets.iter().copied().zip(slots.iter()).enumerate() {
             let w = slot.width().min(slot.height() / 1.45);
             let r = Rect::from_center_size(slot.center(), vec2(w, w * 1.45));
             let resp = ui.interact(r, ui.id().with(("w-pack", k, b.r.min.x as i32, b.r.min.y as i32)), Sense::click());
@@ -134,8 +135,8 @@ impl App {
     pub(super) fn w_cards_sets(&mut self, ui: &mut egui::Ui) {
         let b = wbox(ui, "cards_sets");
         let f = self.setup.cards.file().clone();
-        let rows: Vec<Row> = cards::SETS
-            .iter()
+        let rows: Vec<Row> = cards::sets_out()
+            .into_iter()
             .map(|s| {
                 let n = cards::of_set(s.id).len();
                 let h = f.unique(Some(s.id));

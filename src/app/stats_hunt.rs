@@ -59,6 +59,63 @@ fn change(this: f64, last: f64) -> Option<(f64, String)> {
 }
 
 impl App {
+    /// A hunt's numbers for the stats share image.
+    pub(super) fn share_hunt(&self, info: &RunInfo) -> crate::statshare::Hunt {
+        const FULL: [&str; 7] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+        let st = info.stats.clone().unwrap_or_default();
+        let eggs = {
+            let m = info.method.to_lowercase();
+            m.contains("masuda") || m.contains("egg")
+        };
+        let (unit, unit_cap) = if eggs { ("eggs", "Eggs") } else { ("encounters", "Encounters") };
+        let odds = info.odds.filter(|o| *o > 1.0);
+        let mult = odds.map(|o| info.count as f64 / o).unwrap_or(0.0);
+        let found = odds.map(|o| stats::found_by(info.count, o)).unwrap_or(0.0);
+        let ahead = odds.map(|o| [0.5, 0.9, 0.99].map(|q| stats::encounters_for(q, o))).unwrap_or([0; 3]);
+        // the last two days hunted
+        let mut hunted: Vec<&stats::DayStat> = st.days.iter().filter(|d| d.encounters > 0).collect();
+        hunted.sort_by_key(|d| d.day);
+        let per_day: Vec<(String, u64)> = hunted.iter().rev().take(2).rev().map(|d| (fmt_day_short(d.day), d.encounters)).collect();
+        let best_day = hunted.iter().max_by_key(|d| d.encounters).map(|d| (d.encounters, fmt_day_short(d.day), FULL[stats::weekday(d.day)].to_string()));
+        let first_day = if info.started > 0 { Some(local_day(info.started)) } else { hunted.first().map(|d| d.day) };
+        let fun_fact = if eggs {
+            let boxes = info.count / 30;
+            if boxes >= 1 {
+                format!("Enough Eggs to fill {} PC box{}.", theme::thousands(boxes), if boxes == 1 { "" } else { "es" })
+            } else {
+                "Not even a full PC box of Eggs yet.".into()
+            }
+        } else if !hunted.is_empty() {
+            format!("About {} encounters on each day you hunted.", theme::thousands(info.count / hunted.len() as u64))
+        } else {
+            "Every encounter is a fresh roll of the dice.".into()
+        };
+        let slug = info.slug.as_deref();
+        crate::statshare::Hunt {
+            name: info.name.clone(),
+            sprite: slug.and_then(|s| crate::share::sprite_frame(s, info.caught)),
+            shiny: info.caught,
+            method: if info.method.is_empty() { "Full odds".into() } else { info.method.clone() },
+            odds: odds.map(|o| format!("1 in {}", theme::thousands(o.round() as u64))).unwrap_or_else(|| "odds unknown".into()),
+            count: info.count,
+            unit: unit.into(),
+            unit_cap: unit_cap.into(),
+            mult,
+            found,
+            secs: st.hunt_secs,
+            pace: st.per_hour().map(|r| r.round() as u64),
+            started: first_day.map(fmt_day_short).unwrap_or_else(|| "—".into()),
+            days: st.days_hunted() as u32,
+            sessions: st.sessions.len() as u32,
+            per_day,
+            ahead,
+            best_day,
+            longest: st.longest_session().map(|s| s.secs),
+            caught: info.caught,
+            fun_fact,
+        }
+    }
+
     /// Run stats: the whole dashboard.
     pub(super) fn hunt_dashboard(&mut self, ui: &mut egui::Ui, info: &RunInfo, st: &RunStats) {
         self.stats_hero(ui, info, st);

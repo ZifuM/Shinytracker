@@ -200,19 +200,19 @@ const TEAM: Meta = Meta {
     cat: Cat::Battle,
     core: false,
     beta: false,
-    overlay: false,
+    overlay: true,
     tagline: "Build a team, see what it covers, and plan how to get it.",
     about: &[
         "Pick up to six Pokémon, give them moves, items and EVs, and the planner works out the rest: type coverage, what hits you hardest, and how to get every part in the game.",
         "Paste a team straight from Showdown, or start from a classic.",
     ],
-    can_do: &["Showdown-style sets with live stats", "Analysis: weaknesses, speed and coverage", "Checklist: where to catch, which TMs and tutors"],
-    whats_new: "Your teams can be used in the Damage Calculator.",
-    updated: "13 Nov 2026",
-    uses: "Saves your teams on this PC",
+    can_do: &["Showdown-style sets with live stats", "Analysis: weaknesses, speed and coverage", "Checklist: where to catch, which TMs and tutors", "The checklist ticks itself off from your game", "A checklist overlay on top of the game, in three looks"],
+    whats_new: "The checklist ticks itself off as you play (catches, evolutions, moves, Ability, nature, item, EVs), with its own overlay: Strip, Card or Bar.",
+    updated: "16 Nov 2026",
+    uses: "Saves your teams on this PC, and reads your save (read only) for the checklist",
     shots: &[("team", "Plan your first team"), ("team_sand", "Building a team")],
     requires: &[],
-    works_with: &[(AppId::Calc, "Damage Calculator button"), (AppId::Sim, "Battle Sim button"), (AppId::Pokedex, "Open in the Pokédex"), (AppId::Breed, "Plan breeding")],
+    works_with: &[(AppId::Calc, "Damage Calculator button"), (AppId::Sim, "Battle Sim button"), (AppId::Pokedex, "Open in the Pokédex"), (AppId::Breed, "Plan breeding"), (AppId::Boxes, "Your party to a team")],
 };
 
 const SIM: Meta = Meta {

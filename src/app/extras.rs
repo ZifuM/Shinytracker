@@ -135,6 +135,14 @@ impl App {
         }
     }
 
+    /// The sound that goes with a pop-up: silent while pop-ups are off
+    /// (the Start overlay screen's Toasts switch), like the pop-up itself.
+    pub(super) fn play_popup(&self, s: Sfx) {
+        if self.cfg.all_toasts {
+            self.play(s);
+        }
+    }
+
     /// Play a sound effect regardless of its switch (previews): the user's
     /// own file if they picked one and it plays, otherwise the built-in one.
     pub(super) fn play_now(&self, s: Sfx) {

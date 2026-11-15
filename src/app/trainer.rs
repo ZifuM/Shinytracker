@@ -233,13 +233,19 @@ impl App {
             self.push_toast(ToastKind::Goal { title: title.clone(), xp: *xp, weekly: *xp != crate::goals::DAILY_XP });
         }
         let levelled = level > self.cfg.level_seen;
-        // one chime per check, the most exciting one
-        if levelled {
-            self.play(crate::sound::Sfx::LevelUp);
+        // one chime per check, the most exciting one (only with its pop-up:
+        // not while achievement pop-ups or all pop-ups are off)
+        let chime = if levelled {
+            Some(crate::sound::Sfx::LevelUp)
         } else if !newly.is_empty() {
-            self.play(crate::sound::Sfx::Achievement);
+            Some(crate::sound::Sfx::Achievement)
         } else if !goals_new.is_empty() {
-            self.play(crate::sound::Sfx::Goal);
+            Some(crate::sound::Sfx::Goal)
+        } else {
+            None
+        };
+        if let Some(s) = chime.filter(|_| self.cfg.toasts) {
+            self.play_popup(s);
         }
         if newly.len() > 4 {
             self.push_toast(ToastKind::Welcome { count: newly.len(), level });

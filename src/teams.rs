@@ -44,6 +44,20 @@ pub struct Member {
     pub done: Vec<String>,
     /// Your own notes for this member.
     pub notes: String,
+    /// Which Pokémon in your game it is, for ticking its checklist off.
+    pub game_pick: GamePick,
+}
+
+/// Which Pokémon in your party or boxes a team member is.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum GamePick {
+    /// The one furthest along.
+    #[default]
+    Auto,
+    /// This one (its personality value).
+    Pid(u32),
+    /// None of them.
+    Nothing,
 }
 
 impl Default for Member {
@@ -63,6 +77,7 @@ impl Default for Member {
             happiness: 255,
             done: Vec::new(),
             notes: String::new(),
+            game_pick: GamePick::Auto,
         }
     }
 }
@@ -105,6 +120,8 @@ pub struct Team {
     pub notes: String,
     pub created: u64,
     pub updated: u64,
+    /// Ticked only by hand: the checklist doesn't read your game.
+    pub hand_only: bool,
 }
 
 impl Team {

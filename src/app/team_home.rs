@@ -558,7 +558,8 @@ impl App {
             }
         }
         // checklist progress
-        let (done, total) = super::team_check::team_progress(self.wiki.as_deref(), t);
+        let snap = if t.hand_only { None } else { self.team_snap() };
+        let (done, total) = super::team_check::team_progress(self.wiki.as_deref(), t, snap.as_deref());
         let bar = Rect::from_min_size(egui::pos2(r2.min.x + 16.0, r2.max.y - 22.0), egui::vec2(w - 32.0 - 90.0, 6.0));
         p.rect_filled(bar, 3.0, kit::sunken());
         if total > 0 {

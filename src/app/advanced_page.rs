@@ -400,7 +400,22 @@ impl App {
                     ui.label(RichText::new("The first copy is made once there is something to keep.").size(12.0).color(MUTED()));
                 } else {
                     let mut restore: Option<std::path::PathBuf> = None;
+                    // the 3 newest; the rest (all still kept) folded away
+                    const SHOWN: usize = 3;
+                    let older = autos.len().saturating_sub(SHOWN);
+                    let mut more = self.setup.backups_more;
                     for (i, (path, t)) in autos.iter().enumerate() {
+                        if i == SHOWN {
+                            ui.add_space(4.0);
+                            let label = format!("{} {older} older cop{}", if more { "Hide" } else { "Show" }, if older == 1 { "y" } else { "ies" });
+                            if kit::expander(ui, &label, &format!("{} kept in all", autos.len()), more).clicked() {
+                                more = !more;
+                            }
+                            ui.add_space(4.0);
+                        }
+                        if i >= SHOWN && !more {
+                            break;
+                        }
                         ui.horizontal(|ui| {
                             let (r, _) = ui.allocate_exact_size(vec2(8.0, 18.0), Sense::hover());
                             ui.painter().circle_filled(r.center(), 3.5, if i == 0 { GREEN } else { kit::LINE() });
@@ -416,6 +431,7 @@ impl App {
                             });
                         });
                     }
+                    self.setup.backups_more = more;
                     if let Some(p) = restore {
                         self.load_backup(p);
                     }

@@ -35,6 +35,7 @@ mod sim_opponents;
 mod sim_history;
 mod pass_page;
 mod breed_home;
+mod breed_desk;
 mod cards_app;
 mod dex_tcg;
 mod cards_bar;
@@ -76,6 +77,10 @@ mod charts;
 mod stats_hunt;
 mod stats_life;
 mod stats_overview;
+mod stat_share;
+mod stats_month;
+mod team_game;
+mod team_ov;
 mod ov_anime;
 mod ov_common;
 mod ov_glass;
@@ -191,6 +196,8 @@ enum Tab {
 struct Shot {
     rgba: Rgba,
     tex: egui::TextureHandle,
+    /// Where the game's picture was on the screen when this was taken.
+    game_at: Option<(i32, i32)>,
 }
 
 struct TestRead {
@@ -255,6 +262,8 @@ struct Setup {
     caught_pick: bool,
     /// Backup "Save as" (true) / "Open" (false) box while it's open.
     backup_picker: Option<(bool, Receiver<Option<std::path::PathBuf>>)>,
+    /// Settings > Advanced: the older automatic copies are shown.
+    backups_more: bool,
     /// A backup read from disk, waiting for "Replace everything?".
     restore_pending: Option<(std::path::PathBuf, Box<Config>)>,
     /// Last backup/restore result (ok?, message).
@@ -321,6 +330,14 @@ struct Setup {
     song_picker: Option<(Option<crate::sound::Sfx>, Receiver<Option<std::path::PathBuf>>)>,
     /// Share image maker, when open.
     share: Option<ShareView>,
+    /// The stats share window (Stats page, a hunt's stats, a month).
+    stat_share: Option<stat_share::StatShare>,
+    /// Stats › Month in review: the month shown and the day picked.
+    stats_month: stats_month::MonthState,
+    /// What your game has, for the Team Planner checklist.
+    team_game: team_game::TeamGame,
+    /// The Team Planner checklist overlay window.
+    team_ov: team_ov::TeamOvState,
     /// Short message on the trophies page (time, ok, text).
     toast: Option<(Instant, bool, String)>,
     ach_filter: trainer::AchFilter,
@@ -526,6 +543,8 @@ fn worker_settings(cfg: &Config, generation: u64, game_closed: bool) -> WorkerSe
         },
         interval_ms: cfg.interval_ms,
         shiny_star_alert: cfg.shiny_star_alert,
+        star_window: cfg.star_window,
+        regions_at: cfg.name_regions_at,
         star_threshold: cfg.star_threshold.max(1),
         source: cfg.count_source,
         log_dir: cfg.game_dir_setting().map(|d| crate::gamemap::game_dir(Some(d.as_path()))),
@@ -673,6 +692,7 @@ impl App {
                 party_events: Vec::new(),
                 caught_pick: false,
                 backup_picker: None,
+                backups_more: false,
                 restore_pending: None,
                 backup_msg: None,
                 auto_backup_at: None,
@@ -713,6 +733,10 @@ impl App {
                 look_start: None,
                 song_picker: None,
                 share: None,
+                stat_share: None,
+                stats_month: Default::default(),
+                team_game: Default::default(),
+                team_ov: Default::default(),
                 toast: None,
                 ach_filter: trainer::AchFilter::All,
                 ach_tab: 0,
@@ -941,7 +965,7 @@ impl App {
                 };
                 // A pop-up under the overlay, like every other one.
                 self.push_milestone(text);
-                self.play(crate::sound::Sfx::Milestone);
+                self.play_popup(crate::sound::Sfx::Milestone);
                 self.add_event("celebrated");
             }
         }
@@ -2496,7 +2520,7 @@ impl App {
                     &rgba.px,
                 );
                 let tex = ctx.load_texture("setup-shot", img, egui::TextureOptions::LINEAR);
-                self.setup.shot = Some(Shot { rgba, tex });
+                self.setup.shot = Some(Shot { rgba, tex, game_at: crate::star_win::game_at() });
                 self.setup.shot_error = None;
                 self.setup.test = None;
             }
@@ -2771,6 +2795,11 @@ impl App {
                 }
             });
         if let Some(r) = new_region {
+            // where the game was as the boxes were drawn: the star alert's
+            // "read the game window" finds them in the game wherever it moves
+            if let Some(at) = self.setup.shot.as_ref().and_then(|s| s.game_at).or_else(crate::star_win::game_at) {
+                self.cfg.name_regions_at = Some(at);
+            }
             self.cfg.name_regions.push(r);
             self.setup.test = None;
             self.push_settings(true);
@@ -3132,6 +3161,8 @@ impl eframe::App for App {
         self.rare_offer_window(ctx);
         self.ov_picker_window(ctx);
         self.rare_poster_window(ctx);
+        self.stat_share_window(ctx);
+        self.month_recap_check();
         self.avatar_window(ctx);
         // The overlay is its own always-on-top window while it's started.
         if self.overlay_on && !self.ov_hidden {
@@ -3143,6 +3174,8 @@ impl eframe::App for App {
         self.cards_bar_viewport(ctx);
         // and the Pokégotchi
         self.gotchi_viewport(ctx);
+        // and the Team Planner checklist
+        self.team_ov_viewport(ctx);
         if !self.overlay_on && self.ov_geom.is_some() {
             self.ov_geom = None;
             self.ov_opened = None;

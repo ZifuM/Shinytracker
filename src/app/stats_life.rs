@@ -20,6 +20,8 @@ pub(super) enum StatsTab {
     #[default]
     Lifetime,
     Hunt,
+    /// Month in review.
+    Month,
 }
 
 /// Which list the "Top shinies" card shows.
@@ -68,29 +70,50 @@ impl App {
         };
         // one row: which view on the left, the time range pinned to the right
         let mut period = self.setup.stats_period;
+        let mut share = false;
         ui.horizontal(|ui| {
-            kit::segmented(ui, &mut tab, &[(StatsTab::Lifetime, "Overview"), (StatsTab::Hunt, hunt_label.as_str())]);
+            kit::segmented(ui, &mut tab, &[(StatsTab::Lifetime, "Overview"), (StatsTab::Hunt, hunt_label.as_str()), (StatsTab::Month, "Month in review")]);
+            // the Share button (and, on the Overview, the time range; on
+            // Month in review, the month) flush right: last frame's width
+            let wid = egui::Id::new(("stats-right-w", tab as u8));
+            let w = ui.ctx().data(|d| d.get_temp::<f32>(wid)).unwrap_or(420.0);
+            ui.add_space((ui.available_width() - w).max(12.0));
+            let x0 = ui.cursor().min.x;
+            if tab == StatsTab::Month {
+                share = self.month_header(ui);
+            } else {
+                let can_share = tab == StatsTab::Lifetime || current.is_some();
+                let btn = egui::Button::new(egui::RichText::new("🖼  Share").size(kit::fs(12.5)));
+                if ui.add_enabled(can_share, btn).on_hover_text("Your stats as an image to copy into Discord or save").clicked() {
+                    share = true;
+                }
+            }
             if tab == StatsTab::Lifetime {
                 use super::stats_overview::StatsPeriod as P;
                 let opts = [(P::Week, "7 days"), (P::Month, "30 days"), (P::Year, "12 months"), (P::All, "All time")];
-                // last frame's width, so the switch can sit flush right
-                let wid = egui::Id::new("stats-period-w");
-                let w = ui.ctx().data(|d| d.get_temp::<f32>(wid)).unwrap_or(330.0);
-                ui.add_space((ui.available_width() - w).max(12.0));
-                let x0 = ui.cursor().min.x;
+                ui.add_space(4.0);
                 kit::segmented(ui, &mut period, &opts);
-                let used = ui.min_rect().max.x - x0;
-                if (used - w).abs() > 0.5 {
-                    ui.ctx().data_mut(|d| d.insert_temp(wid, used));
-                    ui.ctx().request_repaint();
-                }
+            }
+            let used = ui.min_rect().max.x - x0;
+            if (used - w).abs() > 0.5 {
+                ui.ctx().data_mut(|d| d.insert_temp(wid, used));
+                ui.ctx().request_repaint();
             }
         });
         self.setup.stats_tab = tab;
         self.setup.stats_period = period;
+        if share {
+            let ctx = ui.ctx().clone();
+            match tab {
+                StatsTab::Lifetime => self.open_stat_share(super::stat_share::ShareWhat::Overview, &ctx),
+                StatsTab::Hunt => self.open_stat_share(super::stat_share::ShareWhat::Hunt(super::RunRef::Current), &ctx),
+                StatsTab::Month => self.share_month(&ctx),
+            }
+        }
         ui.add_space(16.0);
         match tab {
             StatsTab::Lifetime => self.stats_overview(ui),
+            StatsTab::Month => self.stats_month(ui),
             StatsTab::Hunt => match current {
                 Some(info) => {
                     let st = info.stats.clone().unwrap_or_default();

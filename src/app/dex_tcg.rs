@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 /// The cards of a Pokémon (by National Dex number), in set order.
 pub(super) fn cards_of(dex: u32) -> Vec<&'static Card> {
-    cards::all().iter().filter(|c| c.kind == Kind::Pokemon && c.dex as u32 == dex).collect()
+    cards::all_out().into_iter().filter(|c| c.kind == Kind::Pokemon && c.dex as u32 == dex).collect()
 }
 
 impl App {

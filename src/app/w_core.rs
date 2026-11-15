@@ -786,7 +786,23 @@ impl App {
                 }
                 rows.push(Row::new(format!("Planning a {}", name(&t.species))).lead(Lead::Wiki(t.species.clone(), t.shiny)).sub(if what.is_empty() { "Your target".to_string() } else { what.join(", ") }));
             }
-            if !f.daycare.a.species.is_empty() && !f.daycare.b.species.is_empty() {
+            // the Day Care in your game, when the save's been read
+            let real: Vec<crate::breed_save::Owned> = self.setup.breed.desk.owned.iter().filter(|o| matches!(o.place, crate::breed_save::Place::DayCare(_))).cloned().collect();
+            if let (true, Some(save)) = (!real.is_empty(), self.setup.boxes.save.as_ref()) {
+                let names: Vec<String> = real.iter().map(|o| o.name()).collect();
+                let carried = save.party.iter().filter(|m| m.egg).count();
+                let mut sub = if save.egg_waiting {
+                    "In your game: an Egg is waiting".to_string()
+                } else if real.len() == 2 {
+                    format!("In your game: next Egg check in ~{} steps", 255u32.saturating_sub(save.daycare_steps as u32).max(1))
+                } else {
+                    "In your game: one more Pokémon to make Eggs".to_string()
+                };
+                if carried > 0 {
+                    sub.push_str(&format!(" · {carried} Egg{} on you", if carried == 1 { "" } else { "s" }));
+                }
+                rows.push(Row::new(format!("Day Care: {}", names.join(" × "))).lead(Lead::Wiki(real[0].parent.species.clone(), real[0].shiny)).sub(sub));
+            } else if !f.daycare.a.species.is_empty() && !f.daycare.b.species.is_empty() {
                 let fam = crate::breed::family_pair(&w, &f.daycare.a, &f.daycare.b);
                 let mine: Vec<&crate::breed::Hatch> = f.log.iter().filter(|h| h.pair == fam).collect();
                 let goal = if f.daycare.goal_set { f.daycare.goal.clone() } else { crate::breed::Goal::from_parents(&f.daycare.a, &f.daycare.b) };
@@ -802,8 +818,57 @@ impl App {
                 rows.push(Row::new(format!("Day Care: {} × {}", name(&f.daycare.a.species), name(&f.daycare.b.species))).lead(Lead::Wiki(f.daycare.a.species.clone(), false)).sub(sub));
             }
         }
-        let c = self.f_list(ui, &b, Head { icon: "🐣", col: kit::C_PINK, title: "Breeding", link: Some("Open ›") }, &rows, "Put two Pokémon in the Day Care in Breeding and it shows here.");
+        let c = self.f_list(ui, &b, Head { icon: "🐣", col: kit::C_PINK, title: "Breeding", link: Some("Open ›") }, &rows, "Put two Pokémon in the Day Care (in your game, or in Breeding) and it shows here.");
         if c.link || c.item.is_some() || c.more {
+            self.setup.breed.view = super::breed_home::BreedView::Desk;
+            self.go_to(Tab::Breed);
+        }
+    }
+
+    /// The breeding goal: what you want, your best baby so far, and your
+    /// best pair's odds (from your save).
+    pub(super) fn f_breedgoal(&mut self, ui: &mut egui::Ui) {
+        let b = wbox(ui, "breedgoal");
+        let mut rows: Vec<Row> = Vec::new();
+        let mut empty = "Put two Pokémon in the Day Care in your game, or pick a goal in Breeding → Plan.";
+        if let Some(w) = self.wiki.clone() {
+            self.desk_refresh(&w);
+            let d = &self.setup.breed.desk;
+            if self.setup.boxes.save.is_none() {
+                empty = "Your save shows up here once the game's been played (Breeding reads it, never writes it).";
+            } else if !d.baby.is_empty() {
+                let (baby, goal) = (d.baby.clone(), d.goal.clone());
+                let best = d.picks.first().map(|p| p.chance);
+                let fam = crate::breed::baby_of(&w, &baby);
+                let log = self.setup.breed.file().log.clone();
+                let mine: Vec<&crate::breed::Hatch> = log.iter().filter(|h| crate::breed::baby_of(&w, &h.species) == fam).collect();
+                let name = w.mon(&baby).map(|m| m.name.clone()).unwrap_or_else(|| baby.clone());
+                let sub = match best {
+                    Some(p) if p > 0.0 => format!("{} with your best pair", super::breed_desk::odds(p)),
+                    _ => "None of your Pokémon can make it yet".into(),
+                };
+                rows.push(Row::new(format!("{name} · {}", super::breed_desk::goal_text(&goal))).lead(Lead::Wiki(baby.clone(), false)).sub(sub));
+                if !super::breed_desk::goal_empty(&goal) {
+                    let wanted = goal.ivs.iter().filter(|x| **x).count() + goal.nature.is_some() as usize;
+                    let best_h = mine.iter().max_by_key(|h| (h.to_parent().goal_score(&goal), h.when));
+                    if let Some(h) = best_h {
+                        let score = h.to_parent().goal_score(&goal);
+                        let hit = h.hits(&goal);
+                        rows.push(
+                            Row::new(if hit { "Got it!".to_string() } else { format!("Best so far: {score} of {wanted}") })
+                                .lead(Lead::Wiki(h.species.clone(), h.shiny))
+                                .sub(format!("{} · {}", h.nature.clone().unwrap_or_default(), super::home::ago(h.when)))
+                                .bar(if wanted > 0 { score as f32 / wanted as f32 } else { 1.0 }, if hit { theme::GREEN } else { kit::C_PINK }),
+                        );
+                    }
+                }
+                let shinies = mine.iter().filter(|h| h.shiny).count();
+                rows.push(Row::new(format!("{} hatched", mine.len())).lead(Lead::Icon("🐣".into(), kit::C_GOLD)).sub(if shinies > 0 { format!("✨ {shinies} shiny") } else { "No shinies yet".into() }));
+            }
+        }
+        let c = self.f_list(ui, &b, Head { icon: "🎯", col: kit::C_PINK, title: "Breeding goal", link: Some("Desk ›") }, &rows, empty);
+        if c.link || c.item.is_some() || c.more {
+            self.setup.breed.view = super::breed_home::BreedView::Desk;
             self.go_to(Tab::Breed);
         }
     }

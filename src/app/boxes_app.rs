@@ -47,10 +47,10 @@ fn stat_order(v: [u8; 6]) -> [u8; 6] {
 
 impl App {
     fn boxes_on(&self) -> bool {
-        crate::apps::live(AppId::Boxes) || crate::apps::live(AppId::Nuzlocke)
+        crate::apps::live(AppId::Boxes) || crate::apps::live(AppId::Nuzlocke) || crate::apps::live(AppId::Breed)
     }
 
-    fn game_root(&self) -> std::path::PathBuf {
+    pub(super) fn game_root(&self) -> std::path::PathBuf {
         crate::gamemap::game_dir(self.cfg.game_dir_setting().as_deref())
     }
 
@@ -60,7 +60,9 @@ impl App {
     pub(super) fn boxes_tick(&mut self) {
         let eggs = self.cfg.overlay.eggs || self.cfg.hunt_method == crate::config::HuntMethod::Masuda;
         let dex = self.setup.pokedex.game || self.cfg.overlay.balls;
-        if !self.boxes_on() && !self.cfg.show_party && !eggs && !dex && !self.setup.quick.open {
+        // the Team Planner's checklist ticks itself off from the save
+        let team = crate::apps::live(AppId::Team);
+        if !self.boxes_on() && !self.cfg.show_party && !eggs && !dex && !self.setup.quick.open && !team {
             return;
         }
         let st = &self.setup.boxes;
@@ -89,6 +91,7 @@ impl App {
                 self.party_save_read(ms);
                 self.setup.boxes.save_ms = ms;
                 self.setup.boxes.error = None;
+                self.breed_sync(self.wiki.clone());
             }
             Err(e) => self.setup.boxes.error = Some(e),
         }
@@ -178,7 +181,26 @@ impl App {
         let s = self.setup.boxes.save.as_ref().expect("checked");
         let n: usize = s.boxes.iter().map(|b| b.slots.iter().flatten().count()).sum();
         let when = if self.setup.boxes.save_ms > 0 { crate::stats::fmt_clock(self.setup.boxes.save_ms / 1000) } else { String::new() };
-        ui.label(RichText::new(format!("{} · {n} Pokémon in {} boxes · game last saved {when}", s.trainer, s.boxes.len())).size(11.5).color(MUTED()));
+        let line = format!("{} · {n} Pokémon in {} boxes · game last saved {when}", s.trainer, s.boxes.len());
+        let has_party = s.party.iter().any(|m| !m.egg);
+        let mut party_team = false;
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(line).size(11.5).color(MUTED()));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if !super::app_modal::have(AppId::Team) {
+                    super::app_modal::lock_btn(ui, AppId::Team, "Party to the Team Planner");
+                } else if ui
+                    .add_enabled(has_party, egui::Button::new("👥  Party to the Team Planner").fill(kit::btn_fill()))
+                    .on_hover_text("Your party as a new team, with every Pokémon's real build, to plan with. It's a copy: your game isn't changed, and nothing goes back into it.")
+                    .clicked()
+                {
+                    party_team = true;
+                }
+            });
+        });
+        if party_team {
+            self.boxes_party_to_team();
+        }
         ui.add_space(16.0);
         self.boxes_overview(ui);
     }
@@ -455,23 +477,78 @@ impl App {
             ui.label(RichText::new("As of the game's last save.").size(11.5).color(MUTED()));
             return;
         }
-        // ── actions
+        // ── actions: this Pokémon in the other apps (copies; the game is
+        // never changed)
         ui.add_space(12.0);
         let mut open_dex = None;
         let mut log_it = false;
+        let mut to_team: Option<Option<u64>> = None;
+        let (mut to_calc, mut to_breed, mut to_hunt) = (false, false, false);
+        let teams: Vec<(u64, String, usize)> = if super::app_modal::have(AppId::Team) { self.team_choices().into_iter().filter(|t| t.2 < 6).collect() } else { Vec::new() };
+        let known = crate::breed_save::species_id(m.species).is_some();
+        let btn = |label: &str| egui::Button::new(label).fill(kit::btn_fill());
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
             if let Some(wm) = &wm {
-                if ui.add(egui::Button::new("📖  Pokédex page").fill(kit::btn_fill())).on_hover_text(format!("Open {} in the Pokédex", wm.name)).clicked() {
+                if ui.add(btn("📖  Pokédex")).on_hover_text(format!("Open {} in the Pokédex", wm.name)).clicked() {
                     open_dex = Some(wm.id.clone());
                 }
             }
-            if m.shiny() && sp.is_some() && ui.add(egui::Button::new("✨  Log shiny").fill(kit::btn_fill())).on_hover_text("Opens Log a shiny with its details filled in from your save").clicked() {
+            if known {
+                if !super::app_modal::have(AppId::Team) {
+                    super::app_modal::lock_btn(ui, AppId::Team, "Add to a team");
+                } else {
+                    ui.menu_button("👥  Add to a team", |ui| {
+                        ui.label(RichText::new("With its nature, IVs, EVs, Ability, item and moves").size(11.0).color(MUTED()));
+                        if ui.button("➕  A new team").clicked() {
+                            to_team = Some(None);
+                            ui.close_menu();
+                        }
+                        for (id, name, n) in &teams {
+                            let name = if name.trim().is_empty() { "Untitled team" } else { name.trim() };
+                            if ui.button(format!("{name}  ·  {n}/6")).clicked() {
+                                to_team = Some(Some(*id));
+                                ui.close_menu();
+                            }
+                        }
+                    })
+                    .response
+                    .on_hover_text("A copy in the Team Planner to plan with: your game isn't changed");
+                }
+                if !super::app_modal::have(AppId::Calc) {
+                    super::app_modal::lock_btn(ui, AppId::Calc, "Damage calc");
+                } else if ui.add(btn("⚔  Damage calc")).on_hover_text("On your side of the Damage Calculator, with its real stats and moves").clicked() {
+                    to_calc = true;
+                }
+                if !super::app_modal::have(AppId::Breed) {
+                    super::app_modal::lock_btn(ui, AppId::Breed, "Breed one");
+                } else if ui.add(btn("Breed one")).on_hover_text("Sets the Breeding Planner's goal to its species, nature and Ability").clicked() {
+                    to_breed = true;
+                }
+            }
+            if !m.shiny() && sp.is_some() && ui.add(btn("🎯  Hunt a shiny")).on_hover_text("Opens the New hunt guide with it picked. Nothing changes until you start the hunt there.").clicked() {
+                to_hunt = true;
+            }
+            if m.shiny() && sp.is_some() && ui.add(btn("✨  Log shiny")).on_hover_text("Opens Log a shiny with its details filled in from your save").clicked() {
                 log_it = true;
             }
         });
         if let Some(id) = open_dex {
             self.open_dex_entry(&id);
+        }
+        if let Some(t) = to_team {
+            self.boxes_to_team(&m, t);
+        }
+        if to_calc {
+            self.boxes_to_calc(&m);
+        }
+        if to_breed {
+            self.boxes_to_breed(&m);
+        }
+        if to_hunt {
+            if let Some(s) = &sp {
+                self.boxes_to_hunt(&s.slug.clone());
+            }
         }
         if log_it {
             if let Some(s) = sp {
@@ -683,6 +760,122 @@ impl App {
         if let Some(id) = open {
             self.open_dex_entry(&id);
         }
+    }
+
+    /// A Pokémon from the save as a Team Planner member: its species,
+    /// level, nature, IVs, EVs, Ability, item, moves, nickname, gender and
+    /// shininess. (A copy: nothing goes back to the game.)
+    pub(super) fn boxes_member(&self, m: &Mon, text: &GameText, world: crate::battle::World) -> Option<crate::teams::Member> {
+        let id = crate::breed_save::species_id(m.species)?;
+        let name = crate::battle::data().species(&id)?.name.clone();
+        let mut t = crate::teams::Member::new(&name, world);
+        if let Some(l) = self.box_level(m) {
+            t.level = l.max(1);
+        }
+        t.nature = gamesave::NATURES[m.nature() as usize].to_string();
+        t.ivs = stat_order(m.ivs).map(|v| v as u16);
+        t.evs = stat_order(m.evs).map(|v| v as u16);
+        let moves: Vec<String> = m.moves.iter().filter(|x| **x != 0 && (**x as usize) < text.moves.len()).map(|x| text.move_name(*x)).collect();
+        if !moves.is_empty() {
+            t.moves = moves;
+        }
+        if (m.ability as usize) < text.abilities.len() {
+            t.ability = text.ability_name(m.ability);
+        }
+        t.item = if m.item != 0 && (m.item as usize) < text.items.len() { text.item_name(m.item) } else { String::new() };
+        if m.nicknamed {
+            t.nickname = m.nickname.clone();
+        }
+        t.gender = if m.genderless { None } else if m.female { Some('F') } else { Some('M') };
+        t.shiny = m.shiny();
+        t.happiness = m.friendship;
+        // its checklist follows this very Pokémon
+        t.game_pick = crate::teams::GamePick::Pid(m.pid);
+        Some(t)
+    }
+
+    pub(super) fn team_world(&self) -> crate::battle::World {
+        if self.cfg.info_modern {
+            crate::battle::World::Modern
+        } else {
+            crate::battle::World::Platinum
+        }
+    }
+
+    /// Your party as a new team in the Team Planner, to plan with (your
+    /// game isn't changed, and the team can't go back into it).
+    fn boxes_party_to_team(&mut self) {
+        let Some(save) = self.setup.boxes.save.clone() else { return };
+        let text = self.setup.boxes.text.clone().unwrap_or_default();
+        let world = self.team_world();
+        let members: Vec<crate::teams::Member> = save.party.iter().filter(|m| !m.egg).filter_map(|m| self.boxes_member(m, &text, world)).collect();
+        if members.is_empty() {
+            return;
+        }
+        let id = self.setup.team.new_id();
+        let day = crate::stats::fmt_day_short(crate::stats::local_day(crate::stats::now_unix()));
+        let who = if save.trainer.trim().is_empty() { "My".to_string() } else { format!("{}'s", save.trainer.trim()) };
+        let mut t = crate::teams::Team::new(id, &format!("{who} party · {day}"), world);
+        if members.iter().any(|m| crate::battle::data().species(&m.species).is_some_and(|s| s.modern_only())) {
+            t.world = crate::battle::World::Modern;
+        }
+        t.members = members;
+        t.notes = "Copied from your game's party (read only: changes here stay in the app).".into();
+        self.setup.team.teams().teams.push(t);
+        self.setup.team.touch();
+        self.go_to(super::Tab::Team);
+        self.setup.team.open = Some(id);
+        self.setup.team.slot = 0;
+    }
+
+    /// This Pokémon into a team (`team`: one with room, else a new team).
+    fn boxes_to_team(&mut self, m: &Mon, team: Option<u64>) {
+        let text = self.setup.boxes.text.clone().unwrap_or_default();
+        let world = self.team_world();
+        let Some(member) = self.boxes_member(m, &text, world) else { return };
+        self.team_add_from(&member.species, team);
+        let Some(id) = self.setup.team.open else { return };
+        let slot = self.setup.team.slot;
+        if let Some(t) = self.setup.team.teams().teams.iter_mut().find(|t| t.id == id).and_then(|t| t.members.get_mut(slot)) {
+            *t = member;
+        }
+        self.setup.team.touch();
+    }
+
+    /// This Pokémon on your side of the Damage Calculator.
+    fn boxes_to_calc(&mut self, m: &Mon) {
+        let text = self.setup.boxes.text.clone().unwrap_or_default();
+        let world = self.team_world();
+        let Some(member) = self.boxes_member(m, &text, world) else { return };
+        let c = &mut self.setup.team.calc;
+        c.own = None;
+        c.own_set = true;
+        c.world = world;
+        // the no-team "team" (id 0): it keeps the sides it's given
+        c.team = Some(0);
+        c.left = Some(super::team_calc::Poke::new(member, None));
+        c.right = None;
+        self.go_to(super::Tab::Calc);
+    }
+
+    /// The Breeding Planner's goal: one like this (its species, nature and
+    /// Ability), on the Plan page.
+    fn boxes_to_breed(&mut self, m: &Mon) {
+        let Some(id) = crate::breed_save::species_id(m.species) else { return };
+        let text = self.setup.boxes.text.clone().unwrap_or_default();
+        let ability = ((m.ability as usize) < text.abilities.len()).then(|| text.ability_name(m.ability));
+        let f = self.setup.breed.file();
+        f.target = crate::breed_plan::Target { species: id, nature: Some(gamesave::NATURES[m.nature() as usize].to_string()), ability, ..Default::default() };
+        self.setup.breed.touch();
+        self.setup.breed.view = super::breed_home::BreedView::Plan;
+        self.go_to(super::Tab::Breed);
+        self.setup.scroll_top = true;
+    }
+
+    /// The New hunt guide, with this Pokémon picked (nothing changes until
+    /// you start the hunt there).
+    fn boxes_to_hunt(&mut self, slug: &str) {
+        self.open_hunt_wizard_for(slug);
     }
 
     fn boxes_log_shiny(&mut self, m: &Mon, sp: &crate::species::Species, level: Option<u8>, text: &GameText) {

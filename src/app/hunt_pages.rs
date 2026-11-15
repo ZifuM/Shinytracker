@@ -319,6 +319,10 @@ impl App {
                 if primary(ui, "  🖼  Make share image  ").clicked() {
                     self.open_share(run, Some(run));
                 }
+                if ui.button("  📊  Share stats  ").on_hover_text("This hunt's stats as an infographic: Poster, Dashboard or Wrapped").clicked() {
+                    let ctx = ui.ctx().clone();
+                    self.open_stat_share(super::stat_share::ShareWhat::Hunt(run), &ctx);
+                }
                 if super::journal_add::add_button(ui, self.has_app(crate::apps::AppId::Journal)) {
                     if let Some(c) = self.run_clip(run, info.caught) {
                         self.journal_add(c);

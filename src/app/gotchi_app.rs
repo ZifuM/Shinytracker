@@ -748,7 +748,7 @@ impl App {
         }
         if unlocked {
             self.setup.gotchi.say("New frame unlocked!");
-            self.play(crate::sound::Sfx::Achievement);
+            self.play_popup(crate::sound::Sfx::Achievement);
         }
         self.setup.gotchi.touch();
     }

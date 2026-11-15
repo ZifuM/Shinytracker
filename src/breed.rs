@@ -852,6 +852,11 @@ pub struct Hatch {
     pub pair: String,
     /// Kept as a breeder (its id).
     pub kept: Option<u64>,
+    /// Logged by itself from your save: the Pokémon's own number (0 for
+    /// one you logged by hand).
+    pub pid: u32,
+    /// The world it hatched in (its name), when known.
+    pub world: String,
 }
 
 /// Which pair an Egg came from: "GARCHOMP+DITTO" (in a fixed order).
@@ -967,6 +972,14 @@ pub struct BreedFile {
     /// The egg move finder: for which Pokémon, which move.
     pub finder_species: String,
     pub finder_move: String,
+    /// Eggs your save has had (their own numbers), so each can be logged
+    /// by itself when it hatches.
+    pub egg_pids: Vec<u32>,
+    /// Whose save `egg_pids` are from (`breed_save::save_key`); "" before
+    /// worlds were told apart.
+    pub egg_save: String,
+    /// Your other worlds' Eggs, kept while you play this one.
+    pub other_eggs: std::collections::BTreeMap<String, Vec<u32>>,
 }
 
 impl BreedFile {

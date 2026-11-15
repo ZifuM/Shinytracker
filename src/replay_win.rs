@@ -29,7 +29,7 @@ use windows::Win32::Graphics::Direct3D11::{
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
 use windows::Win32::Graphics::Dxgi::IDXGIDevice;
-use windows::Win32::Graphics::Gdi::ClientToScreen;
+use windows::Win32::Graphics::Gdi::{ClientToScreen, GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
 use windows::Win32::Media::MediaFoundation::*;
 use windows::Win32::System::Com::StructuredStorage::CreateStreamOnHGlobal;
 use windows::Win32::System::Com::{CoInitializeEx, IStream, COINIT_MULTITHREADED, STATFLAG_NONAME, STATSTG, STREAM_SEEK_SET};
@@ -229,6 +229,25 @@ fn client_box(hwnd: HWND) -> Option<(u32, u32, u32, u32)> {
             return None;
         }
         Some((x as u32, y as u32, cr.right as u32, cr.bottom as u32))
+    }
+}
+
+/// Where the game's picture (its top left corner) is on the screen it's
+/// on, counted from that screen's own top left, in pixels. For the shiny
+/// ★ alert: its name boxes are drawn on the screen, and this turns them
+/// into places in the game window's own picture.
+pub fn game_on_its_screen() -> Option<(i32, i32)> {
+    let hwnd = HWND(crate::topmost::game_hwnd()? as *mut core::ffi::c_void);
+    unsafe {
+        let mut tl = POINT { x: 0, y: 0 };
+        if !ClientToScreen(hwnd, &mut tl).as_bool() {
+            return None;
+        }
+        let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+        if !GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mut mi).as_bool() {
+            return None;
+        }
+        Some((tl.x - mi.rcMonitor.left, tl.y - mi.rcMonitor.top))
     }
 }
 

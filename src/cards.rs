@@ -14,7 +14,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 /// XP for one booster pack.
-pub const XP_PER_PACK: u64 = 250;
+pub const XP_PER_PACK: u64 = 400;
 /// XP per encounter the game logs, and the extras.
 pub const XP_ENCOUNTER: u64 = 1;
 pub const XP_RARE_GRASS: u64 = 1;
@@ -35,12 +35,62 @@ pub struct Set {
     pub col: [u8; 3],
     /// The booster pack art (each pack gets one of these at random).
     pub packs: &'static [&'static str],
+    /// Basic Energy in each pack (the rest of the 7 are commons): the early
+    /// expansions had none.
+    pub energy: u8,
+    /// When it comes out in the app (unix seconds; 0 = it's out).
+    pub release: u64,
 }
 
-pub const SETS: [Set; 2] = [
-    Set { id: "base1", name: "Base Set", year: 1999, mascot: 6, col: [232, 92, 52], packs: &["base-set-pack-0", "base-set-pack-1", "base-set-pack-2"] },
-    Set { id: "base4", name: "Base Set 2", year: 2000, mascot: 9, col: [62, 128, 232], packs: &["base-set-2-pack-0", "base-set-2-pack-1", "base-set-2-pack-2", "base-set-2-pack-3"] },
+impl Set {
+    /// Out by `now` (unix seconds).
+    pub fn out_at(&self, now: u64) -> bool {
+        self.release <= now
+    }
+    pub fn out(&self) -> bool {
+        self.out_at(now())
+    }
+}
+
+fn now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// Every set, in the order they come out in the app (new ones go on the end:
+/// trade codes use the place in this list). One new set every Monday at
+/// 07:00 UTC (6 pm in Sydney), in the order the real ones came out.
+pub const SETS: [Set; 7] = [
+    Set { id: "base1", name: "Base Set", year: 1999, mascot: 6, col: [232, 92, 52], packs: &["base-set-pack-0", "base-set-pack-1", "base-set-pack-2"], energy: 2, release: 0 },
+    Set { id: "base4", name: "Base Set 2", year: 2000, mascot: 9, col: [62, 128, 232], packs: &["base-set-2-pack-0", "base-set-2-pack-1", "base-set-2-pack-2", "base-set-2-pack-3"], energy: 2, release: 0 },
+    // Mon 16 Nov 2026
+    Set { id: "base2", name: "Jungle", year: 1999, mascot: 123, col: [76, 160, 72], packs: &["jungle-pack-0", "jungle-pack-1", "jungle-pack-2"], energy: 0, release: 1_794_812_400 },
+    // Mon 23 Nov 2026
+    Set { id: "base3", name: "Fossil", year: 1999, mascot: 145, col: [206, 170, 82], packs: &["fossil-pack-0", "fossil-pack-1", "fossil-pack-2"], energy: 0, release: 1_795_417_200 },
+    // Mon 30 Nov 2026
+    Set { id: "base5", name: "Team Rocket", year: 2000, mascot: 52, col: [120, 62, 142], packs: &["team-rocket-pack-0", "team-rocket-pack-1"], energy: 0, release: 1_796_022_000 },
+    // Mon 7 Dec 2026
+    Set { id: "gym1", name: "Gym Heroes", year: 2000, mascot: 95, col: [48, 156, 168], packs: &["gym-heroes-pack-0", "gym-heroes-pack-1", "gym-heroes-pack-2", "gym-heroes-pack-3"], energy: 2, release: 1_796_626_800 },
+    // Mon 14 Dec 2026
+    Set { id: "gym2", name: "Gym Challenge", year: 2000, mascot: 150, col: [146, 84, 196], packs: &["gym-challenge-pack-0", "gym-challenge-pack-1", "gym-challenge-pack-2", "gym-challenge-pack-3"], energy: 2, release: 1_797_231_600 },
 ];
+
+/// The sets out now, in order.
+pub fn sets_out() -> Vec<&'static Set> {
+    let now = now();
+    SETS.iter().filter(|s| s.out_at(now)).collect()
+}
+
+/// The sets still to come, soonest first.
+pub fn sets_coming() -> Vec<&'static Set> {
+    let now = now();
+    SETS.iter().filter(|s| !s.out_at(now)).collect()
+}
+
+/// Every card of the sets out now.
+pub fn all_out() -> Vec<&'static Card> {
+    let now = now();
+    all().iter().filter(|c| set(c.set).is_some_and(|s| s.out_at(now))).collect()
+}
 
 /// Where a pack art picture downloads from.
 pub fn pack_art_url(name: &str) -> String {
@@ -50,8 +100,11 @@ pub fn pack_art_url(name: &str) -> String {
 /// The order the cards sit in the pack, front to back: the commons and
 /// uncommons, the rare, then the 2 Energy at the back. Moving the back two
 /// to the front (the usual way to open one) leaves the rare for last.
+/// A set without Energy (Jungle, Fossil, Team Rocket) has the rare at the
+/// back already.
 pub fn packed_order(reveal: &[String]) -> Vec<String> {
-    if reveal.len() < 3 {
+    let energy = reveal.iter().take(2).filter(|id| by_id(id).is_some_and(|c| c.rarity == Rarity::Energy)).count();
+    if reveal.len() < 3 || energy < 2 {
         return reveal.to_vec();
     }
     let mut v = reveal[2..].to_vec();
@@ -61,6 +114,10 @@ pub fn packed_order(reveal: &[String]) -> Vec<String> {
 
 pub fn set(id: &str) -> Option<&'static Set> {
     SETS.iter().find(|s| s.id == id)
+}
+
+fn set_of(id: &str) -> Option<&'static Set> {
+    set(id)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
@@ -218,14 +275,70 @@ impl Rng {
     }
 }
 
-/// `k` different picks from `from`.
+/// How many times a card was printed on its sheet, against the others of
+/// its rarity (8 = the usual). From the English rarity guide on Elite
+/// Fourum (pack-opening data and photos of the uncut sheets):
+/// * Base Set: Charizard, Blastoise and Venusaur were printed once fewer on
+///   the holo sheet (7 against 8); Machamp was never in booster packs at all
+///   (it came in the starter deck), so here it's the rarest pull there is.
+/// * Base Set and Base Set 2 Basic Energy: Fire and Fighting rarest, Grass
+///   and Water in between, Lightning and Psychic most common.
+/// * Jungle, Fossil, Team Rocket (Dark Raichu included) and the Gym sets: no
+///   differences beyond chance.
+pub fn weight(c: &Card) -> u32 {
+    match (c.set, c.num) {
+        ("base1", 8) => 1,
+        ("base1", 2 | 4 | 15) => 7,
+        ("base1" | "base4", _) if c.rarity == Rarity::Energy => match c.name.as_str() {
+            "Fire Energy" | "Fighting Energy" => 6,
+            "Grass Energy" | "Water Energy" => 8,
+            _ => 10,
+        },
+        _ => 8,
+    }
+}
+
+/// `k` different picks from `from`, each as likely as its `weight`.
 fn pick<'a>(rng: &mut Rng, from: &[&'a Card], k: usize) -> Vec<&'a Card> {
     let mut pool: Vec<&Card> = from.to_vec();
     let mut out = Vec::new();
     for _ in 0..k.min(pool.len()) {
-        out.push(pool.swap_remove(rng.below(pool.len())));
+        let total: u32 = pool.iter().map(|c| weight(c)).sum();
+        let mut r = rng.below(total.max(1) as usize) as u32;
+        let i = pool.iter().position(|c| {
+            let w = weight(c);
+            if r < w {
+                true
+            } else {
+                r -= w;
+                false
+            }
+        });
+        out.push(pool.swap_remove(i.unwrap_or(0)));
     }
     out
+}
+
+/// About how many packs of its set it takes to pull this card once.
+pub fn packs_per(c: &Card) -> Option<f64> {
+    let s = set(c.set)?;
+    let cards = of_set(c.set);
+    let pool: Vec<&Card> = cards.iter().copied().filter(|x| x.rarity == c.rarity).collect();
+    let total: u32 = pool.iter().map(|x| weight(x)).sum();
+    if total == 0 {
+        return None;
+    }
+    let share = weight(c) as f64 / total as f64;
+    let has_energy = cards.iter().any(|x| x.rarity == Rarity::Energy);
+    let n_energy = if has_energy { s.energy as f64 } else { 0.0 };
+    let chance = match c.rarity {
+        Rarity::Holo => share / 3.0,
+        Rarity::Rare => share * 2.0 / 3.0,
+        Rarity::Uncommon => 1.0 - (1.0 - share).powf(3.0),
+        Rarity::Common => 1.0 - (1.0 - share).powf(7.0 - n_energy),
+        Rarity::Energy => 1.0 - (1.0 - share).powf(n_energy),
+    };
+    (chance > 0.0).then(|| 1.0 / chance)
 }
 
 /// Open a booster of `set`: 2 Energy, 5 commons, 3 uncommons, then the rare
@@ -235,12 +348,11 @@ pub fn open_pack(set: &str, rng: &mut Rng) -> Vec<String> {
     let by = |r: Rarity| -> Vec<&Card> { cards.iter().copied().filter(|c| c.rarity == r).collect() };
     let mut out: Vec<&Card> = Vec::new();
     let energy = by(Rarity::Energy);
-    for _ in 0..2 {
-        if !energy.is_empty() {
-            out.push(energy[rng.below(energy.len())]);
-        }
+    let n_energy = if energy.is_empty() { 0 } else { set_of(set).map_or(2, |s| s.energy as usize) };
+    for _ in 0..n_energy {
+        out.extend(pick(rng, &energy, 1));
     }
-    out.extend(pick(rng, &by(Rarity::Common), 5));
+    out.extend(pick(rng, &by(Rarity::Common), 7 - n_energy));
     out.extend(pick(rng, &by(Rarity::Uncommon), 3));
     let holo = rng.below(3) == 0;
     let rares = by(if holo { Rarity::Holo } else { Rarity::Rare });
@@ -335,11 +447,12 @@ impl Tally {
 pub fn daily_missions(day: i64) -> Vec<Mission> {
     let m = |kind, goal, xp| Mission { kind, goal, xp, done: false };
     let pool = [
-        [m(MKind::Encounters, 300, 100), m(MKind::Species, 8, 80), m(MKind::OpenPacks, 1, 40)],
-        [m(MKind::Encounters, 600, 150), m(MKind::Minutes, 30, 80), m(MKind::RareGrass, 25, 80)],
-        [m(MKind::Encounters, 1000, 200), m(MKind::Species, 12, 100), m(MKind::OpenPacks, 2, 60)],
-        [m(MKind::Minutes, 60, 120), m(MKind::RareGrass, 50, 100), m(MKind::Encounters, 400, 120)],
-        [m(MKind::Encounters, 800, 180), m(MKind::Species, 6, 60), m(MKind::Minutes, 45, 100)],
+        // each day's three add up to a pack and a half (600 XP)
+        [m(MKind::Encounters, 300, 270), m(MKind::Species, 8, 210), m(MKind::OpenPacks, 1, 120)],
+        [m(MKind::Encounters, 600, 300), m(MKind::Minutes, 30, 150), m(MKind::RareGrass, 25, 150)],
+        [m(MKind::Encounters, 1000, 330), m(MKind::Species, 12, 165), m(MKind::OpenPacks, 2, 105)],
+        [m(MKind::Minutes, 60, 210), m(MKind::RareGrass, 50, 180), m(MKind::Encounters, 400, 210)],
+        [m(MKind::Encounters, 800, 315), m(MKind::Species, 6, 105), m(MKind::Minutes, 45, 180)],
     ];
     pool[day.rem_euclid(pool.len() as i64) as usize].to_vec()
 }
@@ -348,9 +461,9 @@ pub fn daily_missions(day: i64) -> Vec<Mission> {
 pub fn weekly_missions(week: i64) -> Vec<Mission> {
     let m = |kind, goal, xp| Mission { kind, goal, xp, done: false };
     let pool = [
-        [m(MKind::Encounters, 5000, 600), m(MKind::Shiny, 1, 750)],
-        [m(MKind::Species, 30, 500), m(MKind::OpenPacks, 10, 400)],
-        [m(MKind::Minutes, 300, 600), m(MKind::RareGrass, 300, 500)],
+        [m(MKind::Encounters, 5000, 960), m(MKind::Shiny, 1, 1200)],
+        [m(MKind::Species, 30, 800), m(MKind::OpenPacks, 10, 640)],
+        [m(MKind::Minutes, 300, 960), m(MKind::RareGrass, 300, 800)],
     ];
     pool[(week / 7).rem_euclid(pool.len() as i64) as usize].to_vec()
 }
@@ -423,6 +536,12 @@ pub struct CardFile {
     /// Battle pass pack rewards already put in (by reward id), so a pack
     /// reward can only ever be added once.
     pub pass_packs: Vec<String>,
+    /// Sets still to come: tell me when it's out, and download its art
+    /// then (by set id).
+    pub notify: Vec<String>,
+    pub auto_get: Vec<String>,
+    /// Sets whose coming out has been seen to (told, downloaded).
+    pub seen_out: Vec<String>,
 }
 
 /// Something that earned XP (shown on the bar for a moment).
@@ -569,7 +688,7 @@ impl CardFile {
     /// Open one pack of `set`. Returns the cards (in reveal order) and
     /// which of them are new to the collection.
     pub fn open(&mut self, set: &str, rng: &mut Rng, today: i64, now: u64) -> Option<(Vec<String>, Vec<bool>, Vec<Gain>)> {
-        if self.packs == 0 || crate::cards::set(set).is_none() {
+        if self.packs == 0 || !crate::cards::set(set).is_some_and(|s| s.out_at(now)) {
             return None;
         }
         self.roll_over(today);
@@ -687,6 +806,70 @@ mod tests {
         let mut moved = packed[9..].to_vec();
         moved.extend_from_slice(&packed[..9]);
         assert_eq!(moved, reveal);
+    }
+
+    #[test]
+    fn daily_missions_make_a_pack_and_rarer_cards_are_rarer() {
+        for d in 0..5 {
+            let xp: u64 = daily_missions(d).iter().map(|m| m.xp).sum();
+            assert_eq!(xp, XP_PER_PACK * 3 / 2, "day {d}: a pack and a half");
+        }
+        let card = |id: &str| by_id(id).unwrap();
+        let zard = packs_per(card("base1-4")).unwrap();
+        let chansey = packs_per(card("base1-3")).unwrap();
+        let machamp = packs_per(card("base1-8")).unwrap();
+        assert!(zard > chansey && machamp > zard * 5.0, "{zard} {chansey} {machamp}");
+        // Jungle's holos are all alike
+        assert_eq!(packs_per(card("base2-1")).map(|x| x.round()), packs_per(card("base2-16")).map(|x| x.round()));
+        // and it shows in packs
+        let mut rng = Rng::new(5);
+        let (mut z, mut c, mut m) = (0, 0, 0);
+        for _ in 0..60_000 {
+            for id in open_pack("base1", &mut rng) {
+                match id.as_str() {
+                    "base1-4" => z += 1,
+                    "base1-3" => c += 1,
+                    "base1-8" => m += 1,
+                    _ => {}
+                }
+            }
+        }
+        assert!(c > z && z > m * 4, "chansey {c} charizard {z} machamp {m}");
+    }
+
+    #[test]
+    fn the_new_sets_and_their_packs() {
+        assert_eq!(of_set("base2").len(), 64);
+        assert_eq!(of_set("base3").len(), 62);
+        assert_eq!(of_set("base5").len(), 83);
+        assert_eq!(of_set("gym1").len(), 132);
+        assert_eq!(of_set("gym2").len(), 132);
+        // one a week, Mondays, in order
+        for w in SETS[2..].windows(2) {
+            assert_eq!(w[1].release - w[0].release, 7 * 86_400);
+        }
+        for set in ["base2", "base3", "base5", "gym1", "gym2"] {
+            let s = super::set(set).unwrap();
+            assert!(!s.packs.is_empty());
+            let mut rng = Rng::new(9);
+            for _ in 0..30 {
+                let p = open_pack(set, &mut rng);
+                assert_eq!(p.len(), PACK_SIZE, "{set}");
+                let energy = p.iter().filter(|id| by_id(id).unwrap().rarity == Rarity::Energy).count();
+                assert_eq!(energy, s.energy as usize, "{set}");
+                let rare = by_id(p.last().unwrap()).unwrap().rarity;
+                assert!(rare >= Rarity::Rare, "{set} ends on a rare");
+                // no Energy: the rare is at the back as it is
+                if s.energy == 0 {
+                    assert_eq!(packed_order(&p), p);
+                }
+            }
+        }
+        // not out yet: can't be opened
+        let mut f = CardFile { packs: 1, ..Default::default() };
+        let mut rng = Rng::new(1);
+        assert!(f.open("gym2", &mut rng, 0, SETS[6].release - 1).is_none());
+        assert!(f.open("gym2", &mut rng, 0, SETS[6].release).is_some());
     }
 
     #[test]

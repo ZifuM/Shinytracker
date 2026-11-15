@@ -5,7 +5,8 @@ use crate::capture::Capturer;
 use crate::config::CountSource;
 use crate::detect::{NameMatcher, Tracker, TrackerConfig, TrackerEvent};
 use crate::gamelog::LogTail;
-use crate::imageproc::{prepare_names, Region};
+use crate::imageproc::{prepare_names, Region, Rgba};
+use crate::star_win::{self, GameEye};
 use crate::ocr::Ocr;
 use crate::species::Species;
 use eframe::egui;
@@ -61,6 +62,43 @@ fn star_check(track: &mut StarTrack, i: usize, found: Option<(f32, f32, u32)>) -
     }
 }
 
+/// One look for the shiny ★ in the name boxes: through the game window
+/// when that (experimental) switch is on, else the screen (`screen`: a
+/// picture of it already taken this round). Some((name box, yellow
+/// pixels)) once a ★ has held still long enough.
+fn star_look(s: &WorkerSettings, capturer: &mut Capturer, eye: &mut GameEye, screen: Option<&Rgba>, track: &mut StarTrack) -> Option<(usize, u32)> {
+    let min = star_min_px(s.star_threshold);
+    if s.star_window {
+        // the game's own picture: a window on top doesn't matter
+        if let Some((pic, now)) = eye.look() {
+            let at = s.regions_at.unwrap_or(now);
+            for (i, r) in s.name_regions.iter().enumerate() {
+                let found = star_win::into_game(*r, at).and_then(|g| pic.crop(g)).and_then(|c| c.find_star(min));
+                if star_check(track, i, found) {
+                    return Some((i, found.map_or(0, |f| f.2)));
+                }
+            }
+            return None;
+        }
+        // can't see the window (minimised, or an older Windows): the screen
+    }
+    let grabbed;
+    let frame = match screen {
+        Some(f) => f,
+        None => {
+            grabbed = capturer.grab(s.monitor).ok()?;
+            &grabbed
+        }
+    };
+    for (i, r) in s.name_regions.iter().enumerate() {
+        let found = frame.crop(*r).and_then(|c| c.find_star(min));
+        if star_check(track, i, found) {
+            return Some((i, found.map_or(0, |f| f.2)));
+        }
+    }
+    None
+}
+
 /// "EEVEE" / "MR. MIME" (as the game's log writes names) → species index.
 pub(crate) fn species_by_log_name(species: &[Species], name: &str) -> Option<usize> {
     let key: String = name.chars().filter(|c| c.is_ascii_alphanumeric()).map(|c| c.to_ascii_uppercase()).collect();
@@ -75,6 +113,11 @@ pub struct WorkerSettings {
     pub tracker: TrackerConfig,
     pub interval_ms: u64,
     pub shiny_star_alert: bool,
+    /// Experimental: the ★ alert reads the game window, not the screen.
+    pub star_window: bool,
+    /// Where the game's picture was when the name boxes were drawn (None:
+    /// not known; taken as where it is now).
+    pub regions_at: Option<(i32, i32)>,
     pub star_threshold: u32,
     pub source: CountSource,
     /// Log folder picked by hand (None = the game's usual one).
@@ -165,6 +208,7 @@ fn run(
     let mut last_text = String::new();
     let mut star_done = false;
     let mut star_track: StarTrack = Vec::new();
+    let mut eye = GameEye::default();
     let clock = Instant::now();
     let mut logtail: Option<LogTail> = None;
     let mut last_log_try: Option<Instant> = None;
@@ -193,6 +237,11 @@ fn run(
             star_track.clear();
         }
         tracker.cfg = s.tracker;
+        if !(s.star_window && s.shiny_star_alert) {
+            eye.close();
+        } else {
+            eye.rest();
+        }
 
         // ── Game log: always followed (it reports the exact odds); it only
         // drives the counter when "count from the game log" is chosen.
@@ -326,20 +375,9 @@ fn run(
                         && d <= Duration::from_millis(STAR_WINDOW_MS)
                 })
             {
-                if let Ok(frame) = capturer.grab(s.monitor) {
-                    for (i, r) in s.name_regions.iter().enumerate() {
-                        let found = frame
-                            .crop(*r)
-                            .and_then(|c| c.find_star(star_min_px(s.star_threshold)));
-                        if star_check(&mut star_track, i, found) {
-                            star_done = true;
-                            send(WorkerMsg::ShinyStar {
-                                plate: i,
-                                yellow: found.map_or(0, |f| f.2),
-                            });
-                            break;
-                        }
-                    }
+                if let Some((plate, yellow)) = star_look(&s, &mut capturer, &mut eye, None, &mut star_track) {
+                    star_done = true;
+                    send(WorkerMsg::ShinyStar { plate, yellow });
                 }
             }
             send(WorkerMsg::Status(Status {
@@ -471,18 +509,9 @@ fn run(
                 .battle_age_ms(now)
                 .is_some_and(|age| (STAR_IGNORE_MS..=STAR_WINDOW_MS).contains(&age))
         {
-            for (i, r) in s.name_regions.iter().enumerate() {
-                let found = frame
-                    .crop(*r)
-                    .and_then(|c| c.find_star(star_min_px(s.star_threshold)));
-                if star_check(&mut star_track, i, found) {
-                    star_done = true;
-                    send(WorkerMsg::ShinyStar {
-                        plate: i,
-                        yellow: found.map_or(0, |f| f.2),
-                    });
-                    break;
-                }
+            if let Some((plate, yellow)) = star_look(&s, &mut capturer, &mut eye, Some(&frame), &mut star_track) {
+                star_done = true;
+                send(WorkerMsg::ShinyStar { plate, yellow });
             }
         }
 
@@ -509,14 +538,9 @@ fn run(
             if !age.is_some_and(|a| a >= STAR_IGNORE_MS) {
                 continue;
             }
-            let Ok(frame) = capturer.grab(s.monitor) else { break };
-            for (i, r) in s.name_regions.iter().enumerate() {
-                let found = frame.crop(*r).and_then(|c| c.find_star(star_min_px(s.star_threshold)));
-                if star_check(&mut star_track, i, found) {
-                    star_done = true;
-                    send(WorkerMsg::ShinyStar { plate: i, yellow: found.map_or(0, |f| f.2) });
-                    break;
-                }
+            if let Some((plate, yellow)) = star_look(&s, &mut capturer, &mut eye, None, &mut star_track) {
+                star_done = true;
+                send(WorkerMsg::ShinyStar { plate, yellow });
             }
         }
         let left = until.saturating_duration_since(Instant::now());

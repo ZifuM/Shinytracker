@@ -295,5 +295,8 @@ mod tests {
         assert!(is_newer("v0.7.3", "0.7.2.2"));
         assert!(is_newer("v0.7.3", "0.7.2"));
         assert!(!is_newer("v0.7.2.2", "0.7.3"));
+        // v0.7.4 after v0.7.3
+        assert!(is_newer("v0.7.4", "0.7.3"));
+        assert!(!is_newer("v0.7.3", "0.7.4"));
     }
 }

@@ -272,6 +272,141 @@ pub fn play_tear(seed: u32, snap: bool, volume: f32, device: &str) {
     imp::play(bytes, device);
 }
 
+/// Card sounds for opening a pack.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CardSnd {
+    /// The first card turned face up: a quick "fwip" and a snap as it lands.
+    Flip,
+    /// A card flicked off the front of the stack onto the pile.
+    Flick,
+    /// The back cards slid round to the front.
+    Slide,
+    /// The whole pack laid out: a riffle of `n` quick flicks, 50 ms apart.
+    Riffle(u8),
+}
+
+/// A tiny xorshift noise source (-1..1).
+fn noise(seed: u32) -> impl FnMut() -> f32 {
+    let mut rng = seed.wrapping_mul(2_654_435_761).wrapping_add(0x9E37_79B9) | 1;
+    move || {
+        rng ^= rng << 13;
+        rng ^= rng >> 17;
+        rng ^= rng << 5;
+        (rng as f32 / u32::MAX as f32) * 2.0 - 1.0
+    }
+}
+
+/// A band-pass biquad whose centre can move sample to sample (for sweeps).
+struct Band {
+    st: [f32; 4],
+}
+
+impl Band {
+    fn new() -> Self {
+        Band { st: [0.0; 4] }
+    }
+    fn run(&mut self, x: f32, fc: f32, q: f32) -> f32 {
+        let w = std::f32::consts::TAU * fc / TEAR_RATE as f32;
+        let alpha = w.sin() / (2.0 * q);
+        let a0 = 1.0 + alpha;
+        let (b0, b2, a1, a2) = (alpha / a0, -alpha / a0, -2.0 * w.cos() / a0, (1.0 - alpha) / a0);
+        let y = b0 * x + b2 * self.st[1] - a1 * self.st[2] - a2 * self.st[3];
+        self.st[1] = self.st[0];
+        self.st[0] = x;
+        self.st[3] = self.st[2];
+        self.st[2] = y;
+        y
+    }
+}
+
+/// Adds a card noise into `out` from `at` seconds: a crisp snap of the
+/// card's edge, a papery swish (its pitch sliding from `f0` to `f1` Hz over
+/// `len` seconds), and, with `land`, a soft tap as it lands.
+fn card_noise(out: &mut [f32], at: f32, len: f32, f0: f32, f1: f32, snap: f32, land: f32, seed: u32) {
+    let mut rand = noise(seed);
+    let rate = TEAR_RATE as f32;
+    let start = (at * rate) as usize;
+    let n = ((len + 0.05) * rate) as usize;
+    let (mut b_snap, mut b_swish, mut b_land) = (Band::new(), Band::new(), Band::new());
+    for i in 0..n {
+        let Some(o) = out.get_mut(start + i) else { break };
+        let t = i as f32 / rate;
+        let x = rand();
+        // the edge: a few ms of bright crackle
+        let e_snap = snap * (-t / 0.0025).exp();
+        // the swish: in quickly, out softly
+        let u = (t / len).min(1.0);
+        let e_swish = if t < len { (t / 0.008).min(1.0) * (1.0 - u).powf(1.6) * 0.55 } else { 0.0 };
+        let fc = f0 + (f1 - f0) * u;
+        // the landing tap
+        let tl = t - len * 0.92;
+        let e_land = if tl > 0.0 { land * (-tl / 0.006).exp() } else { 0.0 };
+        *o += b_snap.run(x * e_snap, 3_800.0, 0.7) * 1.4 + b_swish.run(x * e_swish, fc, 1.1) + b_land.run(x * e_land, 650.0, 1.3) * 1.6;
+    }
+}
+
+fn card_sound(k: CardSnd, seed: u32) -> Vec<f32> {
+    let v = (seed % 4) as f32;
+    let len = match k {
+        CardSnd::Flip => 0.2,
+        CardSnd::Flick => 0.16,
+        CardSnd::Slide => 0.42,
+        CardSnd::Riffle(n) => 0.05 * n as f32 + 0.15,
+    };
+    let mut out = vec![0f32; (len * TEAR_RATE as f32) as usize];
+    match k {
+        CardSnd::Flip => {
+            // a rising "fwip" as it turns, then the face snapping down
+            card_noise(&mut out, 0.0, 0.12, 1_300.0 + 80.0 * v, 3_300.0, 0.5, 0.0, seed);
+            card_noise(&mut out, 0.115, 0.03, 2_400.0, 2_000.0, 1.0, 0.7, seed ^ 0x55);
+        }
+        CardSnd::Flick => card_noise(&mut out, 0.0, 0.085 + 0.01 * v, 2_900.0 + 120.0 * v, 1_300.0, 1.0, 0.55, seed),
+        CardSnd::Slide => {
+            // two cards coming round, one just after the other
+            card_noise(&mut out, 0.0, 0.26, 1_700.0, 1_100.0, 0.45, 0.5, seed);
+            card_noise(&mut out, 0.1, 0.26, 1_900.0, 1_200.0, 0.4, 0.6, seed ^ 0x33);
+        }
+        CardSnd::Riffle(n) => {
+            for i in 0..n as u32 {
+                let w = (i % 3) as f32;
+                card_noise(&mut out, 0.05 * i as f32, 0.04, 3_100.0 - 150.0 * w, 1_800.0, 0.85, 0.35, seed.wrapping_add(i * 7));
+            }
+        }
+    }
+    out
+}
+
+static CARD_SOUNDS: Mutex<Vec<(CardSnd, u32, u32, &'static [u8])>> = Mutex::new(Vec::new());
+
+/// Play a card sound (see `CardSnd`) at `volume` on `device`. `seed` picks
+/// one of a few versions so a run of flicks doesn't sound looped.
+pub fn play_card(k: CardSnd, seed: u32, volume: f32, device: &str) {
+    let vkey = (volume.clamp(0.0, 1.0) * 20.0).round() as u32;
+    if vkey == 0 {
+        return;
+    }
+    let seed = seed % 4;
+    let bytes: &'static [u8] = {
+        let Ok(mut cache) = CARD_SOUNDS.lock() else { return };
+        match cache.iter().find(|(c, s, v, _)| *c == k && *s == seed && *v == vkey) {
+            Some((_, _, _, b)) => b,
+            None => {
+                let buf = card_sound(k, seed);
+                let peak = buf.iter().fold(0f32, |m, v| m.max(v.abs())).max(1e-6);
+                let loud = match k {
+                    CardSnd::Slide => 0.3,
+                    CardSnd::Riffle(_) => 0.45,
+                    _ => 0.55,
+                };
+                let b: &'static [u8] = Box::leak(wav_from(&buf, (vkey as f32 / 20.0) * loud / peak).into_boxed_slice());
+                cache.push((k, seed, vkey, b));
+                b
+            }
+        }
+    };
+    imp::play(bytes, device);
+}
+
 /// Play a song file (MP3, WAV, WMA, M4A…) on the default output device, for
 /// the "Alert song". Stops any song already playing. Returns false if Windows
 /// couldn't open the file.
@@ -473,6 +608,28 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn card_sounds_are_short_and_not_silent() {
+        for k in [super::CardSnd::Flip, super::CardSnd::Flick, super::CardSnd::Slide, super::CardSnd::Riffle(11)] {
+            for seed in 0..4 {
+                let b = super::card_sound(k, seed);
+                let peak = b.iter().fold(0f32, |m, v| m.max(v.abs()));
+                assert!(peak > 0.01 && b.iter().all(|v| v.is_finite()), "{k:?} {seed}");
+                assert!(b.len() < super::TEAR_RATE as usize, "{k:?} under a second");
+            }
+        }
+        // write them out to listen to: CARD_WAVS=dir
+        if let Ok(dir) = std::env::var("CARD_WAVS") {
+            for (name, k) in [("flip", super::CardSnd::Flip), ("flick", super::CardSnd::Flick), ("slide", super::CardSnd::Slide), ("riffle", super::CardSnd::Riffle(11))] {
+                for seed in 0..2 {
+                    let b = super::card_sound(k, seed);
+                    let peak = b.iter().fold(0f32, |m, v| m.max(v.abs()));
+                    std::fs::write(format!("{dir}/{name}-{seed}.wav"), super::wav_from(&b, 0.55 / peak)).unwrap();
+                }
+            }
+        }
+    }
+
     use super::*;
     #[test]
     fn wavs_are_valid() {

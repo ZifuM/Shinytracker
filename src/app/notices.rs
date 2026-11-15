@@ -20,6 +20,8 @@ pub(super) enum NoticeAction {
     Preview,
     /// Shiny Replay saved a clip: open it.
     WatchReplay,
+    /// A new card set is out: the Card Collector's packs.
+    OpenPacks,
 }
 
 pub(super) struct Notice {
@@ -130,6 +132,13 @@ impl App {
             expires: Some(Instant::now() + Duration::from_secs(8)),
             accent: theme::GREEN,
         });
+    }
+
+    /// "Open packs" on a new-set notice.
+    pub(super) fn notice_open_packs(&mut self, id: &str) {
+        self.go_to(Tab::Cards);
+        self.setup.cards.view = super::cards_app::View::Packs;
+        self.clear_notice(id);
     }
 
     pub(super) fn clear_notice(&mut self, id: &str) {
@@ -345,6 +354,7 @@ impl App {
                     NoticeAction::UseRunningGame => self.use_running_game_folder(),
                     NoticeAction::Preview => self.clear_notice(id),
                     NoticeAction::WatchReplay => self.replay_watch_latest(),
+                    NoticeAction::OpenPacks => self.notice_open_packs(id),
                 }
             }
         }
@@ -397,6 +407,7 @@ impl App {
                     NoticeAction::UseRunningGame => self.use_running_game_folder(),
                     NoticeAction::Preview => self.clear_notice(id),
                     NoticeAction::WatchReplay => self.replay_watch_latest(),
+                    NoticeAction::OpenPacks => self.notice_open_packs(id),
                 }
             }
         }

@@ -408,6 +408,31 @@ impl App {
                     kit::pill(ui, "Needs the name boxes (below)", PillKind::Info);
                 }
             });
+            ui.add_space(12.0);
+            // the second way to look: the game window itself
+            ui.add_enabled_ui(self.cfg.shiny_star_alert, |ui| {
+                if kit::toggle_row(
+                    ui,
+                    "Star alert: read the game window",
+                    "The star alert looks at the game window itself (like OBS's Window Capture) instead of your screen, so it still works with another window on top of the game, or the game in the background. Not while the game is minimised: then it reads the screen as before. Moving the game window afterwards is fine.",
+                    &mut self.cfg.star_window,
+                ) {
+                    // boxes drawn before this switch existed: take the game
+                    // as being where they were drawn
+                    if self.cfg.star_window && self.cfg.name_regions_at.is_none() {
+                        self.cfg.name_regions_at = crate::star_win::game_at();
+                    }
+                    self.dirty = true;
+                    self.push_settings(false);
+                }
+            });
+            ui.add_space(6.0);
+            ui.horizontal_wrapped(|ui| {
+                kit::pill(ui, "⚠ Experimental: may not work correctly yet", PillKind::Warn);
+                if self.cfg.star_window && !self.cfg.shiny_star_alert {
+                    kit::pill(ui, "Turn on the star alert above", PillKind::Info);
+                }
+            });
         });
     }
 

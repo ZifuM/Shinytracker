@@ -416,6 +416,8 @@ impl App {
                             (theme::GREEN, "Overlay running")
                         } else if self.setup.gotchi.shown {
                             (theme::GREEN, "Pokégotchi out")
+                        } else if self.setup.team_ov.shown {
+                            (theme::GREEN, "Team checklist out")
                         } else {
                             (MUTED(), "Overlay stopped")
                         };

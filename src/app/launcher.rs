@@ -22,7 +22,8 @@ impl App {
     /// Open the overlays that are picked. False when none are.
     pub(super) fn launch_overlays(&mut self) -> bool {
         let picks = self.overlay_picks();
-        if !picks.0 && !picks.2 {
+        let team = self.team_ov_pick();
+        if !picks.0 && !picks.2 && !team {
             return false;
         }
         if picks.0 {
@@ -31,13 +32,14 @@ impl App {
             self.cfg.mini = false;
         }
         self.setup.gotchi.shown = picks.2;
+        self.setup.team_ov.shown = team;
         self.dirty = true;
         true
     }
 
     /// Is any overlay open?
     pub(super) fn any_overlay(&self) -> bool {
-        self.overlay_on || self.setup.gotchi.shown
+        self.overlay_on || self.setup.gotchi.shown || self.setup.team_ov.shown
     }
 
     /// Stop closes them all.
@@ -45,6 +47,7 @@ impl App {
         self.overlay_on = false;
         self.ov_hidden = false;
         self.setup.gotchi.shown = false;
+        self.setup.team_ov.shown = false;
         self.save_now();
     }
 
@@ -241,6 +244,7 @@ impl App {
                 NoticeAction::UseRunningGame => self.use_running_game_folder(),
                 NoticeAction::Preview => self.clear_notice(id),
                 NoticeAction::WatchReplay => self.replay_watch_latest(),
+                NoticeAction::OpenPacks => self.notice_open_packs(id),
             }
         }
     }

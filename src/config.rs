@@ -603,6 +603,33 @@ pub struct SavedRun {
     pub more_targets: Vec<String>,
 }
 
+/// The checklist overlay's look.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum TeamLook {
+    /// One line per team member: its next step.
+    #[default]
+    Strip,
+    /// One member at a time, every step.
+    Card,
+    /// Just the team's next step, in a thin bar.
+    Bar,
+}
+
+/// The Team Planner checklist overlay: off unless ticked on the Start
+/// overlay screen.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default)]
+pub struct TeamOv {
+    pub show: bool,
+    /// The team it follows (None: the one open in the Team Planner, else the first).
+    pub team: Option<u64>,
+    pub look: TeamLook,
+    /// Where it was left on screen.
+    pub pos: Option<[f32; 2]>,
+    /// The Card look: which member (None: the first not done).
+    pub focus: Option<usize>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -748,6 +775,20 @@ pub struct Config {
     pub rearm_reads: u32,
     pub interval_ms: u64,
     pub shiny_star_alert: bool,
+    /// Experimental: the shiny ★ alert reads the game window itself (like
+    /// OBS's Window Capture), so windows on top of the game don't hide it.
+    pub star_window: bool,
+    /// The stats share image's layout, and whether your name and picture
+    /// go on it.
+    pub stat_share_layout: crate::statshare::Layout,
+    pub stat_share_me: bool,
+    /// The month whose "last month's recap is ready" pop-up was shown.
+    pub recap_month: Option<(i64, u32)>,
+    /// The Team Planner checklist overlay (Start overlay → Team checklist).
+    pub team_ov: TeamOv,
+    /// Where the game's picture was on its screen when the name boxes were
+    /// drawn (for reading them from the game window wherever it is now).
+    pub name_regions_at: Option<(i32, i32)>,
     pub star_threshold: u32,
     /// Switch between Rare grass and Soft resets by what the game log shows.
     pub auto_method: bool,
@@ -945,6 +986,12 @@ impl Default for Config {
             rearm_reads: 3,
             interval_ms: 200,
             shiny_star_alert: true,
+            star_window: false,
+            stat_share_layout: crate::statshare::Layout::Poster,
+            stat_share_me: true,
+            recap_month: None,
+            team_ov: TeamOv::default(),
+            name_regions_at: None,
             auto_method: true,
             overlay_autostart: false,
             count_in_background: true,

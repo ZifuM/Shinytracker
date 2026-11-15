@@ -39,12 +39,17 @@ pub(super) struct BreedState {
     pub flash: Option<(String, Instant)>,
     pub moves: super::breed_moves::MovesView,
     pub plan: super::breed_planner::PlanView,
+    /// The Desk: what it worked out from your save.
+    pub desk: super::breed_desk::DeskState,
+    /// What your bag and party said last time (the settings follow it).
+    pub found: Option<crate::breed_save::Found>,
 }
 
 /// The Breeding Planner's pages.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub(super) enum BreedView {
     #[default]
+    Desk,
     Plan,
     DayCare,
     Moves,
@@ -231,6 +236,7 @@ impl App {
         };
         let nl = self.setup.breed.file().log.len();
         let tabs = [
+            (BreedView::Desk, "Desk".to_string()),
             (BreedView::Plan, "Plan".to_string()),
             (BreedView::Breeders, "Breeders".to_string()),
             (BreedView::DayCare, "Day Care".to_string()),
@@ -255,6 +261,7 @@ impl App {
             }
         }
         match view {
+            BreedView::Desk => return self.page_breed_desk(ui, &w),
             BreedView::Plan => return self.page_breed_plan(ui, &w),
             BreedView::Moves => return self.page_egg_moves(ui, &w),
             BreedView::Breeders => return self.page_breeders(ui, &w),
