@@ -44,6 +44,7 @@ mod bingo_app;
 mod rare_app;
 mod replay_app;
 mod app_settings;
+mod settings_apps;
 mod gotchi_app;
 mod gotchi_bar;
 mod gotchi_words;
@@ -67,6 +68,8 @@ mod game_dex;
 mod world_sync;
 mod w_boxes;
 mod nuzlocke_app;
+mod sticker_app;
+mod app_tour;
 mod w_nuzlocke;
 mod quick_search;
 mod quick_query;
@@ -180,6 +183,7 @@ enum Tab {
     Journal,
     Boxes,
     Nuzlocke,
+    Stickers,
     Profile,
     Stats,
     Dex,
@@ -303,6 +307,8 @@ struct Setup {
     cards: cards_app::CardsState,
     gotchi: gotchi_app::GotchiState,
     bingo: bingo_app::BingoState,
+    /// Sticker Book: the pages and what's being dragged.
+    stickers: sticker_app::StickerState,
     rare: rare_app::RareState,
     replay: replay_app::ReplayState,
     /// The Start overlay picker is open.
@@ -317,6 +323,8 @@ struct Setup {
     nav_collapsed: Vec<Tab>,
     /// The settings window is open, at this page (Appearance, Hotkeys or Advanced).
     settings_open: Option<Tab>,
+    /// The first-time app tour that's showing.
+    tour: app_tour::TourState,
     /// Advanced page: scroll to this section once.
     adv_jump: Option<settings::AdvTab>,
     /// Appearance page: a look code being pasted, and the last result.
@@ -599,6 +607,22 @@ impl App {
             cfg.apps.pin(crate::apps::AppId::Shiny);
             cfg.apps.welcomed = crate::apps::APPS_WELCOME_VERSION;
         }
+        // Modern Plus, the bottom dock and its magnifying are the defaults
+        // now: everyone moves to them once, with every app they have on the
+        // dock (their pins first). After that their own choices in
+        // Settings → Appearance stand. (Turning Modern Plus off puts the pins
+        // back where they were.)
+        if !cfg.apps.new_look1 {
+            cfg.appearance.plus = true;
+            if cfg.apps.pins_place != crate::apps::PinsPlace::Dock {
+                cfg.apps.place_before_plus = Some(cfg.apps.pins_place);
+                cfg.apps.pins_place = crate::apps::PinsPlace::Dock;
+            }
+            cfg.apps.dock_magnify = true;
+            cfg.apps.seed_dock();
+            cfg.apps.dock_seeded = true;
+            cfg.apps.new_look1 = true;
+        }
         let show_setup = !cfg.welcome_done
             || cfg.onboarding_seen < crate::config::ONBOARDING_VERSION
             || (cfg.count_source == CountSource::Screen && cfg.name_regions.is_empty());
@@ -719,6 +743,7 @@ impl App {
                 cards: Default::default(),
                 gotchi: Default::default(),
                 bingo: Default::default(),
+                stickers: Default::default(),
                 rare: Default::default(),
                 replay: Default::default(),
                 ov_picker: false,
@@ -727,6 +752,7 @@ impl App {
                 // Apps start folded; clicking one opens its pages.
                 nav_collapsed: vec![Tab::Shiny],
                 settings_open: None,
+                tour: Default::default(),
                 adv_jump: None,
                 look_code: String::new(),
                 look_msg: None,
@@ -826,6 +852,61 @@ impl App {
         self.dirty = true;
         if self.cfg.target2.is_some() {
             self.add_event("double_vision");
+        }
+    }
+
+    /// The Pokémon a target brings along, by how you're hunting (not the
+    /// target itself), in order:
+    /// * rare grass: the rest of its evolution line (rare grass has every
+    ///   stage of a line, so picking Turtwig hunts Grotle and Torterra too)
+    /// * soft resets for a starter: every other starter (Gen 1 to 5, and
+    ///   Let's Go Pikachu and Eevee), since any of them can be the one
+    /// * anything else (full odds, soft resets for a legendary…): none
+    fn target_group(&self, slug: &str, method: crate::config::HuntMethod) -> Vec<String> {
+        use crate::config::HuntMethod;
+        let mut out: Vec<String> = Vec::new();
+        match method {
+            HuntMethod::RareGrassSweetScent => {
+                let Some(w) = self.wiki.as_ref() else { return out };
+                let Some(dex) = self.species.iter().find(|s| s.slug == slug).map(|s| s.dex) else { return out };
+                let Some(m) = w.by_dex(dex) else { return out };
+                for stage in w.family(&m.id) {
+                    for id in stage {
+                        let Some(d) = w.mon(&id).map(|x| x.dex) else { continue };
+                        if let Some(sp) = self.species.iter().find(|s| s.dex == d) {
+                            if sp.slug != slug && !out.contains(&sp.slug) {
+                                out.push(sp.slug.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            HuntMethod::SoftReset if STARTERS.contains(&slug) => {
+                for s in STARTERS {
+                    if s != slug && self.species.iter().any(|x| x.slug == s) {
+                        out.push(s.to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+        out
+    }
+
+    /// Hunt the main target's group (above) alongside it: adds them to the
+    /// Pokémon you're also hunting (never takes any away).
+    fn add_target_group(&mut self) {
+        let Some(main) = self.cfg.target.clone() else { return };
+        let mut list = self.also_slugs();
+        let mut changed = false;
+        for s in self.target_group(&main, self.cfg.hunt_method) {
+            if s != main && !list.contains(&s) {
+                list.push(s);
+                changed = true;
+            }
+        }
+        if changed {
+            self.set_also(list);
         }
     }
 
@@ -3056,6 +3137,7 @@ impl eframe::App for App {
         self.cards_tick(ctx);
         self.gotchi_tick(ctx);
         self.bingo_tick(ctx);
+        self.stickers_tick();
         self.rare_tick();
         self.replay_tick(ctx);
         self.journal_flush(false);
@@ -3202,6 +3284,7 @@ impl eframe::App for App {
         self.setup.cards.save_tick(true);
         self.setup.gotchi.save_tick(true);
         self.setup.bingo.save_tick(true);
+        self.setup.stickers.save_tick(true);
         self.setup.rare.save_tick(true);
         self.setup.replay.save_tick(true);
     }
@@ -3216,7 +3299,14 @@ impl Drop for App {
         self.setup.cards.save_tick(true);
         self.setup.gotchi.save_tick(true);
         self.setup.bingo.save_tick(true);
+        self.setup.stickers.save_tick(true);
         self.setup.rare.save_tick(true);
         self.setup.replay.save_tick(true);
     }
 }
+
+/// Every starter a soft-reset hunt for one of them also hunts: Gen 1 to 5,
+/// then Let's Go Pikachu and Let's Go Eevee.
+const STARTERS: [&str; 17] = [
+    "bulbasaur", "charmander", "squirtle", "chikorita", "cyndaquil", "totodile", "treecko", "torchic", "mudkip", "turtwig", "chimchar", "piplup", "snivy", "tepig", "oshawott", "pikachu", "eevee",
+];

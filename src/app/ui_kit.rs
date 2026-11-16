@@ -65,6 +65,12 @@ pub fn modern() -> bool {
     theme::modern()
 }
 
+/// Is Modern Plus on (Appearance → Look)? Its changes sit on top of Modern,
+/// which stays exactly as it was when this is off.
+pub fn plus() -> bool {
+    theme::plus()
+}
+
 // ───────────────────────── Cirrus controls ─────────────────────────
 // The modern style's controls follow the Cirrus design system: every
 // interactive control is a full pill with a 1px Edge hairline, primary
@@ -717,6 +723,17 @@ pub fn checkbox(ui: &mut Ui, on: &mut bool, text: impl Into<egui::WidgetText>) -
 
 /// Page title (pixel font) with a one-line subtitle.
 pub fn page_header(ui: &mut Ui, title: &str, subtitle: &str) {
+    let top = ui.cursor().min.y;
+    page_header_body(ui, title, subtitle);
+    // (for the first-time app tour: where the header is, without the space under it)
+    let bottom = ui.cursor().min.y - 14.0;
+    if bottom > top + 8.0 {
+        let m = ui.max_rect();
+        super::app_tour::mark(ui.ctx(), "header", Rect::from_min_max(egui::pos2(m.min.x, top), egui::pos2(m.max.x, bottom)));
+    }
+}
+
+fn page_header_body(ui: &mut Ui, title: &str, subtitle: &str) {
     if modern() {
         return modern::page_header(ui, title, subtitle);
     }
@@ -1613,6 +1630,23 @@ pub(crate) mod modern {
         let (pad, gap) = (5.0, 4.0);
         let cw = (bar.width() - 2.0 * pad - gap * (n - 1.0)) / n;
         let rect_of = |i: usize| Rect::from_min_size(egui::pos2(bar.min.x + pad + (cw + gap) * i as f32, bar.min.y + pad), egui::vec2(cw, h - 2.0 * pad));
+        // (each tab, for the first-time tours: "tab.0", "tab.1"…)
+        for i in 0..tabs.len() {
+            super::super::app_tour::mark(ui.ctx(), &format!("tab.{i}"), rect_of(i));
+        }
+        // A tour step about a tab opens it, so you see what it's about (the
+        // tour asks once a step; the tab it started on is noted to go back to)
+        let pass = ui.ctx().cumulative_pass_nr();
+        if let Some(i) = tabs.iter().position(|(v, _)| *v == *value) {
+            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("tour-tab-now"), i));
+        }
+        if let Some((k, n)) = ui.ctx().data(|d| d.get_temp::<(usize, u64)>(egui::Id::new("tour-tab"))) {
+            ui.ctx().data_mut(|d| d.remove::<(usize, u64)>(egui::Id::new("tour-tab")));
+            if pass.saturating_sub(n) < 60 && k < tabs.len() && *value != tabs[k].0 {
+                *value = tabs[k].0;
+                changed = true;
+            }
+        }
         let bar_id = super::unique_this_frame(ui, ui.id().with(("tab-bar", tabs.iter().map(|t| t.1).collect::<Vec<_>>().join("|"))));
         let sel = tabs.iter().position(|(v, _)| *v == *value);
         let hover_slot = p.add(egui::Shape::Noop);

@@ -53,6 +53,8 @@ impl App {
     }
 
     pub(super) fn page_nuzlocke(&mut self, ui: &mut egui::Ui) {
+
+        super::app_tour::here(ui.ctx(), "nuzlocke");
         self.nuz_refresh();
         kit::page_header(ui, "NUZLOCKE TRACKER", "Your runs from the game's own files: every route, who's still in, and the rules.");
         egui::Frame::none()
@@ -73,6 +75,7 @@ impl App {
         // the worlds
         let worlds: Vec<(u32, String, String, bool, bool)> = self.setup.nuz.worlds.iter().map(|w| (w.id, w.title(), w.kind(), w.playing, w.is_run())).collect();
         let shown = self.nuz_world().map(|w| w.id);
+        let tour_top = ui.cursor().min.y;
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
             for (id, title, kind, playing, run) in &worlds {
@@ -88,6 +91,7 @@ impl App {
                 }
             }
         });
+        super::app_tour::mark_since(ui, "nuz.worlds", tour_top);
         ui.add_space(12.0);
         let Some(world) = self.nuz_world().cloned() else {
             kit::card(ui, |ui| {
@@ -110,10 +114,12 @@ impl App {
                 ui.allocate_ui_with_layout(vec2(w - side_w - gap, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.set_width(w - side_w - gap);
                     self.nuz_any_trail(ui, &world);
+                    super::app_tour::mark(ui.ctx(), "nuz.trail", ui.min_rect());
                 });
                 ui.allocate_ui_with_layout(vec2(side_w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.set_width(side_w);
                     self.nuz_run_card(ui, &world);
+                    super::app_tour::mark(ui.ctx(), "nuz.run", ui.min_rect());
                 });
             });
         } else {

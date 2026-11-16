@@ -130,6 +130,8 @@ impl App {
     // ───────────────────────────── Breeders ─────────────────────────────
 
     pub(super) fn page_breeders(&mut self, ui: &mut egui::Ui, w: &Arc<Wiki>) {
+
+        super::app_tour::here(ui.ctx(), "breed/breeders");
         let setup = self.setup.breed.file().setup;
         if self.setup.breed.boxv.editing.is_some() {
             self.breeder_editor(ui, w, setup);
@@ -167,6 +169,7 @@ impl App {
         let all = self.setup.breed.file().breeders.clone();
         let mut add = false;
         let mut import = false;
+        let tour_top = ui.cursor().min.y;
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
             kit::search_box(ui, &mut self.setup.breed.boxv.q, "Search your Breeders…", 220.0);
@@ -189,6 +192,7 @@ impl App {
                 super::app_modal::lock_btn(ui, crate::apps::AppId::Team, "From your teams");
             }
         });
+        super::app_tour::mark_since(ui, "breeders.tools", tour_top);
         ui.add_space(12.0);
         if add {
             let f = self.setup.breed.file();
@@ -504,6 +508,8 @@ impl App {
     // ───────────────────────────── Hatch log ─────────────────────────────
 
     pub(super) fn page_hatch_log(&mut self, ui: &mut egui::Ui, w: &Arc<Wiki>) {
+
+        super::app_tour::here(ui.ctx(), "breed/log");
         let (setup, dc) = {
             let f = self.setup.breed.file();
             (f.setup, f.daycare.clone())

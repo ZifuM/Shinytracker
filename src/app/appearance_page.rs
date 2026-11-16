@@ -79,6 +79,8 @@ impl App {
     }
 
     fn look_settings(&mut self, ui: &mut egui::Ui, hover: &mut Hover) {
+        self.look_plus_card(ui);
+        ui.add_space(18.0);
         self.look_style_card(ui, hover);
         ui.add_space(18.0);
         self.look_colours_card(ui, hover);
@@ -86,6 +88,39 @@ impl App {
         self.look_comfort_card(ui);
         ui.add_space(18.0);
         self.look_share_card(ui);
+    }
+
+    // ───────────────────────────── look ─────────────────────────────
+
+    /// Modern or Modern Plus. Modern stays exactly as it was.
+    fn look_plus_card(&mut self, ui: &mut egui::Ui) {
+        kit::card(ui, |ui| {
+            card_head(ui, "🎨", PURPLE, "Look");
+            ui.add_space(10.0);
+            let mut plus = self.cfg.appearance.plus;
+            if kit::segmented(ui, &mut plus, &[(true, "Modern Plus (recommended)"), (false, "Modern (not recommended)")]) {
+                self.cfg.appearance.plus = plus;
+                // Modern Plus lives on the bottom dock: move the pins there,
+                // and put them back where they were when it's turned off
+                use crate::apps::PinsPlace;
+                if plus {
+                    if self.cfg.apps.pins_place != PinsPlace::Dock {
+                        self.cfg.apps.place_before_plus = Some(self.cfg.apps.pins_place);
+                        self.cfg.apps.pins_place = PinsPlace::Dock;
+                    }
+                } else if let Some(p) = self.cfg.apps.place_before_plus.take() {
+                    self.cfg.apps.pins_place = p;
+                }
+                self.dirty = true;
+            }
+            ui.add_space(8.0);
+            let text = if plus {
+                "Modern Plus: your apps live on a dock at the bottom, the pages become tabs in the title bar and your hunt rides on the dock, which tucks away until you need it. Every main button is one solid colour (yours, from Colours below), and the Library, Pokédex, Rare Grass and Card Collector get tidier layouts. Switch back to Modern any time; nothing else changes."
+            } else {
+                "Modern: the older look, with a sidebar. Not recommended: new things are made for Modern Plus first. You can switch back any time."
+            };
+            ui.label(egui::RichText::new(text).size(kit::fs(12.0)).color(MUTED()));
+        });
     }
 
     // ───────────────────────────── style ─────────────────────────────
@@ -296,6 +331,27 @@ impl App {
             divider(ui);
             ui.add_space(12.0);
             self.pins_place_picker(ui);
+            ui.add_space(10.0);
+            divider(ui);
+            ui.add_space(10.0);
+            let mut show = !self.cfg.apps.tours_off;
+            if kit::toggle_row(
+                ui,
+                "Show tours",
+                "A short spotlight tour the first time you open the Companion, each app and each of its pages. Off: no tours at all (\"Don't show any more tours\" on a tour turns this off).",
+                &mut show,
+            ) {
+                self.cfg.apps.tours_off = !show;
+                self.dirty = true;
+            }
+            ui.add_space(6.0);
+            let mut again = false;
+            setting_row(ui, "App tours", "Show every tour again, as if the Companion and every app were new. This turns tours back on too.", |ui| {
+                again = ui.add(egui::Button::new("Show app tours again").fill(kit::btn_fill())).on_hover_text("Each app's tour shows the next time you open it").clicked();
+            });
+            if again {
+                self.tours_reset();
+            }
         });
     }
 

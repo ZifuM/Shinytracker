@@ -242,6 +242,8 @@ impl App {
     // ───────────────────────────── the page ─────────────────────────────
 
     pub(super) fn page_rare(&mut self, ui: &mut egui::Ui) {
+
+        super::app_tour::here(ui.ctx(), "rare");
         kit::page_header(ui, "RARE GRASS", "What's on rare grass today, and every Pokémon seen on it before.");
         if let Some(e) = self.setup.rare.load_error.clone() {
             kit::pill(ui, &e, kit::PillKind::Warn);
@@ -250,9 +252,12 @@ impl App {
         let today = self.rare_out_today();
         let gloss = self.rare_glossary();
         let once = gloss.iter().filter(|g| g.days.len() == 1).count();
+        let tour_top = ui.cursor().min.y;
         self.rare_hero(ui, &today);
+        super::app_tour::mark_since(ui, "rare.hero", tour_top);
         ui.add_space(16.0);
         // search and filters
+        let tour_top = ui.cursor().min.y;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             let w = (ui.available_width() - 420.0).clamp(200.0, 420.0);
@@ -283,6 +288,7 @@ impl App {
                 }
             });
         });
+        super::app_tour::mark_since(ui, "rare.search", tour_top);
         ui.add_space(12.0);
         let q = self.setup.rare.query.trim().to_lowercase();
         let today_f: Vec<OutToday> = today
@@ -290,9 +296,13 @@ impl App {
             .filter(|o| q.is_empty() || o.name().to_lowercase().contains(&q) || o.spots.iter().any(|s| s.place.to_lowercase().contains(&q)))
             .cloned()
             .collect();
+        let tour_top = ui.cursor().min.y;
         self.rare_today_card(ui, &today, &today_f);
+        super::app_tour::mark_since(ui, "rare.today", tour_top);
         ui.add_space(4.0);
+        let tour_top = ui.cursor().min.y;
         self.rare_glossary_card(ui, &gloss, &today, &q);
+        super::app_tour::mark_since(ui, "rare.glossary", tour_top);
     }
 
     /// The banner: the featured Pokémon (the rarest out today, or the
@@ -491,6 +501,9 @@ impl App {
         let hovered = ui.ctx().data(|d| d.get_temp::<bool>(hover_id)).unwrap_or(false);
         let ht = kit::anim(ui.ctx(), hover_id.with("a"), hovered, kit::QUICK);
         let edge = theme::blend(LINE(), if first { GOLD } else { GREEN }, 0.7 * ht);
+        // Modern Plus: the whole card opens the Map; Hunt it shows on hover
+        let plus = kit::plus();
+        let mut inner_hot = false;
         let framed = egui::Frame::none()
             .fill(theme::blend(kit::sunken(), if first { GOLD } else { GREEN }, 0.04 * ht))
             .stroke(Stroke::new(1.0f32, edge))
@@ -536,7 +549,9 @@ impl App {
                     }
                     for (s, l) in o.spots.iter().zip(&labels).take(shown.max(1)) {
                         let b = egui::Button::new(RichText::new(l).size(12.0).color(TEXT())).fill(kit::CARD()).stroke(Stroke::new(1.0f32, LINE())).rounding(999.0);
-                        if ui.add(b).on_hover_text(format!("{} rare grass tile{} with {} at {}: show it on the Map", s.tiles, if s.tiles == 1 { "" } else { "s" }, sp.name, s.place)).clicked() {
+                        let rr = ui.add(b).on_hover_text(format!("{} rare grass tile{} with {} at {}: show it on the Map", s.tiles, if s.tiles == 1 { "" } else { "s" }, sp.name, s.place));
+                        inner_hot |= rr.hovered();
+                        if rr.clicked() {
                             go = Some(s.clone());
                         }
                     }
@@ -547,6 +562,24 @@ impl App {
                     }
                 });
                 ui.add_space(6.0);
+                if plus {
+                    ui.horizontal(|ui| {
+                        if hovered {
+                            let rr = ui
+                                .add(egui::Button::new(RichText::new("🎯  Hunt it").size(12.5).color(kit::on_primary())).fill(kit::primary()).rounding(14.0).min_size(vec2(0.0, 28.0)))
+                                .on_hover_text("Make it your target and hunt it with Sweet Scent on rare grass");
+                            inner_hot |= rr.hovered();
+                            if rr.clicked() {
+                                hunt = true;
+                            }
+                        } else {
+                            ui.allocate_exact_size(vec2(4.0, 28.0), Sense::hover());
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(RichText::new("Map ›").size(12.5).strong().color(theme::blend(MUTED(), GREEN, 0.4 + 0.6 * ht)));
+                        });
+                    });
+                } else {
                 ui.horizontal(|ui| {
                     if ui.add(egui::Button::new(RichText::new("Show on Map").size(12.5)).fill(kit::btn_fill()).min_size(vec2(0.0, 28.0))).clicked() {
                         go = Some(o.spots[0].clone());
@@ -555,9 +588,17 @@ impl App {
                         hunt = true;
                     }
                 });
+                }
             });
         let now_hovered = ui.rect_contains_pointer(framed.response.rect);
         ui.ctx().data_mut(|d| d.insert_temp(hover_id, now_hovered));
+        // Modern Plus: a click anywhere else on the card shows it on the Map
+        if plus && now_hovered && !inner_hot {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            if go.is_none() && !hunt && ui.input(|i| i.pointer.primary_clicked()) {
+                go = Some(o.spots[0].clone());
+            }
+        }
         if let Some(s) = go {
             if self.has_app(AppId::Map) {
                 self.go_to_rare(&s);

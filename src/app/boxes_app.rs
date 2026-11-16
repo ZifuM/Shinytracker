@@ -47,7 +47,7 @@ fn stat_order(v: [u8; 6]) -> [u8; 6] {
 
 impl App {
     fn boxes_on(&self) -> bool {
-        crate::apps::live(AppId::Boxes) || crate::apps::live(AppId::Nuzlocke) || crate::apps::live(AppId::Breed)
+        crate::apps::live(AppId::Boxes) || crate::apps::live(AppId::Nuzlocke) || crate::apps::live(AppId::Breed) || crate::apps::live(AppId::Stickers)
     }
 
     pub(super) fn game_root(&self) -> std::path::PathBuf {
@@ -121,6 +121,8 @@ impl App {
     }
 
     pub(super) fn page_boxes(&mut self, ui: &mut egui::Ui) {
+
+        super::app_tour::here(ui.ctx(), "boxes");
         kit::page_header(ui, "POKéMON BOXES", "Your party and boxes, read from the game's save.");
         // the read-only note
         egui::Frame::none()
@@ -165,6 +167,9 @@ impl App {
         let box_r = Rect::from_min_size(pos2(party_r.max.x + gap, all.min.y), vec2(box_w, h));
         let side_r = Rect::from_min_max(pos2(box_r.max.x + gap, all.min.y), pos2(all.max.x, all.max.y));
         let _ = side_w;
+        super::app_tour::mark(ui.ctx(), "boxes.party", party_r);
+        super::app_tour::mark(ui.ctx(), "boxes.box", box_r);
+        super::app_tour::mark(ui.ctx(), "boxes.side", side_r);
         for r in [party_r, box_r, side_r] {
             ui.painter().rect_filled(r, 14.0, kit::CARD());
             ui.painter().rect_stroke(r, 14.0, Stroke::new(1.0f32, LINE()));

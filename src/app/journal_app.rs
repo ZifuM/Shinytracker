@@ -480,6 +480,7 @@ impl App {
 
     /// The Journal page.
     pub(super) fn page_journal(&mut self, ui: &mut egui::Ui) {
+        super::app_tour::here(ui.ctx(), "journal");
         let ctx = ui.ctx().clone();
         self.journal_scan(false);
         self.journal_restore();
@@ -523,10 +524,13 @@ impl App {
         p.rect_filled(rib, 0.0, ju::side_bg());
         p.vline(rib.max.x, rib.y_range(), Stroke::new(1.0f32, LINE()));
         self.journal_ribbon(ui, rib);
+        super::app_tour::mark(ui.ctx(), "journal.ribbon", rib);
+        super::app_tour::mark(ui.ctx(), "journal.main", mid);
         if ex_w > 0.0 {
             p.rect_filled(ex, 0.0, ju::side_bg());
             p.vline(ex.max.x, ex.y_range(), Stroke::new(1.0f32, LINE()));
             self.journal_left(ui, ex);
+            super::app_tour::mark(ui.ctx(), "journal.left", ex);
         }
         if right_w > 0.0 {
             p.rect_filled(right, 0.0, ju::side_bg());
@@ -538,11 +542,10 @@ impl App {
         if self.setup.home.gallery.to_canvas.is_some() {
             self.home_gallery(&ctx);
         }
-        let mut open = self.setup.journal.settings;
-        if open {
-            self.journal_settings(&ctx, &mut open);
+        // (the cogs open Settings → Journal)
+        if std::mem::take(&mut self.setup.journal.settings) {
+            self.open_settings(super::Tab::Journal);
         }
-        self.setup.journal.settings = open;
         self.journal_flush(false);
         if self.setup.journal.bufs.iter().any(|b| b.text != b.saved) {
             ctx.request_repaint_after(Duration::from_millis(300));
@@ -1907,9 +1910,12 @@ impl App {
         self.setup.journal.switcher = if close { None } else { Some((q, sel)) };
     }
 
-    fn journal_settings(&mut self, ctx: &egui::Context, open: &mut bool) {
+    /// Settings → Journal: how notes look and where new ones go.
+    pub(super) fn journal_settings_body(&mut self, ui: &mut egui::Ui) {
         let mut cfg = self.cfg.journal.clone();
-        super::app_settings::window(ctx, "journal", "Journal settings", "How your notes look and where new ones go.", JOURNAL_COL, open, |ui| {
+        kit::section(ui, "Notes");
+        kit::card(ui, |ui| {
+            ui.set_width(ui.available_width());
             ui.label(RichText::new("Text size").size(kit::fs(13.0)).strong().color(TEXT()));
             ui.spacing_mut().slider_width = 260.0;
             ui.add(egui::Slider::new(&mut cfg.font_size, 12.0..=22.0).step_by(1.0).fixed_decimals(0).suffix(" px"));

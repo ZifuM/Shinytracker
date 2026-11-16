@@ -1062,6 +1062,17 @@ impl App {
     /// show), with its Customize chrome when editing.
     #[allow(clippy::too_many_arguments)]
     fn draw_widget_in(&mut self, ui: &mut egui::Ui, w: &WidgetCfg, r: Rect, c: Cell, edit: bool, lifted: bool, action: &mut Option<Action>) {
+        // Modern Plus: the Current hunt widget would repeat the banner right
+        // above it, so (outside Customize) its place shows something the
+        // banner doesn't say
+        let swapped;
+        let w = match (kit::plus() && !edit && w.kind == "hunt_ctrl").then(|| self.plus_hunt_swap()).flatten() {
+            Some(k) => {
+                swapped = WidgetCfg { kind: k.to_string(), data: Vec::new(), ..w.clone() };
+                &swapped
+            }
+            None => w,
+        };
         let Some(d) = def(&w.kind) else { return };
         let locked = d.app.is_some_and(|a| !self.has_app(a));
         let round = kit::card_rounding();
@@ -1102,6 +1113,14 @@ impl App {
                 *action = Some(a);
             }
         }
+    }
+
+    /// Modern Plus: what shows in the Current hunt widget's place. The
+    /// first of Packs to open, Rare grass today and This week whose app is
+    /// installed and that isn't on the Dashboard already.
+    fn plus_hunt_swap(&self) -> Option<&'static str> {
+        let on: Vec<String> = self.home_widgets().into_iter().map(|w| w.kind).collect();
+        ["cards_packs", "rare", "week"].into_iter().find(|k| !on.iter().any(|o| o.as_str() == *k) && def(k).is_some_and(|d| d.app.map_or(true, |a| self.has_app(a))))
     }
 
     /// In Customize: the dashed edge, the bar on top (name, size, remove),

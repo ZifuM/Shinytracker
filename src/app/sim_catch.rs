@@ -166,7 +166,21 @@ impl App {
     /// The catch test: the Pokémon, the conditions on one bar, every ball
     /// as a card, and the odds as its HP drops.
     pub(super) fn catch_shelf(&mut self, ui: &mut egui::Ui) {
-        let Some(Prep { foe: f, rate, lab, mut cv, prices }) = self.catch_prep() else { return };
+        // nothing to test yet (the last battle was against a trainer, which
+        // keeps no wild Pokémon): start from one, as the wild battle does.
+        // (This used to leave the whole catch test blank.)
+        if self.setup.sim.setup.foes.is_empty() {
+            let world = crate::battle::World::Platinum;
+            let mut g = crate::teams::Member { level: 20, ..crate::teams::Member::new("Gible", world) };
+            if let Some(w) = self.wiki.clone() {
+                g.moves = super::sim_foes::wild_set(&w, "Gible", 20, world);
+            }
+            self.setup.sim.setup.foes = vec![g];
+        }
+        let Some(Prep { foe: f, rate, lab, mut cv, prices }) = self.catch_prep() else {
+            self.catch_missing(ui);
+            return;
+        };
         let price = |b: Ball| prices.iter().find(|(n, _)| n == b.name()).map(|x| x.1).unwrap_or(0);
         let ranked = lab.ranked(&cv.sit, lab.hp(cv.hp), sim::status_mult(cv.status));
         let best = ranked.iter().find(|r| r.0 != Ball::Master).copied();
@@ -228,6 +242,25 @@ impl App {
             chart_view(ui, &cv, &lab, &ranked);
         });
         self.setup.sim.catch = cv;
+    }
+}
+
+impl App {
+    /// No catch odds for the Pokémon picked (the game's data has no catch
+    /// rate for it): say so, with the picker open to choose another.
+    fn catch_missing(&mut self, ui: &mut egui::Ui) {
+        let name = self.setup.sim.setup.foes.first().map(|f| f.species.clone()).unwrap_or_default();
+        kit::card(ui, |ui| {
+            ui.label(RichText::new("Pick a Pokémon to test").font(crate::fonts::sans_bold_font(18.0)).color(TEXT()));
+            let why = if name.is_empty() {
+                "Choose a wild Pokémon below to see every ball's odds.".to_string()
+            } else {
+                format!("The game's data has no catch rate for {name}, so there are no odds to show. Choose another Pokémon below.")
+            };
+            ui.label(small(why));
+        });
+        ui.add_space(10.0);
+        self.sim_wild(ui);
     }
 }
 

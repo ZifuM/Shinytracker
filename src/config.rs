@@ -543,6 +543,11 @@ pub struct Appearance {
     pub animations: bool,
     /// Light or dark follows Windows' own setting.
     pub follow_system: bool,
+    /// Modern Plus (preview): the UI review's changes on top of Modern
+    /// (tabs in the title bar and a hunt capsule on a hiding dock, violet
+    /// actions, tidier Library, Pokédex filters, Rare Grass cards, the next
+    /// card set's countdown, shorter tours). Off = Modern exactly as it was.
+    pub plus: bool,
 }
 
 impl Default for Appearance {
@@ -562,6 +567,8 @@ impl Default for Appearance {
             nav_compact: false,
             animations: true,
             follow_system: false,
+            // (Modern Plus is the default look)
+            plus: true,
         }
     }
 }

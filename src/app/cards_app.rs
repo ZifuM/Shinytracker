@@ -83,6 +83,9 @@ pub(super) struct Opening {
     /// The card sliding off to the pile, and when.
     pub slide: Option<(usize, Instant)>,
     pub since: Instant,
+    /// When the front card was turned over (None: still face down, waiting
+    /// for a click).
+    pub flipped: Option<Instant>,
 }
 
 enum Pic {
@@ -294,7 +297,7 @@ pub(super) struct CardsState {
     pub last_release_check: Option<Instant>,
     /// Each set's art on this PC: (files, bytes), and when that was checked.
     pub saved: Option<(Vec<(usize, u64)>, Instant)>,
-    /// The settings popup (card art, playmat) is open.
+    /// Settings opened by itself this session (the first-time art question).
     pub settings: bool,
     /// The trade record (read the first time it's needed).
     pub book: Option<crate::trade::Book>,
@@ -566,6 +569,18 @@ impl App {
         let p = ui.painter_at(r.expand(2.0));
         let tex = self.setup.cards.pics.get(ui.ctx(), &c.id, large).or_else(|| if large { self.setup.cards.pics.get(ui.ctx(), &c.id, false) } else { None });
         let round = r.width() * 0.045;
+        // A holo with its picture here: it tips towards the pointer and its
+        // starlight foil catches the light (see `foil_card`).
+        if holo && c.rarity == Rarity::Holo {
+            if let Some(t) = &tex {
+                let fp = ui.painter_at(r.expand(r.width() * 0.08));
+                let evolves = c.stage.starts_with("Stage");
+                let ecard = cards::set(c.set).is_some_and(|s| s.ecard());
+                let hovered = foil_card(ui, &fp, r, round, &c.id, evolves, ecard, t);
+                ui.ctx().request_repaint_after(Duration::from_millis(if hovered { 16 } else { 33 }));
+                return;
+            }
+        }
         match tex {
             Some(t) => {
                 super::store::paint_image(&p, &t, r, egui::Rounding::same(round), 1.0, false);
@@ -631,7 +646,7 @@ impl App {
         };
         p.with_clip_rect(inner).text(pos2(inner.center().x, art.max.y + 12.0 * s), Align2::CENTER_CENTER, kind, f(9.5), Color32::from_rgb(70, 70, 80));
         let total = cards::of_set(c.set).len();
-        p.text(pos2(inner.max.x - 8.0 * s, inner.max.y - 7.0 * s), Align2::RIGHT_BOTTOM, format!("{}/{total} {}", c.num, c.rarity.symbol()), f(9.0), Color32::from_rgb(40, 40, 46));
+        p.text(pos2(inner.max.x - 8.0 * s, inner.max.y - 7.0 * s), Align2::RIGHT_BOTTOM, format!("{}/{total} {}", c.number(), c.rarity.symbol()), f(9.0), Color32::from_rgb(40, 40, 46));
         p.text(pos2(inner.min.x + 8.0 * s, inner.max.y - 7.0 * s), Align2::LEFT_BOTTOM, c.set_name(), f(9.0), Color32::from_rgb(90, 90, 100));
     }
 
@@ -642,18 +657,23 @@ impl App {
         if self.setup.cards.opening.is_some() {
             return self.cards_opening(ui);
         }
+        super::app_tour::here(ui.ctx(), "cards");
         let n_out = cards::all_out().len();
         kit::page_header(ui, "CARD COLLECTOR", &format!("Hunting earns XP. Fill the bar for a booster pack of the original cards, and collect all {n_out}."));
         if let Some(e) = self.setup.cards.load_error.clone() {
             kit::pill(ui, &e, kit::PillKind::Warn);
             ui.add_space(8.0);
         }
+        let tour_top = ui.cursor().min.y;
         self.cards_hero(ui);
+        super::app_tour::mark_since(ui, "cards.hero", tour_top);
         ui.add_space(4.0);
         let packs = self.setup.cards.file().packs;
         let mut view = self.setup.cards.view;
         let packs_label = if packs > 0 { format!("🎁  Open packs ({packs})") } else { "🎁  Packs".to_string() };
+        let tour_top = ui.cursor().min.y;
         kit::tab_bar(ui, &mut view, &[(View::Binder, "📚  Binder"), (View::Packs, packs_label.as_str()), (View::Missions, "🎯  Missions"), (View::Trade, "🔄  Trade")]);
+        super::app_tour::mark_since(ui, "cards.tabs", tour_top);
         self.setup.cards.view = view;
         ui.add_space(14.0);
         match view {
@@ -664,10 +684,13 @@ impl App {
         }
         self.cards_detail(ui.ctx());
         self.cards_choose_pack(ui.ctx());
-        if !self.setup.cards.file().art_asked {
+        self.cards_jobs_tick();
+        // the first time: Settings opens at the Card Collector, to pick which
+        // sets' art to download (once a session; closing it counts as asked)
+        if !self.setup.cards.file().art_asked && !self.setup.cards.settings && self.setup.settings_open.is_none() {
             self.setup.cards.settings = true;
+            self.open_settings(super::Tab::Cards);
         }
-        self.cards_settings(ui.ctx());
     }
 
     /// The top: one panel, three even columns (next pack, packs to open,
@@ -749,6 +772,8 @@ impl App {
     // ───────────────────────────── the binder ─────────────────────────────
 
     fn cards_binder(&mut self, ui: &mut egui::Ui) {
+
+        super::app_tour::here(ui.ctx(), "cards/binder");
         let f = self.setup.cards.file().clone();
         // filters: one slim toolbar. A search box that takes the spare
         // width, then five same-size drop-downs (set, rarity, type, show,
@@ -817,6 +842,7 @@ impl App {
                 }
             }
             let (row, _) = ui.allocate_exact_size(vec2(w, H * lines as f32 + GAP * (lines as f32 - 1.0)), Sense::hover());
+            super::app_tour::mark(ui.ctx(), "binder.filters", row);
             let search_r = Rect::from_min_size(row.min, vec2(if one_line { w - drops_w - GAP * 2.0 } else { w }, H));
             // the search box, sized to its rect (its margins are measured once and kept)
             let pad_id = egui::Id::new("cards-filter-search-pad");
@@ -898,7 +924,7 @@ impl App {
                 Show::Missing => f.count(&c.id) == 0,
                 Show::Dupes => f.count(&c.id) > 1,
             })
-            .filter(|c| q.is_empty() || c.name.to_lowercase().contains(&q) || num == Some(c.num))
+            .filter(|c| q.is_empty() || c.name.to_lowercase().contains(&q) || num == Some(c.num) || c.number().to_lowercase() == q)
             .collect();
         match s.sort {
             Sort::Number => {}
@@ -982,7 +1008,7 @@ impl App {
                 let p = ui.painter();
                 let name = super::charts::clip(ui, &c.name, &crate::fonts::sans_bold_font(12.5), cw);
                 p.text(pos2(r.min.x + 2.0, ty + 7.0), Align2::LEFT_CENTER, name, crate::fonts::sans_bold_font(12.5), if n > 0 { TEXT() } else { MUTED() });
-                p.text(pos2(r.min.x + 2.0, ty + 23.0), Align2::LEFT_CENTER, format!("{} · #{}", c.set_name(), c.num), crate::fonts::sans_font(11.0), MUTED());
+                p.text(pos2(r.min.x + 2.0, ty + 23.0), Align2::LEFT_CENTER, format!("{} · #{}", c.set_name(), c.number()), crate::fonts::sans_font(11.0), MUTED());
                 p.text(pos2(r.max.x - 2.0, ty + 23.0), Align2::RIGHT_CENTER, c.rarity.symbol(), egui::FontId::proportional(11.0), rarity_col(c.rarity));
                 if resp.on_hover_text(if n > 0 { "Look at it" } else { "Not in your binder yet" }).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     open = Some(c.id.clone());
@@ -1067,7 +1093,7 @@ impl App {
                         ui.label(RichText::new(b).size(13.0).color(Color32::WHITE));
                     });
                 };
-                line(ui, "Number", format!("{} of {}", c.num, cards::of_set(c.set).len()));
+                line(ui, "Number", format!("{} of {}", c.number(), cards::of_set(c.set).len()));
                 line(ui, "Rarity", format!("{} {}", c.rarity.symbol(), c.rarity.name()));
                 if let Some(n) = cards::packs_per(c) {
                     let n = if n < 10.0 { format!("{n:.1}") } else { format!("{}", n.round() as u64) };
@@ -1129,7 +1155,99 @@ impl App {
 
     // ───────────────────────────── packs ─────────────────────────────
 
+    /// Modern Plus: the next card set as an event. Its booster (in grey),
+    /// when it comes out (always at the game's daily reset), a big
+    /// countdown, Remind me, and the sets after it. Returns a change to
+    /// Remind me.
+    fn cards_next_drop(&mut self, ui: &mut egui::Ui, s: &cards::Set, f: &CardFile, now: u64) -> Option<(&'static str, bool)> {
+        let mut out = None;
+        let left = s.release.saturating_sub(now);
+        let pl = theme::pal();
+        let frame = egui::Frame::none().rounding(18.0).inner_margin(egui::Margin::same(18.0));
+        let slot = ui.painter().add(egui::Shape::Noop);
+        let resp = frame.show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                // its booster, in grey
+                let (r, _) = ui.allocate_exact_size(vec2(96.0, 168.0), Sense::hover());
+                let art = s.packs[0];
+                let pp = ui.painter_at(r.expand(8.0));
+                pp.add(kit::shadow_tier(2).as_shape(r, 6.0));
+                match self.setup.cards.pics.get(ui.ctx(), &format!("greypack:{art}"), true) {
+                    Some(tex) => super::store::paint_image(&pp, &tex, r, egui::Rounding::same(4.0), 1.0, false),
+                    None => {
+                        self.draw_booster_painted(&pp, r, s);
+                        pp.rect_filled(r, 6.0, Color32::from_rgba_unmultiplied(30, 32, 42, 150));
+                    }
+                }
+                ui.add_space(20.0);
+                ui.vertical(|ui| {
+                    let soon = left < 86_400;
+                    let day = if crate::stats::local_day(s.release) == crate::stats::local_day(now) { "TODAY".to_string() } else { release_when(s.release).to_uppercase() };
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(format!("NEXT SET · {day} · AT THE GAME'S DAILY RESET")).font(crate::fonts::sans_bold_font(11.0)).color(theme::blend(TEXT(), MUTED(), 0.4)));
+                        kit::info(ui, "A new set comes out every Monday at the game's daily reset (12 am CET), when rare grass and Shiny Bingo change too.");
+                    });
+                    ui.add_space(2.0);
+                    ui.label(RichText::new(format!("{} ({})", s.name, s.year)).font(crate::fonts::sans_bold_font(26.0)).color(TEXT()));
+                    ui.add_space(4.0);
+                    // the countdown: hours, minutes and seconds on the day; days before that
+                    let (d, h, m, sec) = (left / 86_400, (left % 86_400) / 3600, (left % 3600) / 60, left % 60);
+                    let big = if soon { format!("{h:02} : {m:02} : {sec:02}") } else { format!("{d} days {h} h") };
+                    ui.label(RichText::new(big).font(egui::FontId::monospace(34.0)).color(TEXT()));
+                    if soon {
+                        ui.ctx().request_repaint_after(Duration::from_secs(1));
+                    }
+                    ui.label(RichText::new(format!("{} cards · {}", cards::of_set(s.id).len(), countdown_words(left))).size(kit::fs(12.5)).color(theme::blend(TEXT(), MUTED(), 0.5)));
+                    ui.add_space(10.0);
+                    let on = f.notify.iter().any(|x| x == s.id);
+                    let (br, _) = ui.allocate_exact_size(vec2(150.0, 32.0), Sense::hover());
+                    if pill_button(ui, br, if on { "🔔  I'll tell you" } else { "🔔  Remind me" }, !on, ("drop-notify", s.id))
+                        .on_hover_text(if on { "A pop-up in the app when it comes out. Click to turn it off." } else { "A pop-up in the app when it comes out" })
+                        .clicked()
+                    {
+                        out = Some((s.id, !on));
+                    }
+                });
+                // the sets after it
+                let later: Vec<&cards::Set> = {
+                    let mut v: Vec<&cards::Set> = cards::SETS.iter().filter(|x| x.release > s.release).collect();
+                    v.sort_by_key(|x| x.release);
+                    v
+                };
+                if !later.is_empty() && ui.available_width() > 220.0 {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                        ui.vertical(|ui| {
+                            ui.set_width(200.0);
+                            ui.label(RichText::new("AFTER THAT").font(crate::fonts::sans_bold_font(11.0)).color(theme::blend(TEXT(), MUTED(), 0.4)));
+                            ui.add_space(4.0);
+                            for x in later.iter().take(4) {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(x.name).font(crate::fonts::sans_bold_font(13.0)).color(TEXT()));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.label(RichText::new(countdown_words(x.release.saturating_sub(now)).trim_start_matches("Out ").to_string()).size(kit::fs(12.0)).color(theme::blend(TEXT(), MUTED(), 0.5)));
+                                    });
+                                });
+                            }
+                            if later.len() > 4 {
+                                ui.label(RichText::new(format!("+ {} more, one each Monday", later.len() - 4)).size(kit::fs(12.0)).color(theme::blend(TEXT(), MUTED(), 0.5)));
+                            }
+                        });
+                    });
+                }
+            });
+        });
+        // behind it: the action colour, softly
+        let rect = resp.response.rect;
+        let a = theme::blend(CARD(), kit::primary(), if pl.light { 0.14 } else { 0.30 });
+        let b = theme::blend(CARD(), kit::primary(), if pl.light { 0.05 } else { 0.10 });
+        ui.painter().set(slot, egui::Shape::Vec(vec![kit::card_shadow().as_shape(rect, 18.0).into(), theme::gradient_rect(rect, [18.0; 4], a, b), egui::Shape::rect_stroke(rect, 18.0, Stroke::new(1.0f32, theme::blend(LINE(), kit::primary(), 0.4)))]));
+        out
+    }
+
     fn cards_packs(&mut self, ui: &mut egui::Ui) {
+
+        super::app_tour::here(ui.ctx(), "cards/packs");
         let f = self.setup.cards.file().clone();
         let mut open: Option<&'static str> = None;
         let here = self.cards_art_here();
@@ -1141,6 +1259,18 @@ impl App {
         let mut get: Option<&'static str> = None;
         let mut notify: Option<(&'static str, bool)> = None;
         let mut auto: Option<(&'static str, bool)> = None;
+        // Modern Plus: the next set's release as an event, with a big countdown
+        if kit::plus() {
+            if let Some(next) = cards::SETS.iter().filter(|s| !s.out_at(now)).min_by_key(|s| s.release) {
+                let tour_top = ui.cursor().min.y;
+                if let Some(n) = self.cards_next_drop(ui, next, &f, now) {
+                    notify = Some(n);
+                }
+                super::app_tour::mark_since(ui, "packs.next", tour_top);
+                ui.add_space(14.0);
+            }
+        }
+        let tour_top = ui.cursor().min.y;
         kit::card(ui, |ui| {
             ui.set_width(ui.available_width());
             head(ui, "🎁", kit::C_PINK, if f.packs > 0 { "Pick a booster to open" } else { "Booster packs" }, None);
@@ -1148,7 +1278,7 @@ impl App {
             note(
                 ui,
                 if f.packs > 0 {
-                    format!("You have {} pack{}. Each has 11 cards: a rare (holo one time in three), 3 uncommons and 7 commons, 2 of them Energy in sets that have Energy. A new set comes out every Monday.", f.packs, if f.packs == 1 { "" } else { "s" })
+                    format!("You have {} pack{}. Most have 11 cards: a rare (holo one time in three), 3 uncommons and 7 commons, some of them Energy in sets that have it. From Legendary Collection on, one card is a reverse holo, and the e-Card sets have 9 cards. A new set comes out every Monday at the game's daily reset.", f.packs, if f.packs == 1 { "" } else { "s" })
                 } else {
                     format!("No packs right now. {} more XP for the next one: keep hunting, or finish a mission.", XP_PER_PACK - f.xp)
                 },
@@ -1238,7 +1368,9 @@ impl App {
                         let left = s.release.saturating_sub(now);
                         let band = Rect::from_center_size(pos2(r.center().x, r.center().y + 28.0), vec2(r.width() - 24.0, 30.0));
                         p.rect_filled(band, 15.0, Color32::from_black_alpha(140));
-                        p.text(band.center(), Align2::CENTER_CENTER, countdown(left), crate::fonts::sans_bold_font(14.0), GOLD);
+                        // (Modern Plus: in words, so 2 minutes never reads like 2 hours)
+                        let when = if kit::plus() { countdown_words(left) } else { countdown(left) };
+                        p.text(band.center(), Align2::CENTER_CENTER, when, crate::fonts::sans_bold_font(if kit::plus() { 13.0 } else { 14.0 }), GOLD);
                         if left < 3600 {
                             ui.ctx().request_repaint_after(Duration::from_secs(1));
                         }
@@ -1249,7 +1381,12 @@ impl App {
                         ui.add_space(4.0);
                         let on = f.notify.iter().any(|x| x == s.id);
                         let (br, _) = ui.allocate_exact_size(vec2(170.0, 32.0), Sense::hover());
-                        if pill_button(ui, br, if on { "🔔  I'll tell you" } else { "🔔  Tell me when it's out" }, on, ("notify-set", s.id))
+                        let label = match (on, kit::plus()) {
+                            (true, _) => "🔔  I'll tell you",
+                            (false, true) => "🔔  Remind me",
+                            (false, false) => "🔔  Tell me when it's out",
+                        };
+                        if pill_button(ui, br, label, on, ("notify-set", s.id))
                             .on_hover_text(if on { "A pop-up in the app when it comes out. Click to turn it off." } else { "A pop-up in the app when it comes out" })
                             .clicked()
                         {
@@ -1277,6 +1414,7 @@ impl App {
             ui.add_space(22.0);
             }
         });
+        super::app_tour::mark_since(ui, "packs.boosters", tour_top);
         if let Some(set) = get {
             let ctx = ui.ctx().clone();
             self.cards_download_set(&ctx, set);
@@ -1300,6 +1438,7 @@ impl App {
         ui.add_space(16.0);
         // the last packs opened: one small tile each, its cards fanned
         // (best on top), in a grid
+        let tour_top = ui.cursor().min.y;
         if !f.pulls.is_empty() {
             kit::card(ui, |ui| {
                 ui.set_width(ui.available_width());
@@ -1355,8 +1494,11 @@ impl App {
                 }
             });
         }
+        super::app_tour::mark_since(ui, "packs.pulls", tour_top);
         ui.add_space(16.0);
+        let tour_top = ui.cursor().min.y;
         self.cards_art_card(ui);
+        super::app_tour::mark_since(ui, "packs.art", tour_top);
         if let Some(set) = open {
             self.setup.cards.choose = Some(set);
         }
@@ -1370,11 +1512,10 @@ impl App {
         let now = crate::config::now_unix();
         let Some((reveal, new, gains)) = self.setup.cards.file().open(set, &mut rng, today(), now) else { return };
         let _ = self.setup.cards.note_gains(gains);
-        // as they sit in the pack: the 2 Energy at the back
-        let packed = cards::packed_order(&reveal);
-        let order: Vec<usize> = packed.iter().map(|id| reveal.iter().position(|r| r == id).unwrap_or(0)).collect();
-        // fix duplicates (two of the same Energy): each index once
-        let order = dedupe_order(order, reveal.len());
+        // the stack in reveal order: the rare is always the last card
+        // (no "move the back 2 to the front" step any more: it put the rare
+        // up front in sets where it already sat at the back)
+        let order: Vec<usize> = (0..reveal.len()).collect();
         self.setup.cards.opening = Some(Opening {
             set: set.to_string(),
             art,
@@ -1388,6 +1529,7 @@ impl App {
             at: 0,
             slide: None,
             since: Instant::now(),
+            flipped: None,
         });
         self.setup.cards.holo_played = false;
         self.setup.cards.out_played = false;
@@ -1501,214 +1643,192 @@ impl App {
             open = pill_button(ui, r, "⚙  Open settings", true, "cards-settings-open").clicked();
         });
         if open {
-            self.setup.cards.settings = true;
+            self.open_settings(super::Tab::Cards);
         }
     }
 
-    /// The Card Collector's settings popup: download or remove each set's
-    /// art, and pick the opening playmat's colour. Shown by itself the
-    /// first time the app is opened.
-    fn cards_settings(&mut self, ctx: &egui::Context) {
-        use std::sync::atomic::Ordering;
-        self.cards_jobs_tick();
-        if !self.setup.cards.settings {
-            return;
-        }
-        let here = self.cards_art_here();
+    /// Settings → Card Collector: download or remove each set's art, the XP
+    /// bar on the overlay, and the opening playmat's colour. Opens by itself
+    /// the first time the app is opened.
+    pub(super) fn cards_settings_body(&mut self, ui: &mut egui::Ui) {
         let first = !self.setup.cards.file().art_asked;
         let mat = self.setup.cards.file().mat.clone();
-        let screen = ctx.screen_rect();
-        let mut close = ctx.input(|i| i.key_pressed(egui::Key::Escape));
-        let mut get: Option<&'static str> = None;
-        let mut remove: Option<&'static str> = None;
         let mut pick_mat: Option<&'static str> = None;
-        egui::Area::new(egui::Id::new("cards-settings")).order(egui::Order::Foreground).fixed_pos(screen.min).show(ctx, |ui| {
-            kit::settings_style(ui);
-            let (sr, scrim) = ui.allocate_exact_size(screen.size(), Sense::click());
-            ui.painter().rect_filled(sr, 0.0, Color32::from_black_alpha(170));
-            let w = 600.0f32.min(sr.width() - 40.0);
-            let h = 600.0f32.min(sr.height() - 40.0);
-            let panel = Rect::from_center_size(sr.center(), vec2(w, h));
-            // the panel catches clicks between its controls (registered
-            // before them, so the buttons on it still get theirs)
-            let _ = ui.interact(panel, ui.id().with("cards-settings-panel"), Sense::click());
-            ui.painter().add(kit::shadow_tier(4).as_shape(panel, 16.0));
-            ui.painter().rect_filled(panel, 16.0, kit::CARD());
-            ui.painter().rect_stroke(panel, 16.0, Stroke::new(1.0f32, LINE()));
-            let inner = panel.shrink2(vec2(24.0, 22.0));
-            let p = ui.painter().clone();
-            // header
-            p.text(inner.min, Align2::LEFT_TOP, if first { "Welcome to the Card Collector" } else { "Card Collector settings" }, crate::fonts::sans_bold_font(19.0), TEXT());
-            p.text(inner.min + vec2(0.0, 28.0), Align2::LEFT_TOP, if first { "Pick which sets' card art to download. You can change this any time." } else { "Card art on this PC, and the playmat you open packs on." }, crate::fonts::sans_font(12.5), MUTED());
-            let xr = Rect::from_center_size(pos2(inner.max.x - 10.0, inner.min.y + 10.0), vec2(28.0, 28.0));
-            let xresp = ui.interact(xr, ui.id().with("cards-settings-x"), Sense::click());
-            if xresp.hovered() {
-                p.rect_filled(xr, 8.0, kit::CARD_HOVER());
-            }
-            let xc = xr.center();
-            for (a, b) in [(vec2(-5.0, -5.0), vec2(5.0, 5.0)), (vec2(-5.0, 5.0), vec2(5.0, -5.0))] {
-                p.line_segment([xc + a, xc + b], Stroke::new(1.6f32, if xresp.hovered() { TEXT() } else { MUTED() }));
-            }
-            if xresp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                close = true;
-            }
-            let label = |y: f32, t: &str| {
-                p.text(pos2(inner.min.x, y), Align2::LEFT_CENTER, t, crate::fonts::sans_bold_font(11.0), MUTED());
-            };
-            // ── card art
-            let mut y = inner.min.y + 66.0;
-            label(y, "CARD ART");
-            y += 16.0;
-            let row_h = 92.0;
-            // two rows show; more sets scroll
-            let list_h = row_h * 2.0 + 10.0;
-            let area = Rect::from_min_size(pos2(inner.min.x, y), vec2(inner.width(), list_h));
-            let mut lu = ui.new_child(egui::UiBuilder::new().max_rect(area).layout(egui::Layout::top_down(egui::Align::LEFT)));
-            egui::ScrollArea::vertical().id_salt("cards-art-rows").max_height(list_h).auto_shrink([false, false]).show(&mut lu, |ui| {
-                ui.spacing_mut().item_spacing.y = 10.0;
-                for (k, set) in cards::SETS.iter().enumerate().filter(|(_, s)| s.out()) {
-                    let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::hover());
-                    let p = ui.painter().clone();
-                    p.rect_filled(row, 12.0, kit::sunken());
-                    // the set's booster, small
-                    let br = Rect::from_min_size(row.min + vec2(12.0, 10.0), vec2(42.0, 72.0));
-                    match self.setup.cards.pics.get(ui.ctx(), &format!("pack:{}", set.packs[0]), true) {
-                        Some(t) => super::store::paint_image(&p, &t, br, egui::Rounding::same(3.0), 1.0, false),
-                        None => self.draw_booster_painted(&p, br, set),
-                    }
-                    let tx = br.max.x + 14.0;
-                    p.text(pos2(tx, row.min.y + 24.0), Align2::LEFT_CENTER, format!("{} ({})", set.name, set.year), crate::fonts::sans_bold_font(14.0), TEXT());
-                    let files = set_art(set.id).len();
-                    let (have, bytes) = here.get(k).copied().unwrap_or((0, 0));
-                    let job = self.setup.cards.save_all.iter().find(|j| j.set == set.id);
-                    let mb = |b: u64| format!("{:.0} MB", (b as f64 / 1_048_576.0).max(1.0));
-                    let status = match job {
-                        Some(j) => format!("Downloading… {} of {}", j.done.load(Ordering::Relaxed), j.total),
-                        None if have >= files => format!("Downloaded · {} on this PC", mb(bytes)),
-                        None if have == 0 => format!("{} cards and {} booster arts · not downloaded", cards::of_set(set.id).len(), set.packs.len()),
-                        None => format!("Partly downloaded ({have} of {files} files) · {}", mb(bytes)),
-                    };
-                    p.text(pos2(tx, row.min.y + 46.0), Align2::LEFT_CENTER, status, crate::fonts::sans_font(12.0), MUTED());
-                    if let Some(j) = job {
-                        let fr = j.done.load(Ordering::Relaxed) as f32 / j.total.max(1) as f32;
-                        kit::paint_bar(&p, Rect::from_min_size(pos2(tx, row.min.y + 64.0), vec2(row.max.x - 150.0 - tx, 6.0)), fr);
-                        ui.ctx().request_repaint_after(Duration::from_millis(200));
-                    }
-                    // buttons on the right
-                    let bw = 120.0;
-                    let b1 = Rect::from_min_size(pos2(row.max.x - bw - 14.0, row.center().y - 30.0 + if have > 0 && have < files { 0.0 } else { 14.0 }), vec2(bw, 32.0));
-                    if job.is_none() {
-                        if have < files {
-                            if pill_button(ui, b1, if have == 0 { "⬇  Download" } else { "⬇  Finish" }, true, ("cards-get", set.id)).clicked() {
-                                get = Some(set.id);
-                            }
-                            if have > 0 {
-                                let b2 = b1.translate(vec2(0.0, 38.0));
-                                if pill_button(ui, b2, "Remove", false, ("cards-rm", set.id)).clicked() {
-                                    remove = Some(set.id);
-                                }
-                            }
-                        } else if pill_button(ui, b1, "🗑  Remove", false, ("cards-rm", set.id)).clicked() {
-                            remove = Some(set.id);
-                        }
-                    }
-                }
+        if first {
+            kit::card(ui, |ui| {
+                ui.set_width(ui.available_width());
+                head(ui, "🃏", kit::C_GOLD, "Welcome to the Card Collector", None);
+                ui.add_space(4.0);
+                note(ui, "Pick which sets' card art to download. You can change this any time: it's always here, in Settings.");
             });
-            y += list_h + 10.0;
-            // ── xp bar
-            y += 8.0;
-            label(y, "XP BAR ON THE OVERLAY");
-            y += 14.0;
-            {
-                let mut bar = self.setup.cards.file().bar.clone();
-                let row = Rect::from_min_size(pos2(inner.min.x, y), vec2(inner.width(), 40.0));
-                let mut cu = ui.new_child(egui::UiBuilder::new().max_rect(row).layout(egui::Layout::left_to_right(egui::Align::Center)));
-                cu.spacing_mut().item_spacing.x = 12.0;
-                kit::segmented(&mut cu, &mut bar.on, &[(true, "On"), (false, "Off")]);
-                cu.add_enabled_ui(bar.on, |ui| {
-                    ui.label(RichText::new("Pinned under the overlay's").size(kit::fs(12.5)).color(MUTED()));
-                    kit::segmented(ui, &mut bar.right, &[(false, "Left end"), (true, "Right end")]);
-                });
-                if bar != self.setup.cards.file().bar {
-                    self.setup.cards.file().bar = bar;
-                    self.setup.cards.touch();
-                }
-                y += 40.0;
-            }
-            // ── playmat
-            y += 20.0;
-            label(y, "PLAYMAT");
-            y += 16.0;
-            // a little preview on the left, the colours on the right
-            let prev = Rect::from_min_size(pos2(inner.min.x, y), vec2(170.0, 110.0));
-            let base = &cards::SETS[0];
-            playmat(&p, prev, mat_col(&mat, base), true);
-            let pc = Rect::from_center_size(prev.center(), vec2(30.0, 30.0 * CARD_ASPECT));
-            card_back(&p, pc);
-            let sx = prev.max.x + 22.0;
-            let sw = 34.0;
-            let per = ((inner.max.x - sx + 12.0) / (sw + 52.0)).floor().max(1.0) as usize;
-            for (k, (key, name, rgb)) in MATS.iter().enumerate() {
-                let cx = sx + (k % per) as f32 * (sw + 52.0) + sw / 2.0 + 16.0;
-                let cy = y + 18.0 + (k / per) as f32 * 58.0;
-                let c = pos2(cx, cy);
-                let resp = ui.interact(Rect::from_center_size(pos2(cx, cy + 10.0), vec2(80.0, 54.0)), ui.id().with(("cards-mat", k)), Sense::click());
-                let on = mat == *key;
-                if key.is_empty() {
-                    // half and half: each set's own colour
-                    let a = Color32::from_rgb(cards::SETS[0].col[0], cards::SETS[0].col[1], cards::SETS[0].col[2]);
-                    let b = Color32::from_rgb(cards::SETS[1].col[0], cards::SETS[1].col[1], cards::SETS[1].col[2]);
-                    p.circle_filled(c, sw / 2.0, a);
-                    let mut m = egui::Mesh::default();
-                    m.colored_vertex(c, b);
-                    for i in 0..=16 {
-                        let ang = -std::f32::consts::FRAC_PI_4 + std::f32::consts::PI * i as f32 / 16.0;
-                        m.colored_vertex(c + vec2(ang.cos(), ang.sin()) * sw / 2.0, b);
-                    }
-                    for i in 0..16u32 {
-                        m.add_triangle(0, 1 + i, 2 + i);
-                    }
-                    p.add(m);
-                } else {
-                    p.circle_filled(c, sw / 2.0, Color32::from_rgb(rgb[0], rgb[1], rgb[2]));
-                }
-                if on || resp.hovered() {
-                    p.circle_stroke(c, sw / 2.0 + 4.0, Stroke::new(2.0f32, if on { TEXT() } else { MUTED() }));
-                }
-                p.text(pos2(cx, cy + sw / 2.0 + 12.0), Align2::CENTER_CENTER, *name, crate::fonts::sans_font(11.0), if on { TEXT() } else { MUTED() });
-                if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                    pick_mat = Some(key);
-                }
-            }
-            // done
-            let dr = Rect::from_min_size(pos2(inner.max.x - 130.0, inner.max.y - 34.0), vec2(130.0, 34.0));
-            if pill_button(ui, dr, "Done", true, "cards-settings-done").clicked() {
-                close = true;
-            }
-            if first {
-                p.text(pos2(inner.min.x, dr.center().y), Align2::LEFT_CENTER, "Find this again under Packs → Card art and playmat.", crate::fonts::sans_font(11.5), MUTED());
-            }
-            // outside the panel closes
-            if scrim.clicked() && !panel.contains(ui.ctx().pointer_interact_pos().unwrap_or_default()) {
-                close = true;
-            }
-        });
-        if let Some(set) = get {
-            self.cards_download_set(ctx, set);
+            ui.add_space(14.0);
         }
-        if let Some(set) = remove {
-            self.cards_remove_set(set);
+        // ── card art
+        kit::section(ui, "Card art");
+        self.cards_art_list(ui);
+        ui.add_space(14.0);
+        // ── the XP bar on the overlay
+        kit::section(ui, "On the overlay");
+        self.cards_bar_settings(ui);
+        ui.add_space(18.0);
+        // ── playmat
+        kit::section(ui, "Playmat");
+        let w = ui.available_width();
+        let sw = 34.0;
+        let prev_w = 170.0;
+        let per = ((w - prev_w - 22.0 + 12.0) / (sw + 52.0)).floor().max(1.0) as usize;
+        let rows = MATS.len().div_ceil(per);
+        let h = (18.0 + rows as f32 * 58.0 + 6.0).max(118.0);
+        let (area, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
+        let p = ui.painter().clone();
+        let y = area.min.y;
+        // a little preview on the left, the colours on the right
+        let prev = Rect::from_min_size(pos2(area.min.x, y), vec2(prev_w, 110.0));
+        let base = &cards::SETS[0];
+        playmat(&p, prev, mat_col(&mat, base), true);
+        let pc = Rect::from_center_size(prev.center(), vec2(30.0, 30.0 * CARD_ASPECT));
+        card_back(&p, pc);
+        let sx = prev.max.x + 22.0;
+        for (k, (key, name, rgb)) in MATS.iter().enumerate() {
+            let cx = sx + (k % per) as f32 * (sw + 52.0) + sw / 2.0 + 16.0;
+            let cy = y + 18.0 + (k / per) as f32 * 58.0;
+            let c = pos2(cx, cy);
+            let resp = ui.interact(Rect::from_center_size(pos2(cx, cy + 10.0), vec2(80.0, 54.0)), ui.id().with(("cards-mat", k)), Sense::click());
+            let on = mat == *key;
+            if key.is_empty() {
+                // half and half: each set's own colour
+                let a = Color32::from_rgb(cards::SETS[0].col[0], cards::SETS[0].col[1], cards::SETS[0].col[2]);
+                let b = Color32::from_rgb(cards::SETS[1].col[0], cards::SETS[1].col[1], cards::SETS[1].col[2]);
+                p.circle_filled(c, sw / 2.0, a);
+                let mut m = egui::Mesh::default();
+                m.colored_vertex(c, b);
+                for i in 0..=16 {
+                    let ang = -std::f32::consts::FRAC_PI_4 + std::f32::consts::PI * i as f32 / 16.0;
+                    m.colored_vertex(c + vec2(ang.cos(), ang.sin()) * sw / 2.0, b);
+                }
+                for i in 0..16u32 {
+                    m.add_triangle(0, 1 + i, 2 + i);
+                }
+                p.add(m);
+            } else {
+                p.circle_filled(c, sw / 2.0, Color32::from_rgb(rgb[0], rgb[1], rgb[2]));
+            }
+            if on || resp.hovered() {
+                p.circle_stroke(c, sw / 2.0 + 4.0, Stroke::new(2.0f32, if on { TEXT() } else { MUTED() }));
+            }
+            p.text(pos2(cx, cy + sw / 2.0 + 12.0), Align2::CENTER_CENTER, *name, crate::fonts::sans_font(11.0), if on { TEXT() } else { MUTED() });
+            if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                pick_mat = Some(key);
+            }
         }
         if let Some(m) = pick_mat {
             self.setup.cards.file().mat = m.to_string();
             self.setup.cards.touch();
         }
-        if close {
-            self.setup.cards.settings = false;
-            if first {
-                self.setup.cards.file().art_asked = true;
-                self.setup.cards.touch();
+    }
+
+    /// Each set's card art on this PC: download, finish or remove it (in
+    /// Settings → Card Collector, and in the Library's Card art tab).
+    pub(super) fn cards_art_list(&mut self, ui: &mut egui::Ui) {
+        use std::sync::atomic::Ordering;
+        self.cards_jobs_tick();
+        let here = self.cards_art_here();
+        let mut get: Option<&'static str> = None;
+        let mut remove: Option<&'static str> = None;
+        let row_h = 92.0;
+        for (k, set) in cards::SETS.iter().enumerate().filter(|(_, s)| s.out()) {
+            let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::hover());
+            let p = ui.painter().clone();
+            p.rect_filled(row, 12.0, kit::sunken());
+            // the set's booster, small
+            let br = Rect::from_min_size(row.min + vec2(12.0, 10.0), vec2(42.0, 72.0));
+            match self.setup.cards.pics.get(ui.ctx(), &format!("pack:{}", set.packs[0]), true) {
+                Some(t) => super::store::paint_image(&p, &t, br, egui::Rounding::same(3.0), 1.0, false),
+                None => self.draw_booster_painted(&p, br, set),
             }
+            let tx = br.max.x + 14.0;
+            p.text(pos2(tx, row.min.y + 24.0), Align2::LEFT_CENTER, format!("{} ({})", set.name, set.year), crate::fonts::sans_bold_font(14.0), TEXT());
+            let files = set_art(set.id).len();
+            let (have, bytes) = here.get(k).copied().unwrap_or((0, 0));
+            let job = self.setup.cards.save_all.iter().find(|j| j.set == set.id);
+            let mb = |b: u64| format!("{:.0} MB", (b as f64 / 1_048_576.0).max(1.0));
+            let status = match job {
+                Some(j) => format!("Downloading… {} of {}", j.done.load(Ordering::Relaxed), j.total),
+                None if have >= files => format!("Downloaded · {} on this PC", mb(bytes)),
+                None if have == 0 => format!("{} cards and {} booster arts · not downloaded", cards::of_set(set.id).len(), set.packs.len()),
+                None => format!("Partly downloaded ({have} of {files} files) · {}", mb(bytes)),
+            };
+            p.text(pos2(tx, row.min.y + 46.0), Align2::LEFT_CENTER, status, crate::fonts::sans_font(12.0), MUTED());
+            if let Some(j) = job {
+                let fr = j.done.load(Ordering::Relaxed) as f32 / j.total.max(1) as f32;
+                kit::paint_bar(&p, Rect::from_min_size(pos2(tx, row.min.y + 64.0), vec2((row.max.x - 150.0 - tx).max(40.0), 6.0)), fr);
+                ui.ctx().request_repaint_after(Duration::from_millis(200));
+            }
+            // buttons on the right
+            let bw = 120.0;
+            let b1 = Rect::from_min_size(pos2(row.max.x - bw - 14.0, row.center().y - 30.0 + if have > 0 && have < files { 0.0 } else { 14.0 }), vec2(bw, 32.0));
+            if job.is_none() {
+                if have < files {
+                    if pill_button(ui, b1, if have == 0 { "⬇  Download" } else { "⬇  Finish" }, true, ("cards-get", set.id)).clicked() {
+                        get = Some(set.id);
+                    }
+                    if have > 0 {
+                        let b2 = b1.translate(vec2(0.0, 38.0));
+                        if pill_button(ui, b2, "Remove", false, ("cards-rm", set.id)).clicked() {
+                            remove = Some(set.id);
+                        }
+                    }
+                } else if pill_button(ui, b1, "🗑  Remove", false, ("cards-rm", set.id)).clicked() {
+                    remove = Some(set.id);
+                }
+            }
+            ui.add_space(10.0);
+        }
+        if let Some(set) = get {
+            let ctx = ui.ctx().clone();
+            self.cards_download_set(&ctx, set);
+        }
+        if let Some(set) = remove {
+            self.cards_remove_set(set);
+        }
+        if get.is_some() || remove.is_some() {
+            // (the Library's storage bar measures again)
+            self.setup.store.sizes_got = None;
+        }
+    }
+
+    /// Settings → Card Collector: the XP bar under the overlay, with a preview.
+    pub(super) fn cards_bar_settings(&mut self, ui: &mut egui::Ui) {
+        let mut bar = self.setup.cards.file().bar.clone();
+        kit::card(ui, |ui| {
+            ui.set_width(ui.available_width());
+            head(ui, "▬", kit::C_INDIGO, "XP bar on the overlay", None);
+            ui.add_space(4.0);
+            note(ui, "A slim bar with your XP and packs, pinned under the shiny overlay while it runs (a third of its width). It moves with the overlay; click it to open the Card Collector.");
+            ui.add_space(8.0);
+            ui.checkbox(&mut bar.on, RichText::new("Show the XP bar under the overlay").size(kit::fs(13.0)).color(TEXT()));
+            ui.add_enabled_ui(bar.on, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Pinned to the").size(kit::fs(13.0)).color(TEXT()));
+                    let mut side = bar.right;
+                    kit::segmented(ui, &mut side, &[(false, "Left"), (true, "Right")]);
+                    bar.right = side;
+                });
+            });
+            ui.add_space(4.0);
+            note(ui, "It takes the look of your overlay theme. Retro DS has its own style; the others use this one for now.");
+            ui.add_space(8.0);
+            // what it looks like, at its real size, in your theme
+            let retro = self.cfg.overlay.theme == crate::config::OverlayTheme::Retro;
+            let f = self.setup.cards.file().clone();
+            let gain = self.setup.cards.gains.back().cloned();
+            let (r, _) = ui.allocate_exact_size(vec2(200.0, super::cards_bar::BAR_H), Sense::hover());
+            super::cards_bar::paint_bar(ui.painter(), r, &f, gain.as_ref().map(|g| (&g.0, g.1)), self.setup.cards.pack_at, false, None, retro, false, ui.input(|i| i.time) as f32);
+            ui.label(RichText::new(if retro { "Preview: Retro DS" } else { "Preview" }).size(kit::fs(11.0)).color(MUTED()));
+        });
+        if bar != self.setup.cards.file().bar {
+            self.setup.cards.file().bar = bar;
+            self.setup.cards.touch();
         }
     }
 
@@ -1932,7 +2052,7 @@ impl App {
             self.setup.cards.opening = None;
             return;
         };
-        let (art, stage, tear, from_right, since, at, slide, moving) = (op.art, op.stage, op.tear, op.from_right, op.since, op.at, op.slide, op.moving);
+        let (art, stage, tear, from_right, since, at, slide, moving, flipped) = (op.art, op.stage, op.tear, op.from_right, op.since, op.at, op.slide, op.moving, op.flipped);
         let (reveal, new, order) = (op.reveal.clone(), op.new.clone(), op.order.clone());
         let n = reveal.len();
         let full = ui.available_rect_before_wrap();
@@ -1960,6 +2080,7 @@ impl App {
         let mut new_tear: Option<(f32, bool)> = None;
         let mut start_move = false;
         let mut next = false;
+        let mut flip_now = false;
         let mut skip = false;
         let mut done = false;
         let mut again = false;
@@ -2085,18 +2206,22 @@ impl App {
                 let cr = Rect::from_center_size(stack_c, vec2(cw, ch));
                 // what's still in your hand, edges showing behind the front card
                 let rest = n.saturating_sub(at + 1).min(4);
+                // (face down: every card in the deck shows its back)
                 for k in (1..=rest).rev() {
                     let e = cr.translate(vec2(k as f32 * 2.5, k as f32 * 2.5));
-                    p.rect_filled(e, 8.0, Color32::from_rgb(236, 206, 72));
-                    p.rect_stroke(e, 8.0, Stroke::new(1.0f32, Color32::from_rgb(180, 150, 40)));
+                    card_back(&p, e);
+                    p.rect_stroke(e, e.width() * 0.045, Stroke::new(1.0f32, Color32::from_black_alpha(70)));
                 }
                 // the front card (the first one turns over as you start)
                 if at < n {
                     let ri = order[at];
                     let c = cards::by_id(&reveal[ri]).expect("card");
-                    let flip = if at == 0 { (t / 0.4).min(1.0) } else { 1.0 };
-                    let sx = (flip * std::f32::consts::PI).cos().abs().max(0.02);
-                    let fr = Rect::from_center_size(cr.center(), vec2(cw * sx, ch));
+                    // flip to reveal: face down until clicked, then a springy
+                    // 3D turn (it swings a little past and settles back)
+                    let ft = flipped.map_or(0.0, |f| f.elapsed().as_secs_f32());
+                    let turning = flipped.is_some() && ft < FLIP_SECS;
+                    let flip = if flipped.is_some() { (ft / FLIP_SECS * 2.2).min(1.0) } else { 0.0 };
+                    let fr = cr;
                     let rare = c.rarity >= Rarity::Rare;
                     let holo = c.rarity == Rarity::Holo;
                     if rare && flip >= 0.5 {
@@ -2118,10 +2243,17 @@ impl App {
                             theme::sparkle(&p, pos2(x, y), 4.0 + 3.0 * (1.0 - ph2), GOLD.gamma_multiply(1.0 - ph2));
                         }
                     }
-                    p.add(kit::shadow_tier(3).as_shape(fr, 10.0));
-                    if flip < 0.5 {
+                    if turning {
+                        let pic = self.setup.cards.pics.get(ui.ctx(), &c.id, true).or_else(|| self.setup.cards.pics.get(ui.ctx(), &c.id, false));
+                        flip_turn(&p, fr, pic.as_ref(), ft / FLIP_SECS);
+                    } else if flipped.is_none() {
+                        p.add(kit::shadow_tier(3).as_shape(fr, 10.0));
                         card_back(&p, fr);
+                        // a gentle nudge: click me
+                        let pulse = 0.5 + 0.5 * (t * 4.0).sin();
+                        p.rect_stroke(fr.expand(4.0), 10.0, Stroke::new(2.0f32, GOLD.gamma_multiply(0.25 + 0.45 * pulse)));
                     } else {
+                        p.add(kit::shadow_tier(3).as_shape(fr, 10.0));
                         self.draw_card(ui, fr, c, true, true);
                         if new[ri] {
                             let b = Rect::from_center_size(pos2(fr.min.x + 18.0, fr.min.y - 4.0), vec2(56.0, 24.0));
@@ -2130,7 +2262,11 @@ impl App {
                         }
                     }
                     let last = at + 1 == n;
-                    caption(&p, cr.max.y + 28.0, &format!("{}  {}", c.rarity.symbol(), c.name), &format!("Card {} of {n} · {}", at + 1, if last { "click to see them all" } else { "click for the next" }));
+                    if flipped.is_none() {
+                        caption(&p, cr.max.y + 28.0, "Click to turn it over", &format!("Card {} of {n}", at + 1));
+                    } else if !turning {
+                        caption(&p, cr.max.y + 28.0, &format!("{}  {}", c.rarity.symbol(), c.name), &format!("Card {} of {n} · {}", at + 1, if last { "click to see them all" } else { "click for the next" }));
+                    }
                 }
                 // the cards already seen, in a little fan on the right
                 let pile_x = cr.max.x + 70.0;
@@ -2162,8 +2298,13 @@ impl App {
                         self.setup.cards.opening.as_mut().expect("open").slide = None;
                     }
                 }
-                if ui.interact(area, ui.id().with("next-card"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() && (at > 0 || t > 0.4) {
-                    next = true;
+                // a click turns the front card over; once it's face up, the next click puts it down
+                if ui.interact(area, ui.id().with("next-card"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    match flipped {
+                        None => flip_now = true,
+                        Some(f) if f.elapsed().as_secs_f32() > FLIP_SECS * 0.6 => next = true,
+                        _ => {}
+                    }
                 }
                 let sr = Rect::from_min_size(pos2(area.max.x - 150.0, area.min.y + 16.0), vec2(134.0, 32.0));
                 if pill_button(ui, sr, "Show them all  ›", false, "cards-skip").clicked() {
@@ -2256,6 +2397,8 @@ impl App {
             use crate::sound::CardSnd;
             let snd = if set_stage == Some(Stage::Reveal) {
                 Some(CardSnd::Flip)
+            } else if flip_now {
+                Some(CardSnd::Flip)
             } else if start_move {
                 Some(CardSnd::Slide)
             } else if next && at + 1 < order.len() {
@@ -2292,11 +2435,21 @@ impl App {
                 op.stage = s;
                 op.since = Instant::now();
                 op.at = 0;
+                // the stack in your hand is ready to turn over straight away
+                if s == Stage::Back2 && op.moving.is_none() {
+                    op.moving = Some(Instant::now() - Duration::from_secs(5));
+                }
+                // the click on the stack turns the first card over
+                op.flipped = (s == Stage::Reveal).then(Instant::now);
+            }
+            if flip_now {
+                op.flipped = Some(Instant::now());
             }
             if next {
                 if op.at + 1 < op.order.len() {
                     op.slide = Some((op.order[op.at], Instant::now()));
                     op.at += 1;
+                    op.flipped = None;
                 } else {
                     op.stage = Stage::Summary;
                     op.since = Instant::now();
@@ -2324,10 +2477,13 @@ impl App {
     // ───────────────────────────── missions ─────────────────────────────
 
     fn cards_missions(&mut self, ui: &mut egui::Ui) {
+
+        super::app_tour::here(ui.ctx(), "cards/missions");
         let f = self.setup.cards.file().clone();
         let now = crate::config::now_unix();
         let secs_left_day = 86_400 - ((now as i64 + crate::stats::utc_offset_secs()).rem_euclid(86_400)) as u64;
         let days_left_week = 7 - (today() - f.week.when).clamp(0, 6);
+        let tour_top = ui.cursor().min.y;
         for (title, sub, t, col) in [
             ("Daily missions", format!("New ones in {}", crate::stats::fmt_duration(secs_left_day)), &f.day, kit::C_CYAN),
             ("Weekly missions", format!("New ones in {days_left_week} day{}", if days_left_week == 1 { "" } else { "s" }), &f.week, kit::C_VIOLET),
@@ -2347,6 +2503,8 @@ impl App {
             });
             ui.add_space(14.0);
         }
+        super::app_tour::mark_since(ui, "missions.list", tour_top);
+        let tour_top = ui.cursor().min.y;
         kit::card(ui, |ui| {
             ui.set_width(ui.available_width());
             head(ui, "⭐", GOLD, "How XP works", None);
@@ -2386,37 +2544,11 @@ impl App {
             note(ui, "Wild Pokémon in the game's log earn XP whether the overlay is running or not: the log is checked every few seconds, and catches up on what you played while the app was closed. Screen-counted ones earn XP while the overlay counts; ones you add by hand don't.");
         });
         ui.add_space(14.0);
-        // the bar on the overlay
-        let mut bar = self.setup.cards.file().bar.clone();
-        kit::card(ui, |ui| {
-            ui.set_width(ui.available_width());
-            head(ui, "▬", kit::C_INDIGO, "XP bar on the overlay", None);
-            ui.add_space(4.0);
-            note(ui, "A slim bar with your XP and packs, pinned under the shiny overlay while it runs (a third of its width). It moves with the overlay; click it to open the Card Collector.");
-            ui.add_space(8.0);
-            ui.checkbox(&mut bar.on, RichText::new("Show the XP bar under the overlay").size(kit::fs(13.0)).color(TEXT()));
-            ui.add_enabled_ui(bar.on, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Pinned to the").size(kit::fs(13.0)).color(TEXT()));
-                    let mut side = bar.right;
-                    kit::segmented(ui, &mut side, &[(false, "Left"), (true, "Right")]);
-                    bar.right = side;
-                });
-            });
-            ui.add_space(4.0);
-            note(ui, "It takes the look of your overlay theme. Retro DS has its own style; the others use this one for now.");
-            ui.add_space(8.0);
-            // what it looks like, at its real size, in your theme
-            let retro = self.cfg.overlay.theme == crate::config::OverlayTheme::Retro;
-            let f = self.setup.cards.file().clone();
-            let gain = self.setup.cards.gains.back().cloned();
-            let (r, _) = ui.allocate_exact_size(vec2(200.0, super::cards_bar::BAR_H), Sense::hover());
-            super::cards_bar::paint_bar(ui.painter(), r, &f, gain.as_ref().map(|g| (&g.0, g.1)), self.setup.cards.pack_at, false, None, retro, false, ui.input(|i| i.time) as f32);
-            ui.label(RichText::new(if retro { "Preview: Retro DS" } else { "Preview" }).size(kit::fs(11.0)).color(MUTED()));
-        });
-        if bar != self.setup.cards.file().bar {
-            self.setup.cards.file().bar = bar;
-            self.setup.cards.touch();
+        super::app_tour::mark_since(ui, "missions.xp", tour_top);
+        // (the XP bar's options are in Settings → Card Collector)
+        let (r, _) = ui.allocate_exact_size(vec2(240.0, 32.0), Sense::hover());
+        if pill_button(ui, r, "⚙  XP bar on the overlay", false, "cards-bar-settings").on_hover_text("Its options are in Settings → Card Collector").clicked() {
+            self.open_settings(super::Tab::Cards);
         }
     }
 }
@@ -2485,15 +2617,7 @@ pub(super) fn xp_rules() -> String {
 
 /// The back of a card (the picture in `assets/card_back.png`).
 pub(super) fn card_back(p: &egui::Painter, r: Rect) {
-    let id = egui::Id::new("card-back-texture");
-    let ctx = p.ctx().clone();
-    let tex = ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)).or_else(|| {
-        let img = image::load_from_memory(include_bytes!("../../assets/card_back.png")).ok()?.to_rgba8();
-        let ci = egui::ColorImage::from_rgba_unmultiplied([img.width() as usize, img.height() as usize], &img);
-        let t = ctx.load_texture("card-back", ci, egui::TextureOptions::LINEAR);
-        ctx.data_mut(|d| d.insert_temp(id, t.clone()));
-        Some(t)
-    });
+    let tex = card_back_tex(p.ctx());
     let round = r.width() * 0.045;
     match tex {
         Some(t) => super::store::paint_image(p, &t, r, egui::Rounding::same(round), 1.0, false),
@@ -2549,6 +2673,322 @@ fn hero_link(ui: &egui::Ui, r: Rect, text: &str, id: &str) -> bool {
     let col = if resp.hovered() { TEXT() } else { kit::primary() };
     ui.painter().galley_with_override_text_color(lr.min, g, col);
     resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+}
+
+// ───────────────────────────── holo foil ─────────────────────────────
+
+/// Where the picture window sits on a Wizards-era card, as fractions of the
+/// card (left, top, right, bottom), inside its gold frame. Base Set to Team
+/// Rocket share the layout (measured on the cards' own pictures).
+const ART_BOX: [f32; 4] = [0.108, 0.118, 0.898, 0.517];
+/// A Stage 1 / Stage 2 card's evolution badge (the gold starburst with the
+/// Pokémon it evolves from), which sits over the picture's top-left corner:
+/// its centre as fractions of the card, and its radius as a fraction of the
+/// card's width. The foil never goes over it.
+const BADGE: [f32; 3] = [0.139, 0.101, 0.100];
+/// The e-Card frame (Expedition, Aquapolis, Skyridge): its picture window,
+/// the rounded corner at the window's top left (radius as a fraction of the
+/// card's width), and a Stage card's evolution badge, which bulges into
+/// that corner. Measured on the cards' own pictures.
+const ART_BOX_E: [f32; 4] = [0.102, 0.122, 0.967, 0.487];
+const CORNER_E: f32 = 0.105;
+const BADGE_E: [f32; 3] = [0.100, 0.085, 0.110];
+/// The most a holo card tips towards the pointer, in degrees.
+const FOIL_TILT_DEG: f32 = 9.0;
+/// How many starbursts are in a holo's picture window.
+const FOIL_STARS: usize = 56;
+/// How strong the rainbow sheen in the picture window is (0..255, on the
+/// brightest foil; darker parts of the picture get less).
+const FOIL_RAINBOW: f32 = 60.0;
+/// How bright the band of rainbow light that sweeps across a holo is (0..255).
+const FOIL_SWEEP: f32 = 105.0;
+
+/// A holo card with its picture: it tips away from the pointer like you're
+/// pressing on it, a soft glare follows the pointer, and the foil in the
+/// picture window is the "starlight" pattern the Base Set, Jungle and Fossil
+/// holos used: starbursts of different sizes that light up as the light
+/// moves over them, with a faint rainbow sheen. With the pointer elsewhere it
+/// drifts gently on its own. True while the pointer is over it.
+#[allow(clippy::too_many_arguments)]
+fn foil_card(ui: &egui::Ui, p: &egui::Painter, r: Rect, round: f32, card_id: &str, evolves: bool, ecard: bool, t: &egui::TextureHandle) -> bool {
+    use std::f32::consts::{PI, TAU};
+    let ctx = ui.ctx();
+    let time = ui.input(|i| i.time) as f32;
+    let id = egui::Id::new(("card-foil", card_id));
+    let hover = ctx.pointer_hover_pos().filter(|q| r.contains(*q));
+    // Appearance → Animations off: no tipping, drifting or twinkling; the
+    // glare still sits where the pointer is
+    let motion = kit::motion();
+    // where the light is, -1..1 across the card
+    let (tx, ty) = match hover {
+        Some(q) => (((q.x - r.center().x) / (r.width() / 2.0)).clamp(-1.0, 1.0), ((q.y - r.center().y) / (r.height() / 2.0)).clamp(-1.0, 1.0)),
+        // big cards (the close-up, a pack's holo) drift on their own; small
+        // ones settle flat so they hand back to the plain picture smoothly
+        None if motion && r.width() > 240.0 => ((time * 0.7).sin() * 0.35, (time * 0.53).cos() * 0.25),
+        None => (0.0, 0.0),
+    };
+    let speed = if !motion { 0.0 } else if hover.is_some() { 0.12 } else { 0.5 };
+    let lx = ctx.animate_value_with_time(id.with("x"), tx, speed);
+    let ly = ctx.animate_value_with_time(id.with("y"), ty, speed);
+    let lit = ctx.animate_value_with_time(id.with("lit"), if hover.is_some() { 1.0 } else { 0.55 }, if motion { 0.25 } else { 0.0 });
+
+    // flat card space -> tipped card on screen (a little perspective)
+    let (c0, half) = (r.center(), r.size() / 2.0);
+    let max = if motion { FOIL_TILT_DEG.to_radians() } else { 0.0 };
+    let (sy, cy) = (-lx * max).sin_cos();
+    let (sx, cx) = (-ly * max).sin_cos();
+    let d = r.height() * 3.0;
+    let proj = |q: egui::Pos2| -> egui::Pos2 {
+        let (x, y) = (q.x - c0.x, q.y - c0.y);
+        let (x1, z1) = (x * cy, x * sy);
+        let (y2, z2) = (y * cx - z1 * sx, y * sx + z1 * cx);
+        let f = d / (d - z2);
+        pos2(c0.x + x1 * f, c0.y + y2 * f)
+    };
+    // the light's spot on the card, in flat card space
+    let g = pos2(c0.x + lx * half.x, c0.y + ly * half.y);
+
+    // ── the card: a grid that keeps the rounded corners ──
+    let rr = round.min(r.width() / 2.0);
+    let mut ys: Vec<f32> = Vec::new();
+    for k in 0..=6 {
+        ys.push(r.min.y + rr * (1.0 - (k as f32 / 6.0 * PI / 2.0).cos()));
+    }
+    let mid = 12;
+    for k in 1..mid {
+        ys.push(r.min.y + rr + (r.height() - 2.0 * rr) * k as f32 / mid as f32);
+    }
+    for k in (0..=6).rev() {
+        ys.push(r.max.y - rr * (1.0 - (k as f32 / 6.0 * PI / 2.0).cos()));
+    }
+    const COLS: usize = 10;
+    let mut pts: Vec<egui::Pos2> = Vec::with_capacity(ys.len() * (COLS + 1));
+    for y in &ys {
+        let dd = (r.min.y + rr - y).max(y - (r.max.y - rr)).clamp(0.0, rr);
+        let inset = rr - (rr * rr - dd * dd).max(0.0).sqrt();
+        let (lo, hi) = (r.min.x + inset, r.max.x - inset);
+        for k in 0..=COLS {
+            pts.push(pos2(lo + (hi - lo) * k as f32 / COLS as f32, *y));
+        }
+    }
+    let grid = |m: &mut egui::Mesh| {
+        for row in 1..ys.len() as u32 {
+            let (a, b) = ((row - 1) * (COLS as u32 + 1), row * (COLS as u32 + 1));
+            for k in 0..COLS as u32 {
+                m.add_triangle(a + k, a + k + 1, b + k);
+                m.add_triangle(a + k + 1, b + k + 1, b + k);
+            }
+        }
+    };
+    // the picture, cropped the same way `store::paint_image` does
+    let ts = t.size_vec2();
+    let (ra, ia) = (r.width() / r.height(), ts.x / ts.y);
+    let uv = if ia > ra {
+        let w = ra / ia;
+        Rect::from_min_max(pos2((1.0 - w) / 2.0, 0.0), pos2((1.0 + w) / 2.0, 1.0))
+    } else {
+        Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, ia / ra))
+    };
+    // where a spot on the card is in its picture
+    let at = |q: egui::Pos2| uv.min + vec2((q.x - r.min.x) / r.width() * uv.width(), (q.y - r.min.y) / r.height() * uv.height());
+    // Light that blends with the card's own foil: drawn with the card's
+    // picture as the texture, so it's the picture times the light's colour,
+    // added on. Bright foil catches it, the dark parts of the art barely do,
+    // so the sheen reads as the foil shining, not a layer over the top.
+    let lit_vertex = |m: &mut egui::Mesh, q: egui::Pos2, col: Color32| m.vertices.push(egui::epaint::Vertex { pos: proj(q), uv: at(q), color: col });
+    let mut card = egui::Mesh::with_texture(t.id());
+    for q in &pts {
+        let f = vec2((q.x - r.min.x) / r.width(), (q.y - r.min.y) / r.height());
+        card.vertices.push(egui::epaint::Vertex { pos: proj(*q), uv: uv.min + vec2(f.x * uv.width(), f.y * uv.height()), color: Color32::WHITE });
+    }
+    grid(&mut card);
+    p.add(card);
+
+    // ── the starlight foil, in the picture window only ──
+    let ab = if ecard { ART_BOX_E } else { ART_BOX };
+    let art = Rect::from_min_max(pos2(r.min.x + r.width() * ab[0], r.min.y + r.height() * ab[1]), pos2(r.min.x + r.width() * ab[2], r.min.y + r.height() * ab[3]));
+    let reach = r.height() * 0.8;
+    let near = |q: egui::Pos2| (1.0 - q.distance(g) / reach).clamp(0.0, 1.0);
+    // a faint rainbow sheen in diagonal bands that slide as the card tips
+    const SN: usize = 10;
+    let mut sheen = egui::Mesh::with_texture(t.id());
+    for j in 0..=SN {
+        for i in 0..=SN {
+            let (u, v) = (i as f32 / SN as f32, j as f32 / SN as f32);
+            let q = pos2(art.min.x + art.width() * u, art.min.y + art.height() * v);
+            let band = 0.5 + 0.5 * ((u * 1.3 + v) * 7.0 + (lx + ly) * 4.0).sin();
+            let k = FOIL_RAINBOW * lit * (0.30 + 0.70 * band) * (0.45 + 0.55 * near(q));
+            let drift = if motion { time * 0.02 } else { 0.0 };
+            lit_vertex(&mut sheen, q, add_light(vivid(u * 0.55 + v * 0.35 + lx * 0.3 + ly * 0.2 + drift), k / 255.0));
+        }
+    }
+    for j in 1..=SN as u32 {
+        let (a, b) = ((j - 1) * (SN as u32 + 1), j * (SN as u32 + 1));
+        for k in 0..SN as u32 {
+            sheen.add_triangle(a + k, a + k + 1, b + k);
+            sheen.add_triangle(a + k + 1, b + k + 1, b + k);
+        }
+    }
+    p.add(sheen);
+    // the holo sweep: a bright band of rainbow light across the picture,
+    // sliding over as the card tips (and drifting on its own when it's not
+    // being pointed at), the way light runs across a real holo
+    const WN: usize = 18;
+    let centre_s = 0.5 + lx * 0.6 + ly * 0.3;
+    let width_s = 0.24;
+    let mut sweep = egui::Mesh::with_texture(t.id());
+    for j in 0..=WN {
+        for i in 0..=WN {
+            let (u, v) = (i as f32 / WN as f32, j as f32 / WN as f32);
+            let q = pos2(art.min.x + art.width() * u, art.min.y + art.height() * v);
+            // how far along the diagonal, against the band's middle
+            let s_d = (u * 0.62 + v * 0.38 - centre_s) / width_s;
+            let k = if s_d.abs() >= 1.0 { 0.0 } else { 0.5 + 0.5 * (s_d * PI).cos() };
+            // the colours run through the band like a prism
+            let col = vivid(0.55 + s_d * 0.45 + (lx - ly) * 0.15);
+            lit_vertex(&mut sweep, q, add_light(col, FOIL_SWEEP * lit * k / 255.0));
+        }
+    }
+    for j in 1..=WN as u32 {
+        let (a, b) = ((j - 1) * (WN as u32 + 1), j * (WN as u32 + 1));
+        for k in 0..WN as u32 {
+            sweep.add_triangle(a + k, a + k + 1, b + k);
+            sweep.add_triangle(a + k + 1, b + k + 1, b + k);
+        }
+    }
+    p.add(sweep);
+    // the starbursts: the same pattern on the same card every time
+    let mut seed: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in card_id.bytes() {
+        seed ^= b as u64;
+        seed = seed.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    let mut rnd = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed >> 11) as f32 / (1u64 << 53) as f32
+    };
+    let mut stars = egui::Mesh::default();
+    for _ in 0..FOIL_STARS {
+        let (u, v) = (0.04 + 0.92 * rnd(), 0.05 + 0.90 * rnd());
+        let size = r.width() * (0.010 + 0.034 * rnd().powi(3));
+        let (hue, phase) = (rnd(), rnd() * TAU);
+        let q = pos2(art.min.x + art.width() * u, art.min.y + art.height() * v);
+        let twinkle = if motion { 0.6 + 0.4 * (time * 1.7 + phase).sin() } else { 0.8 };
+        let b = lit * (0.25 + 0.75 * near(q)) * twinkle;
+        if b < 0.03 {
+            continue;
+        }
+        let col = pastel(hue + lx * 0.25 + ly * 0.15);
+        let bright = [col[0] * 0.65 + 89.0, col[1] * 0.65 + 89.0, col[2] * 0.65 + 89.0];
+        // a soft glow behind it
+        let base = stars.vertices.len() as u32;
+        stars.colored_vertex(proj(q), add_light(col, 55.0 * b / 255.0));
+        for k in 0..10 {
+            let a = k as f32 / 10.0 * TAU;
+            stars.colored_vertex(proj(q + vec2(a.cos(), a.sin()) * size * 0.55), Color32::TRANSPARENT);
+        }
+        for k in 0..10u32 {
+            stars.add_triangle(base, base + 1 + k, base + 1 + (k + 1) % 10);
+        }
+        // the burst: four long rays, four short ones, a bright middle
+        let base = stars.vertices.len() as u32;
+        stars.colored_vertex(proj(q), add_light(bright, 1.7 * b));
+        for k in 0..16 {
+            let a = k as f32 * PI / 8.0;
+            let (len, col_k) = if k % 4 == 0 {
+                (size, Color32::TRANSPARENT)
+            } else if k % 2 == 0 {
+                (size * 0.45, Color32::TRANSPARENT)
+            } else {
+                (size * 0.10, add_light(bright, 1.1 * b))
+            };
+            stars.colored_vertex(proj(q + vec2(a.cos(), a.sin()) * len), col_k);
+        }
+        for k in 0..16u32 {
+            stars.add_triangle(base, base + 1 + k, base + 1 + (k + 1) % 16);
+        }
+    }
+    p.add(stars);
+    // what isn't foil gets its own picture back over the top: a Stage card's
+    // evolution badge, and the e-Card frame's rounded corner
+    let patch = |pts: &[egui::Pos2]| {
+        let mut m = egui::Mesh::with_texture(t.id());
+        for q in pts {
+            m.vertices.push(egui::epaint::Vertex { pos: proj(*q), uv: at(*q), color: Color32::WHITE });
+        }
+        for k in 1..pts.len().saturating_sub(1) as u32 {
+            m.add_triangle(0, k, k + 1);
+        }
+        p.add(m);
+    };
+    let circle = |c: egui::Pos2, rad: f32| -> Vec<egui::Pos2> {
+        let mut v = vec![c];
+        for k in 0..=40 {
+            let a = k as f32 / 40.0 * TAU;
+            v.push(c + vec2(a.cos(), a.sin()) * rad);
+        }
+        v
+    };
+    if ecard {
+        // the corner outside the window's rounded top left
+        let rad = r.width() * CORNER_E;
+        let c0 = art.min;
+        let mut v = vec![c0];
+        for k in 0..=16 {
+            let a = (180.0 + 90.0 * k as f32 / 16.0).to_radians();
+            v.push(pos2(c0.x + rad, c0.y + rad) + vec2(a.cos(), a.sin()) * rad);
+        }
+        v.push(c0);
+        patch(&v);
+        if evolves {
+            patch(&circle(pos2(r.min.x + r.width() * BADGE_E[0], r.min.y + r.height() * BADGE_E[1]), r.width() * BADGE_E[2]));
+        }
+    } else if evolves {
+        patch(&circle(pos2(r.min.x + r.width() * BADGE[0], r.min.y + r.height() * BADGE[1]), r.width() * BADGE[2]));
+    }
+
+    // ── the glare: soft light where the pointer is, over the whole card ──
+    let mut glare = egui::Mesh::with_texture(t.id());
+    for q in &pts {
+        let k = (1.0 - q.distance(g) / (r.height() * 0.85)).clamp(0.0, 1.0);
+        let tint = vivid((q.x - r.min.x) / r.width() * 0.6 + (q.y - r.min.y) / r.height() * 0.4 + lx * 0.4 + ly * 0.3);
+        let mixed = [tint[0] * 0.35 + 255.0 * 0.65, tint[1] * 0.35 + 255.0 * 0.65, tint[2] * 0.35 + 255.0 * 0.65];
+        lit_vertex(&mut glare, *q, add_light(mixed, 0.42 * lit * k * k));
+    }
+    grid(&mut glare);
+    p.add(glare);
+    hover.is_some()
+}
+
+/// A rainbow colour at `h` (0..1, wraps), softened towards white, 0..255.
+fn pastel(h: f32) -> [f32; 3] {
+    let h = h.rem_euclid(1.0) * 6.0;
+    let x = 1.0 - (h % 2.0 - 1.0).abs();
+    let [r, g, b] = match h as u32 {
+        0 => [1.0, x, 0.0],
+        1 => [x, 1.0, 0.0],
+        2 => [0.0, 1.0, x],
+        3 => [0.0, x, 1.0],
+        4 => [x, 0.0, 1.0],
+        _ => [1.0, 0.0, x],
+    };
+    [(r * 0.65 + 0.35) * 255.0, (g * 0.65 + 0.35) * 255.0, (b * 0.65 + 0.35) * 255.0]
+}
+
+/// A strong rainbow colour at `h` (0..1, wraps), 0..255.
+fn vivid(h: f32) -> [f32; 3] {
+    let p = pastel(h);
+    // undo most of `pastel`'s softening
+    [((p[0] / 255.0 - 0.35) / 0.65 * 0.85 + 0.15) * 255.0, ((p[1] / 255.0 - 0.35) / 0.65 * 0.85 + 0.15) * 255.0, ((p[2] / 255.0 - 0.35) / 0.65 * 0.85 + 0.15) * 255.0]
+}
+
+/// Light that adds to what's under it (alpha 0 in egui's premultiplied
+/// colours adds instead of covering): `rgb` 0..255 scaled by `k`.
+fn add_light(rgb: [f32; 3], k: f32) -> Color32 {
+    let c = |v: f32| (v * k).clamp(0.0, 255.0) as u8;
+    Color32::from_rgba_premultiplied(c(rgb[0]), c(rgb[1]), c(rgb[2]), 0)
 }
 
 /// A rainbow shine sweeping across (holo cards, foil packs).
@@ -2800,6 +3240,23 @@ fn release_when(unix: u64) -> String {
     format!("{} {}, {}", crate::stats::WEEKDAYS[crate::stats::weekday(day)], crate::stats::fmt_day_short(day), crate::stats::fmt_clock(unix))
 }
 
+/// Modern Plus: how long until it's out, in words: "Out in 45 s",
+/// "Out in 3 min", "Out in 5 h 20 min", "Out in 7 days".
+fn countdown_words(secs: u64) -> String {
+    let (d, h, m) = (secs / 86_400, (secs % 86_400) / 3600, (secs % 3600) / 60);
+    if secs < 60 {
+        format!("Out in {secs} s")
+    } else if secs < 3600 {
+        format!("Out in {} min", m.max(1))
+    } else if d == 0 {
+        if m > 0 { format!("Out in {h} h {m} min") } else { format!("Out in {h} h") }
+    } else if d == 1 {
+        "Out tomorrow".to_string()
+    } else {
+        format!("Out in {d} days")
+    }
+}
+
 /// How long until it's out: "6d 18h", "5h 12m", "12:05".
 fn countdown(secs: u64) -> String {
     let (d, h, m, s) = (secs / 86_400, (secs % 86_400) / 3600, (secs % 3600) / 60, secs % 60);
@@ -2877,6 +3334,96 @@ fn dedupe_order(order: Vec<usize>, n: usize) -> Vec<usize> {
         out.push(j);
     }
     out
+}
+
+/// How long a card takes to turn over (with its little swing back).
+const FLIP_SECS: f32 = 0.8;
+
+/// The card back's picture (loaded once).
+fn card_back_tex(ctx: &egui::Context) -> Option<egui::TextureHandle> {
+    let id = egui::Id::new("card-back-texture");
+    ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)).or_else(|| {
+        let img = image::load_from_memory(include_bytes!("../../assets/card_back.png")).ok()?.to_rgba8();
+        let ci = egui::ColorImage::from_rgba_unmultiplied([img.width() as usize, img.height() as usize], &img);
+        let t = ctx.load_texture("card-back", ci, egui::TextureOptions::LINEAR);
+        ctx.data_mut(|d| d.insert_temp(id, t.clone()));
+        Some(t)
+    })
+}
+
+/// A card turning over at `k` (0 face down → 1 face up): a real 3D turn
+/// with a little perspective, the springy way the UI Lab's "Flip to reveal"
+/// does it (it swings a touch past and settles back), lifting off the table
+/// as it goes.
+fn flip_turn(p: &egui::Painter, r: Rect, front: Option<&egui::TextureHandle>, k: f32) {
+    use std::f32::consts::PI;
+    let k = k.clamp(0.0, 1.0);
+    // ease out with an overshoot (close to cubic-bezier(.4, 1.4, .5, 1))
+    let c1 = 1.9;
+    let c3 = c1 + 1.0;
+    let e = 1.0 + c3 * (k - 1.0).powi(3) + c1 * (k - 1.0).powi(2);
+    let angle = PI * e;
+    let lift = (k * PI).sin().max(0.0);
+    let r = Rect::from_center_size(r.center() - vec2(0.0, 10.0 * lift), r.size() * (1.0 + 0.06 * lift));
+    p.add(kit::shadow_tier(3).as_shape(r.translate(vec2(0.0, 12.0 * lift)), 10.0));
+    // which side is towards you: the back until halfway, then the front
+    // (turned the other half so it isn't mirrored)
+    let (tex, a) = if angle.cos() >= 0.0 { (card_back_tex(p.ctx()), angle) } else { (front.cloned(), angle - PI) };
+    let (s, c) = a.sin_cos();
+    let d = r.height() * 3.5;
+    let mid = r.center();
+    let proj = |q: egui::Pos2| -> egui::Pos2 {
+        let x = q.x - mid.x;
+        let z = x * s;
+        let f = d / (d - z);
+        pos2(mid.x + x * c * f, mid.y + (q.y - mid.y) * f)
+    };
+    match tex {
+        Some(t) => {
+            // the picture cropped like `store::paint_image`, on a grid that
+            // keeps the rounded corners
+            let ts = t.size_vec2();
+            let (ra, ia) = (r.width() / r.height(), ts.x / ts.y);
+            let uv = if ia > ra {
+                let w = ra / ia;
+                Rect::from_min_max(pos2((1.0 - w) / 2.0, 0.0), pos2((1.0 + w) / 2.0, 1.0))
+            } else {
+                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, ia / ra))
+            };
+            let rr = r.width() * 0.045;
+            let mut ys: Vec<f32> = (0..=4).map(|i| r.min.y + rr * (1.0 - (i as f32 / 4.0 * PI / 2.0).cos())).collect();
+            ys.extend((1..8).map(|i| r.min.y + rr + (r.height() - 2.0 * rr) * i as f32 / 8.0));
+            ys.extend((0..=4).rev().map(|i| r.max.y - rr * (1.0 - (i as f32 / 4.0 * PI / 2.0).cos())));
+            const COLS: u32 = 8;
+            let mut m = egui::Mesh::with_texture(t.id());
+            // a little darker while it's edge-on, like light leaving it
+            let shade = (0.55 + 0.45 * c.abs()).clamp(0.0, 1.0);
+            let col = Color32::from_gray((255.0 * shade) as u8);
+            for y in &ys {
+                let dd = (r.min.y + rr - y).max(y - (r.max.y - rr)).clamp(0.0, rr);
+                let inset = rr - (rr * rr - dd * dd).max(0.0).sqrt();
+                let (lo, hi) = (r.min.x + inset, r.max.x - inset);
+                for i in 0..=COLS {
+                    let q = pos2(lo + (hi - lo) * i as f32 / COLS as f32, *y);
+                    let f = vec2((q.x - r.min.x) / r.width(), (q.y - r.min.y) / r.height());
+                    m.vertices.push(egui::epaint::Vertex { pos: proj(q), uv: uv.min + vec2(f.x * uv.width(), f.y * uv.height()), color: col });
+                }
+            }
+            for row in 1..ys.len() as u32 {
+                let (a0, b0) = ((row - 1) * (COLS + 1), row * (COLS + 1));
+                for i in 0..COLS {
+                    m.add_triangle(a0 + i, a0 + i + 1, b0 + i);
+                    m.add_triangle(a0 + i + 1, b0 + i + 1, b0 + i);
+                }
+            }
+            p.add(m);
+        }
+        None => {
+            // the picture isn't here yet: a plain card, turning
+            let pts = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom()].map(proj);
+            p.add(egui::Shape::convex_polygon(pts.to_vec(), Color32::from_rgb(236, 206, 72), Stroke::NONE));
+        }
+    }
 }
 
 /// A four-cornered piece of a picture (or a plain colour) at any angle.

@@ -31,6 +31,7 @@ const PLAN: Color32 = kit::C_TEAL;
 
 impl App {
     pub(super) fn page_breed_plan(&mut self, ui: &mut egui::Ui, w: &Arc<Wiki>) {
+        super::app_tour::here(ui.ctx(), "breed/plan");
         let (setup, mut t, breeders, done, have) = {
             let f = self.setup.breed.file();
             (f.setup, f.target.clone(), f.breeders.clone(), f.plan_done.clone(), f.have_items.clone())
@@ -74,19 +75,27 @@ impl App {
                 ui.spacing_mut().item_spacing.x = 16.0;
                 ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
                     ui.set_width(left_w);
+                    let tour_top = ui.cursor().min.y;
                     self.plan_goal(ui, w, &mut t, setup.world, setup.hidden_abilities);
+                    super::app_tour::mark_since(ui, "plan.goal", tour_top);
                 });
                 let rw = ui.available_width();
                 let t2 = t.clone();
                 ui.allocate_ui_with_layout(egui::vec2(rw, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
                     ui.set_width(rw);
+                    let tour_top = ui.cursor().min.y;
                     self.plan_steps(ui, w, &t2, &plan, &done, &have, working, &mut act, &mut toggle_done, &mut toggle_have);
+                    super::app_tour::mark_since(ui, "plan.steps", tour_top);
                 });
             });
         } else {
+            let tour_top = ui.cursor().min.y;
             self.plan_goal(ui, w, &mut t, setup.world, setup.hidden_abilities);
+            super::app_tour::mark_since(ui, "plan.goal", tour_top);
             ui.add_space(14.0);
+            let tour_top = ui.cursor().min.y;
             self.plan_steps(ui, w, &t, &plan, &done, &have, working, &mut act, &mut toggle_done, &mut toggle_have);
+            super::app_tour::mark_since(ui, "plan.steps", tour_top);
         }
 
         if t != before {

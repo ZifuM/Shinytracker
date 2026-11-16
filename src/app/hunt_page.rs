@@ -14,7 +14,9 @@ use crate::theme;
 use eframe::egui::{self, pos2, vec2, Align2, Color32, Rect, RichText, Sense, Stroke};
 
 /// Most extra Pokémon in one hunt.
-const MAX_ALSO: usize = 5;
+/// Pokémon hunted alongside the target (16: a soft reset for a starter
+/// hunts all 17 starters).
+const MAX_ALSO: usize = 16;
 
 /// Where a target lives, worked out from the Pokédex data.
 struct Habitat {
@@ -28,6 +30,7 @@ struct Habitat {
 
 impl App {
     pub(super) fn page_hunt(&mut self, ui: &mut egui::Ui) {
+        super::app_tour::here(ui.ctx(), "shiny-hunt");
         kit::page_header(ui, "HUNT", "What you're hunting and how. Your odds update as you change anything.");
         let w = ui.available_width();
         if w >= 980.0 {
@@ -40,26 +43,34 @@ impl App {
                 ui.allocate_ui_with_layout(vec2(main_w, h), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.set_width(main_w);
                     ui.spacing_mut().item_spacing.x = 8.0;
+                    let tour_top = ui.cursor().min.y;
                     self.hunt_target(ui);
+                    super::app_tour::mark_since(ui, "hunt.target", tour_top);
                     ui.add_space(18.0);
+                    let tour_top = ui.cursor().min.y;
                     self.hunt_method(ui);
+                    super::app_tour::mark_since(ui, "hunt.method", tour_top);
                 });
                 ui.allocate_ui_with_layout(vec2(side_w, h), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.set_width(side_w);
                     ui.spacing_mut().item_spacing.x = 8.0;
+                    let tour_top = ui.cursor().min.y;
                     self.hunt_odds(ui);
-                    ui.add_space(18.0);
-                    self.hunt_session(ui);
+                    super::app_tour::mark_since(ui, "hunt.odds", tour_top);
                 });
             });
         } else {
+            let tour_top = ui.cursor().min.y;
             self.hunt_target(ui);
+            super::app_tour::mark_since(ui, "hunt.target", tour_top);
             ui.add_space(18.0);
+            let tour_top = ui.cursor().min.y;
             self.hunt_odds(ui);
+            super::app_tour::mark_since(ui, "hunt.odds", tour_top);
             ui.add_space(18.0);
+            let tour_top = ui.cursor().min.y;
             self.hunt_method(ui);
-            ui.add_space(18.0);
-            self.hunt_session(ui);
+            super::app_tour::mark_since(ui, "hunt.method", tour_top);
         }
         ui.add_space(30.0);
     }
@@ -291,6 +302,8 @@ impl App {
         }
         if let Some(slug) = picked {
             self.set_target(slug);
+            // its evolution line on rare grass, every starter on soft resets
+            self.add_target_group();
             self.setup.picking_target = false;
         }
         if let Some(id) = open_dex {
@@ -310,7 +323,7 @@ impl App {
         let also = self.also_slugs();
         ui.horizontal(|ui| {
             ui.label(RichText::new("Also hunting").font(ch::bold(13.5)).color(TEXT()));
-            kit::info(ui, "Hunting more than one Pokémon on the same route? They all count as sightings, and Caught! asks which one it was.");
+            kit::info(ui, "Hunting more than one Pokémon on the same route? They all count as sightings, and Caught! asks which one it was. On rare grass, picking a Pokémon adds its whole evolution line; soft resetting for a starter adds every starter.");
         });
         ui.add_space(6.0);
         let mut remove = None;
@@ -376,9 +389,16 @@ impl App {
                 let mut list = self.also_slugs();
                 if self.cfg.target.as_deref() != Some(slug.as_str()) && !list.contains(&slug) {
                     if k < list.len() {
-                        list[k] = slug;
+                        list[k] = slug.clone();
                     } else {
-                        list.push(slug);
+                        list.push(slug.clone());
+                    }
+                    // its evolution line too (rare grass), or every starter (soft resets)
+                    let main = self.cfg.target.clone();
+                    for s in self.target_group(&slug, self.cfg.hunt_method) {
+                        if main.as_deref() != Some(s.as_str()) && !list.contains(&s) {
+                            list.push(s);
+                        }
                     }
                     self.set_also(list);
                 }
@@ -405,6 +425,8 @@ impl App {
                         if method_tile(ui, tw, m, self.cfg.hunt_method == m, &method_badge(&self.cfg, m)) {
                             self.cfg.hunt_method = m;
                             self.dirty = true;
+                            // rare grass: its line too; soft resets for a starter: every starter
+                            self.add_target_group();
                         }
                     }
                 });
@@ -561,7 +583,9 @@ impl App {
 
     // ───────────────────────────── session ─────────────────────────────
 
-    fn hunt_session(&mut self, ui: &mut egui::Ui) {
+    /// Sessions and breaks (Settings → Shiny Hunter → General: they're for
+    /// every hunt, not just this one).
+    pub(super) fn hunt_session(&mut self, ui: &mut egui::Ui) {
         kit::card(ui, |ui| {
             card_head(ui, "⏱", CYAN, "Sessions & breaks", None);
             ui.add_space(12.0);

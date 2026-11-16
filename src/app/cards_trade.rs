@@ -148,10 +148,13 @@ impl App {
     }
 
     pub(super) fn cards_trade(&mut self, ui: &mut egui::Ui) {
+
+        super::app_tour::here(ui.ctx(), "cards/trade");
         let me = self.cards_book().me;
         let w = ui.available_width();
         let wide = w >= 900.0;
         // ── your Trainer ID
+        let tour_top = ui.cursor().min.y;
         kit::card(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
@@ -169,6 +172,7 @@ impl App {
                 note(ui, "Give this to a friend who wants to send you a card. Their code will only work for this ID.");
             });
         });
+        super::app_tour::mark_since(ui, "trade.id", tour_top);
         ui.add_space(14.0);
         // ── send and claim, side by side when there's room
         if wide {
@@ -178,22 +182,34 @@ impl App {
                 ui.spacing_mut().item_spacing.x = gap;
                 ui.allocate_ui_with_layout(vec2(cw, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.set_width(cw);
+                    let tour_top = ui.cursor().min.y;
                     self.trade_send_card(ui);
+                    super::app_tour::mark_since(ui, "trade.send", tour_top);
                 });
                 ui.allocate_ui_with_layout(vec2(cw, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.set_width(cw);
+                    let tour_top = ui.cursor().min.y;
                     self.trade_claim_card(ui);
+                    super::app_tour::mark_since(ui, "trade.claim", tour_top);
                 });
             });
         } else {
+            let tour_top = ui.cursor().min.y;
             self.trade_send_card(ui);
+            super::app_tour::mark_since(ui, "trade.send", tour_top);
             ui.add_space(14.0);
+            let tour_top = ui.cursor().min.y;
             self.trade_claim_card(ui);
+            super::app_tour::mark_since(ui, "trade.claim", tour_top);
         }
         ui.add_space(14.0);
+        let tour_top = ui.cursor().min.y;
         self.cards_trade_spares(ui);
+        super::app_tour::mark_since(ui, "trade.spares", tour_top);
         ui.add_space(14.0);
+        let tour_top = ui.cursor().min.y;
         self.trade_history(ui);
+        super::app_tour::mark_since(ui, "trade.history", tour_top);
         self.trade_picker(ui.ctx());
     }
 
@@ -255,7 +271,7 @@ impl App {
                         Some(c) => {
                             let n = self.setup.cards.file().count(&c.id);
                             ui.label(RichText::new(&c.name).font(crate::fonts::sans_bold_font(15.0)).color(TEXT()));
-                            ui.label(RichText::new(format!("{} · #{} · {} {}", c.set_name(), c.num, c.rarity.symbol(), c.rarity.name())).size(kit::fs(12.0)).color(MUTED()));
+                            ui.label(RichText::new(format!("{} · #{} · {} {}", c.set_name(), c.number(), c.rarity.symbol(), c.rarity.name())).size(kit::fs(12.0)).color(MUTED()));
                             ui.label(RichText::new(if n > 1 { format!("You have {n}") } else { "Your only one".to_string() }).size(kit::fs(12.0)).color(if n > 1 { MUTED() } else { Color32::from_rgb(250, 190, 90) }));
                         }
                         None => {
@@ -360,7 +376,7 @@ impl App {
                     let p = ui.painter();
                     p.text(pos2(tx, row.min.y + 20.0), Align2::LEFT_CENTER, format!("{} is in your binder!", c.name), crate::fonts::sans_bold_font(16.0), TEXT());
                     p.text(pos2(tx, row.min.y + 44.0), Align2::LEFT_CENTER, format!("From {}", trade::fmt_id(from)), crate::fonts::sans_font(12.5), MUTED());
-                    p.text(pos2(tx, row.min.y + 64.0), Align2::LEFT_CENTER, format!("{} · #{} · {} {}", c.set_name(), c.num, c.rarity.symbol(), c.rarity.name()), crate::fonts::sans_font(12.0), MUTED());
+                    p.text(pos2(tx, row.min.y + 64.0), Align2::LEFT_CENTER, format!("{} · #{} · {} {}", c.set_name(), c.number(), c.rarity.symbol(), c.rarity.name()), crate::fonts::sans_font(12.0), MUTED());
                 }
                 Some((Err(e), _)) => {
                     ui.label(RichText::new(e).size(kit::fs(12.5)).color(Color32::from_rgb(250, 150, 140)));

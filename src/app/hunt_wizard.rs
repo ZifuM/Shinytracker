@@ -432,6 +432,15 @@ impl App {
         let name = w.target.as_deref().map_or("No Pokémon picked".to_string(), |s| self.target_name(Some(s)));
         let odds = self.wizard_odds(w).map_or("—".to_string(), |o| format!("1 in {}", super::fmt_one_in(o)));
         let mut rows: Vec<(&str, String)> = vec![("Pokémon", name), ("Method", w.method.label().to_string())];
+        // what the method brings along (its line on rare grass, every starter on soft resets)
+        if let Some(slug) = w.target.as_deref() {
+            let g: Vec<String> = self.target_group(slug, w.method).iter().map(|s| self.target_name(Some(s.as_str()))).collect();
+            match g.len() {
+                0 => {}
+                1..=3 => rows.push(("Also hunting", g.join(", "))),
+                n => rows.push(("Also hunting", format!("{}, {} and {} more", g[0], g[1], n - 2))),
+            }
+        }
         if w.method.is_wild_battles() {
             rows.push(("Battles", match w.battle {
                 BattleType::Doubles => "Doubles".into(),
@@ -512,6 +521,8 @@ impl App {
         self.cfg.count_source = w.source;
         self.cfg.auto_method = w.auto_method;
         self.cfg.odds_target_only = w.target_only;
+        // rare grass: its evolution line too; soft resets for a starter: every starter
+        self.add_target_group();
         self.dirty = true;
         self.push_settings(true);
         self.setup.hunt_wizard = None;

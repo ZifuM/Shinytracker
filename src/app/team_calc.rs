@@ -193,6 +193,7 @@ impl App {
     /// The Damage Calculator page: the header row (your team, the rules),
     /// then the three columns.
     pub(super) fn page_damage_calc(&mut self, ui: &mut egui::Ui) {
+        super::app_tour::here(ui.ctx(), "calc");
         kit::page_header(ui, "DAMAGE CALCULATOR", "Platinum's own damage maths: any Pokémon against any other, or one of your teams against anything.");
         let teams = self.team_choices();
         {
@@ -338,15 +339,20 @@ impl App {
                     .allocate_ui_with_layout(egui::vec2(cw, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
                         ui.set_width(cw);
                         self.calc_side(ui, 0, world, &t, &tags[0], pads[0]);
+                        super::app_tour::mark(ui.ctx(), "calc.left", ui.min_rect());
                     })
                     .response
                     .rect;
                 let r1 = ui
                     .allocate_ui_with_layout(egui::vec2(cw, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
                         ui.set_width(cw);
+                        let tour_top = ui.cursor().min.y;
                         self.calc_results(ui, &l, &r, &lm, &rm, &rows);
+                        super::app_tour::mark_since(ui, "calc.results", tour_top);
                         ui.add_space(gap);
+                        let tour_top = ui.cursor().min.y;
                         self.calc_field(ui, pads[1]);
+                        super::app_tour::mark_since(ui, "calc.field", tour_top);
                     })
                     .response
                     .rect;
@@ -354,6 +360,7 @@ impl App {
                     .allocate_ui_with_layout(egui::vec2(cw, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
                         ui.set_width(cw);
                         self.calc_side(ui, 1, world, &t, &tags[1], pads[2]);
+                        super::app_tour::mark(ui.ctx(), "calc.right", ui.min_rect());
                     })
                     .response
                     .rect;
@@ -364,17 +371,27 @@ impl App {
                 ui.ctx().request_repaint();
             }
         } else {
+            let tour_top = ui.cursor().min.y;
             self.calc_results(ui, &l, &r, &lm, &rm, &rows);
+            super::app_tour::mark_since(ui, "calc.results", tour_top);
             ui.add_space(gap);
+            let tour_top = ui.cursor().min.y;
             self.calc_side(ui, 0, world, &t, &tags[0], 0.0);
+            super::app_tour::mark_since(ui, "calc.left", tour_top);
             ui.add_space(gap);
+            let tour_top = ui.cursor().min.y;
             self.calc_side(ui, 1, world, &t, &tags[1], 0.0);
+            super::app_tour::mark_since(ui, "calc.right", tour_top);
             ui.add_space(gap);
+            let tour_top = ui.cursor().min.y;
             self.calc_field(ui, 0.0);
+            super::app_tour::mark_since(ui, "calc.field", tour_top);
         }
         if !t.members.is_empty() {
             ui.add_space(gap);
+            let tour_top = ui.cursor().min.y;
             self.calc_vs_team(ui, &t, &r, &rm, world);
+            super::app_tour::mark_since(ui, "calc.team", tour_top);
         }
         ui.add_space(10.0);
         ui.label(small("Platinum's damage maths, step for step as Pokémon Showdown's Gen 4 calculator does it. Changes here never change your teams."));

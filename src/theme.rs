@@ -197,6 +197,15 @@ static SURF: std::sync::RwLock<Surf> = std::sync::RwLock::new(MODERN_DARK);
 
 static MODERN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 static MOTION: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+static PLUS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Modern Plus (Appearance → Look): the review's changes on top of Modern.
+pub fn plus() -> bool {
+    PLUS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Modern Plus's one action colour: the Brand Kit violet.
+pub const PLUS_VIOLET: Color32 = Color32::from_rgb(139, 92, 246);
 
 /// Are transitions and animations on? (Appearance → Animations.)
 pub fn motion() -> bool {
@@ -294,6 +303,12 @@ pub fn set_appearance(ctx: &egui::Context, a: &crate::config::Appearance) {
         p.button = p.accent;
         p.button2 = if a.solid_buttons { p.accent } else { p.accent2 };
     }
+    // Modern Plus: every main action in one solid colour: your button
+    // colour (your accent, unless you picked a separate one), no gradient
+    if a.plus {
+        p.button2 = p.button;
+    }
+    PLUS.store(a.plus, std::sync::atomic::Ordering::Relaxed);
     if let Ok(mut w) = PAL.write() {
         *w = p;
     }

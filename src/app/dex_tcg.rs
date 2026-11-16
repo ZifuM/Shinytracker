@@ -77,7 +77,7 @@ impl App {
                     ui.label(RichText::new(b).size(kit::fs(13.0)).color(col));
                 });
             };
-            row(ui, "Number", format!("{} of {}", c.num, cards::of_set(c.set).len()), TEXT());
+            row(ui, "Number", format!("{} of {}", c.number(), cards::of_set(c.set).len()), TEXT());
             row(ui, "Rarity", format!("{} {}", c.rarity.symbol(), c.rarity.name()), rarity_col(c.rarity));
             row(ui, "Stage", c.stage.clone(), TEXT());
             row(ui, "Type", c.ty.clone(), super::cards_app::type_col(&c.ty));
@@ -176,7 +176,7 @@ impl App {
                         }
                         let p = ui.painter();
                         p.text(pos2(r.min.x + 2.0, cr.max.y + 10.0), Align2::LEFT_CENTER, &c.name, crate::fonts::sans_bold_font(11.5), if have > 0 { TEXT() } else { MUTED() });
-                        p.text(pos2(r.min.x + 2.0, cr.max.y + 25.0), Align2::LEFT_CENTER, format!("{} · #{}", c.set_name(), c.num), crate::fonts::sans_font(10.5), MUTED());
+                        p.text(pos2(r.min.x + 2.0, cr.max.y + 25.0), Align2::LEFT_CENTER, format!("{} · #{}", c.set_name(), c.number()), crate::fonts::sans_font(10.5), MUTED());
                         p.text(pos2(r.max.x - 2.0, cr.max.y + 25.0), Align2::RIGHT_CENTER, c.rarity.symbol(), egui::FontId::proportional(10.5), rarity_col(c.rarity));
                         if resp.on_hover_text(if sel.is_some() { "Show this one big" } else { "Its Pokédex page" }).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                             if sel.is_some() {

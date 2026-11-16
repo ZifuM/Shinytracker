@@ -249,6 +249,8 @@ impl App {
     // ───────────────────────────── the library ─────────────────────────────
 
     fn team_library(&mut self, ui: &mut egui::Ui) {
+
+        super::app_tour::here(ui.ctx(), "team");
         kit::page_header(ui, "TEAM PLANNER", "Build a team, see what it covers, plan how to get every part of it in the game, and do the damage maths.");
         if let Some(e) = self.setup.team.load_error.clone() {
             self.team_notice(ui, kit::C_ORANGE, &e, true);
@@ -289,6 +291,7 @@ impl App {
         // actions
         let mut new_team = false;
         let mut paste = false;
+        let tour_top = ui.cursor().min.y;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
             new_team = kit::accent_button_w(ui, egui::Button::new(RichText::new("+  New team").size(13.5)), 8.0, 120.0).clicked();
@@ -297,6 +300,7 @@ impl App {
             let w = (ui.available_width() - 4.0).clamp(160.0, 300.0);
             kit::search_box_keyed(ui, Some(egui::Id::new("team-lib-search")), &mut self.setup.team.lib_query, "Find a team or a Pokémon", w);
         });
+        super::app_tour::mark_since(ui, "team.actions", tour_top);
         if new_team {
             self.team_new(None);
             return;
@@ -709,6 +713,8 @@ impl App {
 
     fn team_page(&mut self, ui: &mut egui::Ui) {
         let Some(t) = self.setup.team.team().cloned() else { return };
+        super::app_tour::here(ui.ctx(), "team-team");
+        let tour_top_bar = ui.cursor().min.y;
         // keys: Esc closes a picker, then the team
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             if self.setup.team.picker.is_some() && !t.members.is_empty() {
@@ -839,6 +845,7 @@ impl App {
             ui.add_space(12.0);
         }
         let mut view = self.setup.team.view;
+        super::app_tour::mark_since(ui, "team.bar", tour_top_bar);
         kit::tab_bar(ui, &mut view, &[(View::Build, "🐾  Build"), (View::Analysis, "📊  Analysis"), (View::Checklist, "📜  Checklist")]);
         if view != self.setup.team.view {
             self.setup.team.view = view;
@@ -846,9 +853,22 @@ impl App {
         }
         ui.add_space(14.0);
         match self.setup.team.view {
-            View::Build => self.team_build(ui),
-            View::Analysis => self.team_analysis(ui),
-            View::Checklist => self.team_checklist(ui),
+            View::Build => {
+                super::app_tour::here(ui.ctx(), "team-team/build");
+                self.team_build(ui);
+            }
+            View::Analysis => {
+                super::app_tour::here(ui.ctx(), "team-team/analysis");
+                let tour_top = ui.cursor().min.y;
+                self.team_analysis(ui);
+                super::app_tour::mark_since(ui, "team.analysis", tour_top);
+            }
+            View::Checklist => {
+                super::app_tour::here(ui.ctx(), "team-team/checklist");
+                let tour_top = ui.cursor().min.y;
+                self.team_checklist(ui);
+                super::app_tour::mark_since(ui, "team.checklist", tour_top);
+            }
         }
     }
 

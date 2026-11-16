@@ -1228,6 +1228,8 @@ impl App {
     // ───────────────────────────── the page ─────────────────────────────
 
     pub(super) fn page_map(&mut self, ui: &mut egui::Ui) {
+
+        super::app_tour::here(ui.ctx(), "map");
         // Not ready yet: an ordinary padded page. Ready: the map is the page.
         let padded = egui::Frame::none().inner_margin(egui::Margin {
             left: 32.0,
@@ -1296,6 +1298,10 @@ impl App {
         ui.allocate_rect(full, Sense::hover());
         let resp = ui.interact(rect, ui.id().with("map-canvas"), Sense::click_and_drag());
         self.mapui.canvas = rect.size();
+        super::app_tour::mark(ui.ctx(), "map.canvas", rect);
+        if docked {
+            super::app_tour::mark(ui.ctx(), "map.panel", Rect::from_min_max(Pos2::new(rect.max.x, full.min.y), full.max));
+        }
         let ctx = ui.ctx().clone();
         let spots = self.rare_spots_today();
 
@@ -1436,6 +1442,7 @@ impl App {
                     ui.vertical(|ui| {
                         let sw = if narrow_bar { 170.0 } else { 230.0 };
                         let r = kit::search_box(ui, &mut self.mapui.search, "Find a place or Pokémon…", sw).on_hover_text("Press / to search");
+                        super::app_tour::mark(ui.ctx(), "map.search", r.rect);
                         ui.ctx().data_mut(|d| d.insert_temp(sid, r.id));
                         enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                         if !q.is_empty() {
@@ -2288,6 +2295,23 @@ impl App {
 
         // ── the side panel: the picked area, today's rare grass
         let mut acts = super::map_panel::PanelActs::default();
+        // (the tour opens the panel at today's rare grass while it talks
+        // about it, then puts it back as it was)
+        {
+            use super::map_panel::MapTab;
+            if super::app_tour::wants(&ctx, "map.rare") {
+                let prev = (self.mapui.panel_closed, self.mapui.panel_tab == MapTab::Rare);
+                ctx.data_mut(|d| d.insert_temp(egui::Id::new("tour-map-prev"), prev));
+                self.mapui.panel_closed = false;
+                self.mapui.panel_tab = MapTab::Rare;
+            }
+            if super::app_tour::wants_undo(&ctx, "map.rare") {
+                if let Some((closed, rare)) = ctx.data(|d| d.get_temp::<(bool, bool)>(egui::Id::new("tour-map-prev"))) {
+                    self.mapui.panel_closed = closed;
+                    self.mapui.panel_tab = if rare { MapTab::Rare } else { MapTab::Area };
+                }
+            }
+        }
         if !self.mapui.panel_closed {
             let (pos, size) = if docked {
                 (Pos2::new(full.max.x - panel_w, full.min.y), Vec2::new(panel_w, full.height()))

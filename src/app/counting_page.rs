@@ -44,8 +44,12 @@ impl App {
     }
 
     pub(super) fn page_counting(&mut self, ui: &mut egui::Ui) {
+
+        super::app_tour::here(ui.ctx(), "shiny-counting");
         kit::page_header(ui, "COUNTING", "Is it counting, and where from. Your encounters, live.");
+        let tour_top = ui.cursor().min.y;
         self.count_hero(ui);
+        super::app_tour::mark_since(ui, "count.hero", tour_top);
         ui.add_space(18.0);
         let w = ui.available_width();
         if w >= 980.0 {
@@ -58,29 +62,47 @@ impl App {
                 ui.allocate_ui_with_layout(vec2(main_w, h), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.set_width(main_w);
                     ui.spacing_mut().item_spacing.x = 8.0;
+                    let tour_top = ui.cursor().min.y;
                     self.count_source_card(ui);
+                    super::app_tour::mark_since(ui, "count.source", tour_top);
                     ui.add_space(18.0);
+                    let tour_top = ui.cursor().min.y;
                     self.count_auto_card(ui);
+                    super::app_tour::mark_since(ui, "count.auto", tour_top);
                 });
                 ui.allocate_ui_with_layout(vec2(side_w, h), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.set_width(side_w);
                     ui.spacing_mut().item_spacing.x = 8.0;
+                    let tour_top = ui.cursor().min.y;
                     self.count_feed_card(ui);
+                    super::app_tour::mark_since(ui, "count.feed", tour_top);
                     ui.add_space(18.0);
+                    let tour_top = ui.cursor().min.y;
                     self.count_keys_card(ui);
+                    super::app_tour::mark_since(ui, "count.keys", tour_top);
                 });
             });
         } else {
+            let tour_top = ui.cursor().min.y;
             self.count_feed_card(ui);
+            super::app_tour::mark_since(ui, "count.feed", tour_top);
             ui.add_space(18.0);
+            let tour_top = ui.cursor().min.y;
             self.count_source_card(ui);
+            super::app_tour::mark_since(ui, "count.source", tour_top);
             ui.add_space(18.0);
+            let tour_top = ui.cursor().min.y;
             self.count_auto_card(ui);
+            super::app_tour::mark_since(ui, "count.auto", tour_top);
             ui.add_space(18.0);
+            let tour_top = ui.cursor().min.y;
             self.count_keys_card(ui);
+            super::app_tour::mark_since(ui, "count.keys", tour_top);
         }
         ui.add_space(18.0);
+        let tour_top = ui.cursor().min.y;
         self.count_names_card(ui);
+        super::app_tour::mark_since(ui, "count.names", tour_top);
         ui.add_space(30.0);
     }
 

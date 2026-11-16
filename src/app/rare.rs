@@ -133,6 +133,8 @@ impl App {
     pub(super) fn hunt_on_rare_grass(&mut self, slug: &str, name: &str, spots: &[RareSpot]) {
         self.set_target(slug.to_string());
         self.cfg.hunt_method = HuntMethod::RareGrassSweetScent;
+        // rare grass has its whole evolution line: hunt them all
+        self.add_target_group();
         self.dirty = true;
         self.setup.rare_offer = None;
         self.setup.tab = Tab::Shiny;

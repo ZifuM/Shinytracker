@@ -8,6 +8,7 @@ use eframe::egui::{self, pos2, vec2, Align2, Color32, Rect, RichText, Sense, Str
 /// The round cog button. Flips `open` when clicked.
 pub(super) fn cog_button(ui: &mut egui::Ui, open: &mut bool, tip: &str) {
     let (r, resp) = ui.allocate_exact_size(vec2(38.0, 38.0), Sense::click());
+    super::app_tour::mark(ui.ctx(), "cog", r);
     let p = ui.painter();
     let hov = resp.hovered() || *open;
     p.circle_filled(r.center(), 19.0, if hov { kit::CARD_HOVER() } else { kit::CARD() });
@@ -24,6 +25,8 @@ pub(super) fn window(ctx: &egui::Context, id: &str, title: &str, subtitle: &str,
         return;
     }
     let screen = ctx.screen_rect();
+    // (an app tour waits while a settings window is open)
+    super::app_tour::mark(ctx, "__window", screen);
     let mut close = ctx.input(|i| i.key_pressed(egui::Key::Escape));
     egui::Area::new(egui::Id::new(("app-settings", id))).order(egui::Order::Foreground).fixed_pos(screen.min).show(ctx, |ui| {
         kit::settings_style(ui);

@@ -73,6 +73,7 @@ fn minimal(keep: &OverlayModules) -> OverlayModules {
 
 impl App {
     pub(super) fn page_overlay(&mut self, ui: &mut egui::Ui) {
+        super::app_tour::here(ui.ctx(), "shiny-overlay");
         kit::page_header(ui, "OVERLAY", "How the counter on top of your game looks and behaves. Changes show in the preview straight away.");
         let w = ui.available_width();
         if w >= 1000.0 {
@@ -85,17 +86,24 @@ impl App {
             let left = ui
                 .allocate_ui_with_layout(vec2(lw, h), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.set_width(lw);
+                    let tour_top = ui.cursor().min.y;
                     self.ov_settings(ui);
+                    super::app_tour::mark_since(ui, "ov.settings", tour_top);
                 })
                 .response
                 .rect;
             let col = Rect::from_min_max(pos2(x0 + lw + gap, top), pos2(x0 + w, left.max.y));
             self.ov_sticky_preview(ui, col);
+            super::app_tour::mark(ui.ctx(), "ov.preview", col);
         } else {
             let view = ui.clip_rect();
+            let tour_top = ui.cursor().min.y;
             self.ov_preview_card(ui, view);
+            super::app_tour::mark_since(ui, "ov.preview", tour_top);
             ui.add_space(18.0);
+            let tour_top = ui.cursor().min.y;
             self.ov_settings(ui);
+            super::app_tour::mark_since(ui, "ov.settings", tour_top);
         }
         ui.add_space(30.0);
     }

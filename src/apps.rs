@@ -27,9 +27,10 @@ pub enum AppId {
     Journal,
     Boxes,
     Nuzlocke,
+    Stickers,
 }
 
-pub const ALL: [AppId; 16] = [AppId::Shiny, AppId::Pokedex, AppId::Map, AppId::Info, AppId::Team, AppId::Sim, AppId::Breed, AppId::Calc, AppId::Cards, AppId::Gotchi, AppId::Bingo, AppId::Rare, AppId::Replay, AppId::Journal, AppId::Boxes, AppId::Nuzlocke];
+pub const ALL: [AppId; 17] = [AppId::Shiny, AppId::Pokedex, AppId::Map, AppId::Info, AppId::Team, AppId::Sim, AppId::Breed, AppId::Calc, AppId::Cards, AppId::Gotchi, AppId::Bingo, AppId::Rare, AppId::Replay, AppId::Journal, AppId::Boxes, AppId::Nuzlocke, AppId::Stickers];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Cat {
@@ -504,6 +505,35 @@ const BINGO: Meta = Meta {
     works_with: &[(AppId::Cards, "Card Collector XP and booster packs as rewards"), (AppId::Gotchi, "Pokégotchi treats as rewards")],
 };
 
+const STICKERS: Meta = Meta {
+    id: AppId::Stickers,
+    slug: "stickers",
+    name: "Sticker Book",
+    cat: Cat::Games,
+    core: false,
+    beta: true,
+    overlay: false,
+    tagline: "Your Pokémon as stickers: stick them on a page, stack them, make a mess.",
+    about: &[
+        "Every shiny you've caught is a shimmering sticker, and so is everyone in your party and your boxes. Click one to stick it on the page, or drag it where you want it. Move them around, stack them, tilt them, make them bigger or peel them off again.",
+        "Milestones (your first shiny, 10,000 encounters, a 7-day streak and more) give you ribbons to stick on too. There's a page for each game world, and you can add as many pages of your own as you like. Your save is only ever read, never written.",
+    ],
+    can_do: &[
+        "Your shinies, party and boxes as stickers",
+        "Drag, stack, tilt, resize and peel them off",
+        "Shiny stickers shimmer",
+        "Milestone ribbons to earn",
+        "A page for each world, plus pages of your own",
+        "Four papers: dotted, grid, kraft and night sky",
+    ],
+    whats_new: "New: the fourth mini game.",
+    updated: "16 Nov 2026",
+    uses: "Your hunt history and your save file (read only, never written)",
+    shots: &[("stickers", "A page of shinies and your team")],
+    requires: &[],
+    works_with: &[(AppId::Shiny, "Your shinies as stickers"), (AppId::Boxes, "Your party and boxes as stickers")],
+};
+
 pub fn meta(id: AppId) -> &'static Meta {
     match id {
         AppId::Shiny => &SHINY,
@@ -522,6 +552,7 @@ pub fn meta(id: AppId) -> &'static Meta {
         AppId::Journal => &JOURNAL,
         AppId::Boxes => &BOXES,
         AppId::Nuzlocke => &NUZLOCKE,
+        AppId::Stickers => &STICKERS,
     }
 }
 
@@ -611,22 +642,54 @@ pub struct AppsCfg {
     pub notify_soon: bool,
     /// When each app was last opened (slug, unix seconds).
     pub last_opened: Vec<(String, u64)>,
-    /// Apps pinned for quick opening (up to `MAX_PINS`), in order.
+    /// Apps pinned for quick opening (up to `max_pins()`), in order.
     pub pins: Vec<String>,
     /// Where the pins show.
     pub pins_place: PinsPlace,
+    /// The top bar's dock magnifies its icons as the pointer passes (the
+    /// UI Lab's magnifying dock).
+    pub dock_magnify: bool,
+    /// Apps whose first-time tour has shown (slugs).
+    pub tours_seen: Vec<String>,
+    /// tours_seen has been filled in (apps already used before tours existed count as seen).
+    pub tours_init: bool,
+    /// Section tours came in: apps whose tour was already seen skip theirs.
+    pub tours_v2: bool,
+    /// "Don't show any more tours": no tour starts (Settings → Appearance
+    /// turns them back on).
+    pub tours_off: bool,
+    /// Every installed app has been put on the bottom dock (once, the first
+    /// time the dock is used; after that pins are the player's own).
+    pub dock_seeded: bool,
+    /// Where the pins were before Modern Plus moved them to the dock (put
+    /// back if Modern Plus is turned off).
+    pub place_before_plus: Option<PinsPlace>,
+    /// Moved to the new defaults once (Modern Plus, the bottom dock and its
+    /// magnifying); after that the player's own choices stand.
+    pub new_look1: bool,
+    /// Shiny Hunter's Counting and Overlay as pages of the app again (they're
+    /// always in Settings → Shiny Hunter too).
+    pub shiny_pages_in_app: bool,
 }
 
-/// The most apps that can be pinned.
+/// The most apps that can be pinned in the sidebar or the top bar (the
+/// bottom dock holds up to `DOCK_MAX`).
 pub const MAX_PINS: usize = 8;
 
-/// Where pinned apps show: a 2 × 4 grid in the sidebar, or a dock in the top bar.
+/// Where pinned apps show: a 2 × 4 grid in the sidebar, a dock in the top
+/// bar, or a dock floating at the bottom of the window (pins and every open
+/// app, and the sidebar's open apps go into it).
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum PinsPlace {
-    #[default]
     Sidebar,
     TopBar,
+    /// (the default: the bottom dock)
+    #[default]
+    Dock,
 }
+
+/// The most apps the bottom dock holds (pins first, then open apps).
+pub const DOCK_MAX: usize = 15;
 
 /// Raise to show the first-launch screen again after a future update.
 pub const APPS_WELCOME_VERSION: u32 = 1;
@@ -646,11 +709,20 @@ impl AppsCfg {
         meta(id).core || self.installed.as_ref().map_or(true, |l| l.iter().any(|s| s == id.slug()))
     }
     pub fn set_installed(&mut self, list: &[AppId]) {
+        let before = self.installed();
         let mut v: Vec<String> = ALL.into_iter().filter(|a| meta(*a).core || list.contains(a)).map(|a| a.slug().to_string()).collect();
         v.dedup();
         self.installed = Some(v);
         self.open.retain(|s| AppId::from_slug(s).is_some_and(|a| list.contains(&a) || meta(a).core));
         self.pins.retain(|s| AppId::from_slug(s).is_some_and(|a| list.contains(&a) || meta(a).core));
+        // on the bottom dock, newly added apps join it (while there's room)
+        if self.pins_place == PinsPlace::Dock {
+            for a in list {
+                if !before.contains(a) {
+                    self.pin(*a);
+                }
+            }
+        }
     }
     pub fn install(&mut self, id: AppId) {
         let mut l = self.installed();
@@ -658,6 +730,24 @@ impl AppsCfg {
             l.push(id);
         }
         self.set_installed(&l);
+    }
+    /// Put every installed app on the bottom dock: the pins first, as they
+    /// are, then the rest (most recently opened first), up to `DOCK_MAX`.
+    pub fn seed_dock(&mut self) {
+        let mut list: Vec<AppId> = Vec::new();
+        for s in &self.pins {
+            if let Some(a) = AppId::from_slug(s) {
+                if self.is_installed(a) && !list.contains(&a) {
+                    list.push(a);
+                }
+            }
+        }
+        let mut rest: Vec<AppId> = self.installed().into_iter().filter(|a| !list.contains(a)).collect();
+        // (sort is stable: never-opened apps keep the store's order)
+        rest.sort_by_key(|a| std::cmp::Reverse(self.last_opened(*a).unwrap_or(0)));
+        list.extend(rest);
+        list.truncate(DOCK_MAX);
+        self.pins = list.iter().map(|a| a.slug().to_string()).collect();
     }
     pub fn uninstall(&mut self, id: AppId) {
         if meta(id).core {
@@ -705,8 +795,18 @@ impl AppsCfg {
                 }
             }
         }
-        out.truncate(MAX_PINS);
+        out.truncate(self.max_pins());
         out
+    }
+    /// How many apps can be pinned where the pins are now: 8 in the sidebar
+    /// or top bar, up to 15 in the bottom dock. (Moving from the dock back to
+    /// the sidebar shows the first 8; the rest come back with the dock.)
+    pub fn max_pins(&self) -> usize {
+        if self.pins_place == PinsPlace::Dock {
+            DOCK_MAX
+        } else {
+            MAX_PINS
+        }
     }
     pub fn is_pinned(&self, id: AppId) -> bool {
         self.pin_list().contains(&id)
@@ -714,7 +814,7 @@ impl AppsCfg {
     /// Pin an app (at the end). False if it's full, not installed or already pinned.
     pub fn pin(&mut self, id: AppId) -> bool {
         let list = self.pin_list();
-        if list.len() >= MAX_PINS || list.contains(&id) || !self.is_installed(id) {
+        if list.len() >= self.max_pins() || list.contains(&id) || !self.is_installed(id) {
             return false;
         }
         self.pins = list.iter().map(|a| a.slug().to_string()).collect();
@@ -818,7 +918,7 @@ mod tests {
 
     #[test]
     fn pins_hold_eight_skip_missing_apps_and_move() {
-        let mut c = AppsCfg::default();
+        let mut c = AppsCfg { pins_place: PinsPlace::Sidebar, ..Default::default() };
         for a in ALL {
             c.pin(a);
         }
@@ -830,8 +930,48 @@ mod tests {
         c.uninstall(AppId::Pokedex);
         assert!(!c.is_pinned(AppId::Pokedex));
         assert!(!c.pin(AppId::Pokedex));
+        // (the bottom dock is the default now)
         let old: AppsCfg = serde_json::from_str("{}").unwrap();
-        assert_eq!(old.pins_place, PinsPlace::Sidebar);
+        assert_eq!(old.pins_place, PinsPlace::Dock);
+    }
+
+    #[test]
+    fn the_bottom_dock_holds_more_pins() {
+        let mut c = AppsCfg { pins_place: PinsPlace::Dock, ..Default::default() };
+        for a in ALL {
+            c.pin(a);
+        }
+        assert_eq!(c.pin_list().len(), DOCK_MAX.min(ALL.len()));
+        c.pins_place = PinsPlace::Sidebar;
+        assert_eq!(c.pin_list().len(), MAX_PINS);
+        c.pins_place = PinsPlace::Dock;
+        assert_eq!(c.pin_list().len(), DOCK_MAX.min(ALL.len()));
+    }
+
+    #[test]
+    fn seeding_the_dock_keeps_pins_first_and_adds_every_installed_app() {
+        let mut c = AppsCfg { pins_place: PinsPlace::Sidebar, ..Default::default() };
+        c.set_installed(&[AppId::Map, AppId::Cards, AppId::Journal]);
+        c.pin(AppId::Cards);
+        c.last_opened = vec![("journal".into(), 50), ("map".into(), 10)];
+        c.pins_place = PinsPlace::Dock;
+        c.seed_dock();
+        let got = c.pin_list();
+        assert_eq!(got[0], AppId::Cards, "pins stay first");
+        for a in c.installed() {
+            assert!(got.contains(&a), "{} is on the dock", a.name());
+        }
+        // the rest by most recently opened: Journal before Map
+        let j = got.iter().position(|a| *a == AppId::Journal).unwrap();
+        let m = got.iter().position(|a| *a == AppId::Map).unwrap();
+        assert!(j < m);
+        // a newly installed app joins the dock
+        c.install(AppId::Bingo);
+        assert!(c.pin_list().contains(&AppId::Bingo));
+        // nothing is pinned twice, and it never goes past the dock's size
+        c.seed_dock();
+        let again = c.pin_list();
+        assert_eq!(again.len(), c.installed().len().min(DOCK_MAX));
     }
 
     #[test]

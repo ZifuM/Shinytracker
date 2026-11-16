@@ -31,7 +31,7 @@ pub(super) struct GotchiState {
     /// The settings popup.
     pub settings: bool,
     /// Renaming the partner (the text being typed).
-    renaming: Option<String>,
+    pub renaming: Option<String>,
     /// Higher or Lower, while it's being played; and the score just
     /// finished, shown for a moment.
     pub game: Option<HiLo>,
@@ -1062,6 +1062,8 @@ impl App {
     // ───────────────────────────── the page ─────────────────────────────
 
     pub(super) fn page_gotchi(&mut self, ui: &mut egui::Ui) {
+
+        super::app_tour::here(ui.ctx(), "gotchi");
         let now_t = ui.input(|i| i.time) as f32;
         ui.ctx().request_repaint_after(Duration::from_millis(50));
         let f = self.setup.gotchi.file().clone();
@@ -1069,20 +1071,21 @@ impl App {
         let top = ui.cursor().min;
         kit::page_header(ui, "POKÉGOTCHI", "A shiny you caught, as a pocket pet. Hunting earns berries; it keeps you company on the overlay.");
         let gear = Rect::from_min_size(pos2(ui.max_rect().max.x - 128.0, top.y + 6.0), vec2(120.0, 34.0));
-        if pill_button(ui, gear, "⚙  Settings", false, "gotchi-gear").clicked() {
-            self.setup.gotchi.settings = true;
+        if pill_button(ui, gear, "⚙  Settings", false, "gotchi-gear").on_hover_text("Its name, frame and how it shows on the overlay (in Settings)").clicked() {
+            self.open_settings(super::Tab::Gotchi);
         }
         if let Some(e) = self.setup.gotchi.load_error.clone() {
             kit::pill(ui, &e, kit::PillKind::Warn);
             ui.add_space(8.0);
         }
+        let tour_top = ui.cursor().min.y;
         if f.pets.is_empty() {
             self.gotchi_empty(ui, now_t);
         } else {
             self.gotchi_main(ui, now_t);
         }
+        super::app_tour::mark_since(ui, "gotchi.main", tour_top);
         self.gotchi_picker(ui.ctx());
-        self.gotchi_settings(ui.ctx());
     }
 
     /// No pet yet: an egg waiting, and a way to adopt.
@@ -1140,11 +1143,16 @@ impl App {
             let dev_r = Rect::from_min_max(pos2(box_r.max.x + gap, all.min.y), pos2(side_r.min.x - gap, all.max.y));
             (box_r, dev_r, side_r)
         };
+        super::app_tour::mark(ui.ctx(), "gotchi.box", box_r);
+        super::app_tour::mark(ui.ctx(), "gotchi.device", dev_r);
+        super::app_tour::mark(ui.ctx(), "gotchi.side", side_r);
         self.gotchi_box(ui, box_r);
         self.gotchi_device_card(ui, dev_r, t);
         self.gotchi_side(ui, side_r);
         ui.add_space(16.0);
+        let tour_top = ui.cursor().min.y;
         self.gotchi_journal(ui);
+        super::app_tour::mark_since(ui, "gotchi.journal", tour_top);
         // a note and a canvas of your own, beside the journal it keeps
         ui.add_space(16.0);
         let pet = self.setup.gotchi.file().partner().cloned().map(|p| self.gotchi_name(&p)).unwrap_or_else(|| "Pokégotchi".into());
@@ -1223,7 +1231,7 @@ impl App {
             self.setup.gotchi.file().swap(i);
             let n = self.setup.gotchi.file().pets[i].nick.clone();
             self.setup.gotchi.renaming = Some(n);
-            self.setup.gotchi.settings = true;
+            self.open_settings(super::Tab::Gotchi);
         }
         if let Some(i) = release {
             if let Some(p) = self.setup.gotchi.file().pets.get(i).cloned() {
@@ -1575,40 +1583,34 @@ impl App {
     }
 
     /// Frames, the overlay and the partner's name.
-    fn gotchi_settings(&mut self, ctx: &egui::Context) {
-        if !self.setup.gotchi.settings {
-            return;
-        }
+    /// Settings → Pokégotchi: its name, the device's frame, and how it
+    /// shows on the overlay (with a preview over a game).
+    pub(super) fn gotchi_settings_body(&mut self, ui: &mut egui::Ui) {
         let f = self.setup.gotchi.file().clone();
-        let screen = ctx.screen_rect();
-        let mut close = ctx.input(|i| i.key_pressed(egui::Key::Escape));
-        let t = ctx.input(|i| i.time) as f32;
+        let t = ui.input(|i| i.time) as f32;
+        ui.ctx().request_repaint_after(Duration::from_millis(50));
         let mut pick: Option<Frame> = None;
         let mut tint_pick: Option<Tint> = None;
         let mut ov = f.overlay.clone();
-        egui::Area::new(egui::Id::new("gotchi-settings")).order(egui::Order::Foreground).fixed_pos(screen.min).show(ctx, |ui| {
-            kit::settings_style(ui);
-            let (sr, scrim) = ui.allocate_exact_size(screen.size(), Sense::click());
-            ui.painter().rect_filled(sr, 0.0, Color32::from_black_alpha(170));
-            let w = 640.0f32.min(sr.width() - 40.0);
-            let h = 750.0f32.min(sr.height() - 40.0);
-            let panel_r = Rect::from_center_size(sr.center(), vec2(w, h));
-            let _ = ui.interact(panel_r, ui.id().with("gotchi-settings-panel"), Sense::click());
+        if f.pets.is_empty() {
+            kit::card(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.label(egui::RichText::new("No pet yet").font(crate::fonts::sans_bold_font(14.0)).color(TEXT()));
+                ui.label(egui::RichText::new("Adopt one in the Pokégotchi app. You can still pick a frame and how it shows on the overlay here.").size(kit::fs(12.0)).color(MUTED()));
+            });
+            ui.add_space(14.0);
+        }
+        {
+            // the old window's layout, drawn into a block the page scrolls
+            let w = ui.available_width().min(760.0);
+            let name_h = if f.partner().is_some() { 64.0 } else { 0.0 };
+            let (inner, _) = ui.allocate_exact_size(vec2(w, name_h + 228.0 + 60.0 + 300.0), Sense::hover());
             let p = ui.painter().clone();
-            p.add(kit::shadow_tier(4).as_shape(panel_r, 16.0));
-            p.rect_filled(panel_r, 16.0, kit::CARD());
-            p.rect_stroke(panel_r, 16.0, Stroke::new(1.0f32, LINE()));
-            let inner = panel_r.shrink2(vec2(24.0, 22.0));
-            p.text(inner.min, Align2::LEFT_TOP, "Pokégotchi settings", crate::fonts::sans_bold_font(19.0), TEXT());
-            p.text(inner.min + vec2(0.0, 28.0), Align2::LEFT_TOP, "Your device's frame, and how your pet shows on the overlay.", crate::fonts::sans_font(12.5), MUTED());
-            if close_x(ui, &p, pos2(inner.max.x - 10.0, inner.min.y + 10.0), "gotchi-settings-x") {
-                close = true;
-            }
             let label = |y: f32, s: &str| {
                 p.text(pos2(inner.min.x, y), Align2::LEFT_CENTER, s, crate::fonts::sans_bold_font(11.0), MUTED());
             };
             // ── name
-            let mut y = inner.min.y + 66.0;
+            let mut y = inner.min.y + 6.0;
             if let Some(pet) = f.partner() {
                 label(y, "NAME");
                 y += 14.0;
@@ -1709,10 +1711,7 @@ impl App {
             self.gotchi_overlay_paint(&pc, spot, &ov, f.frame, t, false);
             let note = if shrunk { format!("Shown at {:.0}% here. Open it with Start overlay, and drag it anywhere.", fit * 100.0) } else { "Open it with Start overlay, and drag it anywhere.".to_string() };
             pc.text(pos2(pv.min.x + 12.0, pv.max.y - 12.0), Align2::LEFT_BOTTOM, note, crate::fonts::sans_font(11.5), Color32::from_white_alpha(200));
-            if scrim.clicked() && !panel_r.contains(ui.input(|i| i.pointer.interact_pos().unwrap_or_default())) {
-                close = true;
-            }
-        });
+        }
         if let Some(fr) = pick {
             self.setup.gotchi.file().frame = fr;
             self.setup.gotchi.touch();
@@ -1728,10 +1727,6 @@ impl App {
         if ov != f.overlay {
             self.setup.gotchi.file().overlay = ov;
             self.setup.gotchi.touch();
-        }
-        if close {
-            self.setup.gotchi.settings = false;
-            self.setup.gotchi.renaming = None;
         }
     }
 }

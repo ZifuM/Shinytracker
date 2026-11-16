@@ -1,4 +1,4 @@
-//! Card Collector: the original Base Set and Base Set 2 cards, booster packs,
+//! Card Collector: the Wizards-era cards (Base Set to Skyridge), booster packs,
 //! XP and missions. Hunting earns XP (every encounter the session log
 //! reports, rare grass, new species, shinies, missions); a full bar is a
 //! booster pack to open. Everything you own is saved in `cards.json` (written
@@ -20,7 +20,8 @@ pub const XP_ENCOUNTER: u64 = 1;
 pub const XP_RARE_GRASS: u64 = 1;
 pub const XP_NEW_SPECIES: u64 = 10;
 pub const XP_SHINY: u64 = 500;
-/// Cards in a booster: 1 rare, 3 uncommons, 5 commons, 2 Energy.
+/// Cards in a classic booster: 1 rare, 3 uncommons, 5 commons, 2 Energy.
+/// (Each set's own size is `Set::size`: the e-Card sets have 9.)
 #[cfg_attr(not(test), allow(dead_code))]
 pub const PACK_SIZE: usize = 11;
 
@@ -35,9 +36,14 @@ pub struct Set {
     pub col: [u8; 3],
     /// The booster pack art (each pack gets one of these at random).
     pub packs: &'static [&'static str],
-    /// Basic Energy in each pack (the rest of the 7 are commons): the early
+    /// Basic Energy in each pack (taken out of the common slots): the early
     /// expansions had none.
     pub energy: u8,
+    /// Common slots (Energy included), uncommons, and reverse holo slots
+    /// (any card but a basic Energy, from Legendary Collection on).
+    pub commons: u8,
+    pub uncommons: u8,
+    pub reverse: u8,
     /// When it comes out in the app (unix seconds; 0 = it's out).
     pub release: u64,
 }
@@ -50,6 +56,14 @@ impl Set {
     pub fn out(&self) -> bool {
         self.out_at(now())
     }
+    /// Cards in one of its boosters.
+    pub fn size(&self) -> usize {
+        (self.commons + self.uncommons + self.reverse) as usize + 1
+    }
+    /// An e-Card set (Expedition, Aquapolis, Skyridge): a different card frame.
+    pub fn ecard(&self) -> bool {
+        self.id.starts_with("ecard")
+    }
 }
 
 fn now() -> u64 {
@@ -57,21 +71,40 @@ fn now() -> u64 {
 }
 
 /// Every set, in the order they come out in the app (new ones go on the end:
-/// trade codes use the place in this list). One new set every Monday at
-/// 07:00 UTC (6 pm in Sydney), in the order the real ones came out.
-pub const SETS: [Set; 7] = [
-    Set { id: "base1", name: "Base Set", year: 1999, mascot: 6, col: [232, 92, 52], packs: &["base-set-pack-0", "base-set-pack-1", "base-set-pack-2"], energy: 2, release: 0 },
-    Set { id: "base4", name: "Base Set 2", year: 2000, mascot: 9, col: [62, 128, 232], packs: &["base-set-2-pack-0", "base-set-2-pack-1", "base-set-2-pack-2", "base-set-2-pack-3"], energy: 2, release: 0 },
+/// trade codes use the place in this list). One new set every Monday at the
+/// game's daily reset, 00:00 CET (23:00 UTC on the Sunday; 10 am in Sydney),
+/// in the order the real ones came out. Southern Islands is left out: it was
+/// only sold in collections, never in boosters.
+pub const SETS: [Set; 15] = [
+    Set { id: "base1", name: "Base Set", year: 1999, mascot: 6, col: [232, 92, 52], packs: &["base-set-pack-0", "base-set-pack-1", "base-set-pack-2"], energy: 2, commons: 7, uncommons: 3, reverse: 0, release: 0 },
+    Set { id: "base4", name: "Base Set 2", year: 2000, mascot: 9, col: [62, 128, 232], packs: &["base-set-2-pack-0", "base-set-2-pack-1", "base-set-2-pack-2", "base-set-2-pack-3"], energy: 2, commons: 7, uncommons: 3, reverse: 0, release: 0 },
     // Mon 16 Nov 2026
-    Set { id: "base2", name: "Jungle", year: 1999, mascot: 123, col: [76, 160, 72], packs: &["jungle-pack-0", "jungle-pack-1", "jungle-pack-2"], energy: 0, release: 1_794_812_400 },
+    Set { id: "base2", name: "Jungle", year: 1999, mascot: 123, col: [76, 160, 72], packs: &["jungle-pack-0", "jungle-pack-1", "jungle-pack-2"], energy: 0, commons: 7, uncommons: 3, reverse: 0, release: 1_794_783_600 },
     // Mon 23 Nov 2026
-    Set { id: "base3", name: "Fossil", year: 1999, mascot: 145, col: [206, 170, 82], packs: &["fossil-pack-0", "fossil-pack-1", "fossil-pack-2"], energy: 0, release: 1_795_417_200 },
+    Set { id: "base3", name: "Fossil", year: 1999, mascot: 145, col: [206, 170, 82], packs: &["fossil-pack-0", "fossil-pack-1", "fossil-pack-2"], energy: 0, commons: 7, uncommons: 3, reverse: 0, release: 1_795_388_400 },
     // Mon 30 Nov 2026
-    Set { id: "base5", name: "Team Rocket", year: 2000, mascot: 52, col: [120, 62, 142], packs: &["team-rocket-pack-0", "team-rocket-pack-1"], energy: 0, release: 1_796_022_000 },
+    Set { id: "base5", name: "Team Rocket", year: 2000, mascot: 52, col: [120, 62, 142], packs: &["team-rocket-pack-0", "team-rocket-pack-1"], energy: 0, commons: 7, uncommons: 3, reverse: 0, release: 1_795_993_200 },
     // Mon 7 Dec 2026
-    Set { id: "gym1", name: "Gym Heroes", year: 2000, mascot: 95, col: [48, 156, 168], packs: &["gym-heroes-pack-0", "gym-heroes-pack-1", "gym-heroes-pack-2", "gym-heroes-pack-3"], energy: 2, release: 1_796_626_800 },
+    Set { id: "gym1", name: "Gym Heroes", year: 2000, mascot: 95, col: [48, 156, 168], packs: &["gym-heroes-pack-0", "gym-heroes-pack-1", "gym-heroes-pack-2", "gym-heroes-pack-3"], energy: 2, commons: 7, uncommons: 3, reverse: 0, release: 1_796_598_000 },
     // Mon 14 Dec 2026
-    Set { id: "gym2", name: "Gym Challenge", year: 2000, mascot: 150, col: [146, 84, 196], packs: &["gym-challenge-pack-0", "gym-challenge-pack-1", "gym-challenge-pack-2", "gym-challenge-pack-3"], energy: 2, release: 1_797_231_600 },
+    Set { id: "gym2", name: "Gym Challenge", year: 2000, mascot: 150, col: [146, 84, 196], packs: &["gym-challenge-pack-0", "gym-challenge-pack-1", "gym-challenge-pack-2", "gym-challenge-pack-3"], energy: 2, commons: 7, uncommons: 3, reverse: 0, release: 1_797_202_800 },
+    // Mon 21 Dec 2026: 11 cards, 1 of them a basic Energy
+    Set { id: "neo1", name: "Neo Genesis", year: 2000, mascot: 249, col: [214, 168, 52], packs: &["neo-genesis-pack-0", "neo-genesis-pack-1", "neo-genesis-pack-2", "neo-genesis-pack-3"], energy: 1, commons: 7, uncommons: 3, reverse: 0, release: 1_797_807_600 },
+    // Mon 28 Dec 2026
+    Set { id: "neo2", name: "Neo Discovery", year: 2001, mascot: 201, col: [98, 120, 168], packs: &["neo-discovery-pack-0", "neo-discovery-pack-1", "neo-discovery-pack-2", "neo-discovery-pack-3"], energy: 0, commons: 7, uncommons: 3, reverse: 0, release: 1_798_412_400 },
+    // Mon 4 Jan 2027
+    Set { id: "neo3", name: "Neo Revelation", year: 2001, mascot: 250, col: [222, 102, 54], packs: &["neo-revelation-pack-0", "neo-revelation-pack-1", "neo-revelation-pack-2", "neo-revelation-pack-3"], energy: 0, commons: 7, uncommons: 3, reverse: 0, release: 1_799_017_200 },
+    // Mon 11 Jan 2027
+    Set { id: "neo4", name: "Neo Destiny", year: 2002, mascot: 197, col: [76, 64, 112], packs: &["neo-destiny-pack-0", "neo-destiny-pack-1", "neo-destiny-pack-2", "neo-destiny-pack-3"], energy: 0, commons: 7, uncommons: 3, reverse: 0, release: 1_799_622_000 },
+    // Mon 18 Jan 2027: 11 cards, 1 of them a reverse holo
+    Set { id: "base6", name: "Legendary Collection", year: 2002, mascot: 151, col: [196, 112, 168], packs: &["legendary-collection-pack-0", "legendary-collection-pack-1", "legendary-collection-pack-2", "legendary-collection-pack-3"], energy: 0, commons: 6, uncommons: 3, reverse: 1, release: 1_800_226_800 },
+    // Mon 25 Jan 2027: e-Card boosters are 9 cards (5 commons, 2 uncommons,
+    // a reverse holo and the rare); basic Energy only came in theme decks
+    Set { id: "ecard1", name: "Expedition", year: 2002, mascot: 3, col: [94, 150, 88], packs: &["expedition-pack-0", "expedition-pack-1", "expedition-pack-2", "expedition-pack-3"], energy: 0, commons: 5, uncommons: 2, reverse: 1, release: 1_800_831_600 },
+    // Mon 1 Feb 2027
+    Set { id: "ecard2", name: "Aquapolis", year: 2003, mascot: 230, col: [52, 128, 196], packs: &["aquapolis-pack-0", "aquapolis-pack-1", "aquapolis-pack-2", "aquapolis-pack-3"], energy: 0, commons: 5, uncommons: 2, reverse: 1, release: 1_801_436_400 },
+    // Mon 8 Feb 2027
+    Set { id: "ecard3", name: "Skyridge", year: 2003, mascot: 251, col: [112, 168, 96], packs: &["skyridge-pack-0", "skyridge-pack-1", "skyridge-pack-2", "skyridge-pack-3"], energy: 0, commons: 5, uncommons: 2, reverse: 1, release: 1_802_041_200 },
 ];
 
 /// The sets out now, in order.
@@ -186,9 +219,18 @@ pub struct Card {
 }
 
 impl Card {
+    /// Its number as printed: "4", or "H5" for the Aquapolis and Skyridge
+    /// holos (kept as 1001 and up, so they sort after the rest).
+    pub fn number(&self) -> String {
+        if self.num > 1000 {
+            format!("H{}", self.num - 1000)
+        } else {
+            self.num.to_string()
+        }
+    }
     /// The card picture: small (for lists) or large.
     pub fn image_url(&self, large: bool) -> String {
-        format!("https://images.pokemontcg.io/{}/{}{}.png", self.set, self.num, if large { "_hires" } else { "" })
+        format!("https://images.pokemontcg.io/{}/{}{}.png", self.set, self.number(), if large { "_hires" } else { "" })
     }
     /// What it is, for filters: the Pokémon's type, or Trainer / Energy.
     pub fn group(&self) -> &str {
@@ -285,9 +327,13 @@ impl Rng {
 ///   and Water in between, Lightning and Psychic most common.
 /// * Jungle, Fossil, Team Rocket (Dark Raichu included) and the Gym sets: no
 ///   differences beyond chance.
+/// * The Shining Pokémon (Neo Revelation, Neo Destiny) and the Crystal
+///   Pokémon (Aquapolis, Skyridge) sit in the rare slot but turn up about four
+///   times less often than a holo.
 pub fn weight(c: &Card) -> u32 {
     match (c.set, c.num) {
         ("base1", 8) => 1,
+        ("neo3", 65..=66) | ("neo4", 106..=113) | ("ecard2", 148..=150) | ("ecard3", 145..=150) => 2,
         ("base1", 2 | 4 | 15) => 7,
         ("base1" | "base4", _) if c.rarity == Rarity::Energy => match c.name.as_str() {
             "Fire Energy" | "Fighting Energy" => 6,
@@ -334,26 +380,45 @@ pub fn packs_per(c: &Card) -> Option<f64> {
     let chance = match c.rarity {
         Rarity::Holo => share / 3.0,
         Rarity::Rare => share * 2.0 / 3.0,
-        Rarity::Uncommon => 1.0 - (1.0 - share).powf(3.0),
-        Rarity::Common => 1.0 - (1.0 - share).powf(7.0 - n_energy),
+        Rarity::Uncommon => 1.0 - (1.0 - share).powf(s.uncommons as f64),
+        Rarity::Common => 1.0 - (1.0 - share).powf(s.commons as f64 - n_energy),
         Rarity::Energy => 1.0 - (1.0 - share).powf(n_energy),
     };
     (chance > 0.0).then(|| 1.0 / chance)
 }
 
-/// Open a booster of `set`: 2 Energy, 5 commons, 3 uncommons, then the rare
-/// (a holo one time in three), in the order they're revealed.
+/// Open a booster of `set`: its Energy, commons and uncommons, any reverse
+/// holo, then the rare (a holo one time in three), in the order they're
+/// revealed. A classic one: 2 Energy, 5 commons, 3 uncommons, the rare.
 pub fn open_pack(set: &str, rng: &mut Rng) -> Vec<String> {
     let cards = of_set(set);
     let by = |r: Rarity| -> Vec<&Card> { cards.iter().copied().filter(|c| c.rarity == r).collect() };
+    let s = set_of(set);
+    let (commons, uncommons, reverse) = s.map_or((7, 3, 0), |s| (s.commons as usize, s.uncommons as usize, s.reverse as usize));
     let mut out: Vec<&Card> = Vec::new();
     let energy = by(Rarity::Energy);
-    let n_energy = if energy.is_empty() { 0 } else { set_of(set).map_or(2, |s| s.energy as usize) };
+    let n_energy = if energy.is_empty() { 0 } else { s.map_or(2, |s| s.energy as usize) };
     for _ in 0..n_energy {
         out.extend(pick(rng, &energy, 1));
     }
-    out.extend(pick(rng, &by(Rarity::Common), 7 - n_energy));
-    out.extend(pick(rng, &by(Rarity::Uncommon), 3));
+    out.extend(pick(rng, &by(Rarity::Common), commons.saturating_sub(n_energy)));
+    out.extend(pick(rng, &by(Rarity::Uncommon), uncommons));
+    // the reverse holo slot: any card but a basic Energy, commons most often
+    for _ in 0..reverse {
+        let r = match rng.below(10) {
+            0 => {
+                if rng.below(3) == 0 {
+                    Rarity::Holo
+                } else {
+                    Rarity::Rare
+                }
+            }
+            1..=3 => Rarity::Uncommon,
+            _ => Rarity::Common,
+        };
+        let pool = by(r);
+        out.extend(pick(rng, if pool.is_empty() { &cards } else { &pool }, 1));
+    }
     let holo = rng.below(3) == 0;
     let rares = by(if holo { Rarity::Holo } else { Rarity::Rare });
     out.extend(pick(rng, &rares, 1));
@@ -870,6 +935,39 @@ mod tests {
         let mut rng = Rng::new(1);
         assert!(f.open("gym2", &mut rng, 0, SETS[6].release - 1).is_none());
         assert!(f.open("gym2", &mut rng, 0, SETS[6].release).is_some());
+    }
+
+    #[test]
+    fn the_neo_legendary_and_e_card_sets() {
+        for (set, n) in [("neo1", 111), ("neo2", 75), ("neo3", 66), ("neo4", 113), ("base6", 110), ("ecard1", 159), ("ecard2", 182), ("ecard3", 182)] {
+            assert_eq!(of_set(set).len(), n, "{set}");
+            let s = super::set(set).unwrap();
+            assert_eq!(s.packs.len(), 4, "{set} pack art");
+            let mut rng = Rng::new(11);
+            for _ in 0..40 {
+                let p = open_pack(set, &mut rng);
+                assert_eq!(p.len(), s.size(), "{set}");
+                let rare = by_id(p.last().unwrap()).unwrap().rarity;
+                assert!(rare >= Rarity::Rare, "{set} ends on a rare");
+            }
+        }
+        assert_eq!(super::set("neo1").unwrap().size(), 11);
+        assert_eq!(super::set("base6").unwrap().size(), 11);
+        assert_eq!(super::set("ecard1").unwrap().size(), 9);
+        // the H holos keep their printed number
+        let h = by_id("ecard2-1001").unwrap();
+        assert_eq!(h.number(), "H1");
+        assert!(h.image_url(true).ends_with("/ecard2/H1_hires.png"));
+        assert_eq!(h.rarity, Rarity::Holo);
+        // Shining and Crystal cards are rarer than the other holos
+        let gyarados = packs_per(by_id("neo3-65").unwrap()).unwrap();
+        let ho_oh = packs_per(by_id("neo3-7").unwrap()).unwrap();
+        assert!(gyarados > ho_oh * 3.0, "{gyarados} {ho_oh}");
+        // every set comes out at 00:00 CET on a Monday (23:00 UTC Sunday)
+        for s in &SETS[2..] {
+            assert_eq!(s.release % 86_400, 23 * 3600, "{}", s.id);
+            assert_eq!((s.release / 86_400 + 4) % 7, 0, "{} is a Sunday in UTC", s.id);
+        }
     }
 
     #[test]

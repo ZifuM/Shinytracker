@@ -348,7 +348,7 @@ impl App {
                     NoticeAction::RestartToUpdate => self.restart_to_update(ctx),
                     NoticeAction::OpenCounting => {
                         self.show_setup = true;
-                        self.setup.tab = Tab::Counting;
+                        self.go_to(Tab::Counting);
                         self.clear_notice(id);
                     }
                     NoticeAction::UseRunningGame => self.use_running_game_folder(),
@@ -401,7 +401,7 @@ impl App {
                     NoticeAction::RestartToUpdate => self.restart_to_update(ctx),
                     NoticeAction::OpenCounting => {
                         self.show_setup = true;
-                        self.setup.tab = Tab::Counting;
+                        self.go_to(Tab::Counting);
                         self.clear_notice(id);
                     }
                     NoticeAction::UseRunningGame => self.use_running_game_folder(),

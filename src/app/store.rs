@@ -435,7 +435,13 @@ impl App {
                     let busy = pk.apps.iter().any(|a| self.setup.store.busy.contains_key(a));
                     let br = Rect::from_min_size(pos2(rect.min.x + 16.0, rect.max.y - 40.0), vec2(124.0, 28.0));
                     let label = if busy { "Installing…" } else if have { "✓ All installed" } else { "Install pack" };
-                    let b = pill_button(ui, br, label, !have && !busy, ("pack", i));
+                    // (Modern Plus: "All installed" is a status, not a button)
+                    let b = if have && kit::plus() {
+                        ui.painter().text(br.left_center() + vec2(2.0, 0.0), Align2::LEFT_CENTER, "✓ All installed", crate::fonts::sans_bold_font(12.0), kit::C_GREEN);
+                        ui.interact(br, ui.id().with(("pack", i)), Sense::hover())
+                    } else {
+                        pill_button(ui, br, label, !have && !busy, ("pack", i))
+                    };
                     if (b.clicked() || (resp.clicked() && !b.hovered())) && !have && !busy {
                         self.install_pack(i);
                     }
@@ -530,7 +536,8 @@ impl App {
         }
         if self.has_app(a) {
             let open = self.cfg.apps.is_open(a);
-            let r = pill_button(ui, rect, if open { "Go to" } else { "Open" }, big, ("app-btn", a));
+            // (Modern Plus: one verb, Open, whether it's open or not)
+            let r = pill_button(ui, rect, if open && !kit::plus() { "Go to" } else { "Open" }, big, ("app-btn", a));
             if r.clicked() {
                 self.open_app(a);
                 return true;

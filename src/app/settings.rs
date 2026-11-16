@@ -207,6 +207,9 @@ impl App {
             } else {
                 // (Panels draw on the background layer, so the sidebar fills
                 // itself rather than being painted over afterwards.)
+                // (Modern Plus with the bottom dock: no sidebar; the pages
+                // are tabs in the title bar.)
+                if !self.plus_tabs() {
                 egui::SidePanel::left("settings-nav")
                     .exact_width(if modern { self.nav_width() } else { 184.0 })
                     .resizable(false)
@@ -221,6 +224,7 @@ impl App {
                         kit::settings_style(ui);
                         self.modern_sidebar(ui)
                     });
+                }
                 kit::set_page_icon(if modern {
                     let (icon, _, color) = super::shell::tab_meta(self.setup.tab);
                     Some((icon, color))
@@ -331,7 +335,24 @@ impl App {
                         if std::mem::take(&mut self.setup.scroll_top) {
                             area = area.vertical_scroll_offset(0.0);
                         }
+                        // A tour scrolling the part it points at into view
+                        // (app_tour asks): glide there over a few frames.
+                        let tour_to_id = egui::Id::new("tour-scroll-to");
+                        let mut tour_glide: Option<(f32, f32)> = None;
+                        // (with Settings open, a tour there scrolls Settings instead)
+                        let tour_req = if self.setup.settings_open.is_none() { ui.data(|d| d.get_temp::<(f32, u64)>(tour_to_id)) } else { None };
+                        if let Some((to, n)) = tour_req {
+                            if ui.ctx().cumulative_pass_nr().saturating_sub(n) > 600 {
+                                ui.data_mut(|d| d.remove::<(f32, u64)>(tour_to_id));
+                            } else {
+                                let cur: f32 = ui.data(|d| d.get_temp(egui::Id::new("page-scroll-y"))).unwrap_or(0.0);
+                                let step = if (to - cur).abs() < 1.5 || !kit::motion() { to } else { cur + (to - cur) * 0.3 };
+                                area = area.vertical_scroll_offset(step);
+                                tour_glide = Some((to, step));
+                            }
+                        }
                         let page_rect = ui.max_rect();
+                        ui.data_mut(|d| d.insert_temp(egui::Id::new("tour-page"), page_rect));
                         let scrolled = area
                             .show(ui, |ui| {
                                 // Cap the page width, but never wider than the window
@@ -341,7 +362,7 @@ impl App {
                                     || self.setup.caught_pick
                                     || (self.setup.profile_card.is_none()
                                         && self.setup.share.is_none()
-                                        && matches!(self.setup.tab, Tab::Home | Tab::Store | Tab::Library | Tab::Profile | Tab::Stats | Tab::Dex | Tab::Trophies | Tab::Runs | Tab::Pokedex | Tab::Map | Tab::Info | Tab::Team | Tab::Sim | Tab::Breed | Tab::Calc | Tab::Cards | Tab::Gotchi | Tab::Bingo | Tab::RareGrass | Tab::Replay | Tab::Journal | Tab::Boxes | Tab::Nuzlocke));
+                                        && matches!(self.setup.tab, Tab::Home | Tab::Store | Tab::Library | Tab::Profile | Tab::Stats | Tab::Dex | Tab::Trophies | Tab::Runs | Tab::Pokedex | Tab::Map | Tab::Info | Tab::Team | Tab::Sim | Tab::Breed | Tab::Calc | Tab::Cards | Tab::Gotchi | Tab::Bingo | Tab::RareGrass | Tab::Replay | Tab::Journal | Tab::Boxes | Tab::Nuzlocke | Tab::Stickers));
                                 let cap = if modern { 1060.0 } else { 900.0 };
                                 let w = if wide { ui.available_width() } else { ui.available_width().min(cap) };
                                 ui.set_max_width(w);
@@ -383,6 +404,7 @@ impl App {
                                         Tab::Journal => self.page_journal(ui),
                                         Tab::Boxes => self.page_boxes(ui),
                                         Tab::Nuzlocke => self.page_nuzlocke(ui),
+                                        Tab::Stickers => self.page_stickers(ui),
                                         Tab::Profile => self.page_profile(ui),
                                         Tab::Stats => self.page_stats(ui),
                                         Tab::Dex | Tab::Trophies => {
@@ -393,19 +415,35 @@ impl App {
                                             self.page_pokedex(ui)
                                         }
                                         Tab::Hunt => self.page_hunt(ui),
-                                        Tab::Counting => self.page_counting(ui),
+                                        Tab::Counting if self.cfg.apps.shiny_pages_in_app => self.page_counting(ui),
+                                        Tab::Overlay if self.cfg.apps.shiny_pages_in_app => self.page_overlay(ui),
+                                        Tab::Counting | Tab::Overlay => {
+                                            // Shiny Hunter's settings now: open them there
+                                            let t = self.setup.tab;
+                                            self.setup.tab = Tab::Shiny;
+                                            self.open_settings(t);
+                                            self.page_shiny(ui)
+                                        }
                                         Tab::Runs => self.page_runs(ui),
-                                        Tab::Overlay => self.page_overlay(ui),
                                         Tab::Appearance => self.page_appearance(ui),
                                         Tab::Hotkeys => self.page_hotkeys(ui),
                                         Tab::Advanced => self.page_advanced(ui),
                                     }
                                 }
-                                ui.add_space(24.0);
+                                ui.add_space(24.0 + self.dock_pad());
                             })
                             .state
                             .offset
                             .y;
+                        ui.data_mut(|d| d.insert_temp(egui::Id::new("page-scroll-y"), scrolled));
+                        if let Some((to, asked)) = tour_glide {
+                            // there, or as far as the page goes: done
+                            if (scrolled - to).abs() < 1.5 || (scrolled - asked).abs() > 1.0 {
+                                ui.data_mut(|d| d.remove::<(f32, u64)>(tour_to_id));
+                            } else {
+                                ui.ctx().request_repaint();
+                            }
+                        }
                         // Far down a long page: a button back to the top, where
                         // the page's tabs are.
                         if scrolled > 240.0 {
@@ -435,7 +473,11 @@ impl App {
             }
             // App settings: a window over the page, opened by the cog.
             if !self.apps_welcome_open() && !self.onboarding_open() {
+                // the floating dock (Appearance → Pinned apps → At the bottom)
+                self.bottom_dock(ctx);
                 self.settings_window(ctx);
+                // The first time an app opens: its spotlight tour.
+                self.app_tour(ctx);
             }
             // Outline on top, like the overlay; resize grip bottom-right
             // (neither when maximized).
@@ -687,6 +729,8 @@ impl App {
                     if tile.on_hover_text(tip).clicked() && !off {
                         self.cfg.hunt_method = m;
                         self.dirty = true;
+                        // rare grass: its line too; soft resets for a starter: every starter
+                        self.add_target_group();
                     }
                 }
             });
@@ -832,72 +876,7 @@ impl App {
     /// The settings (Appearance, Hotkeys, Advanced) in a window over the
     /// page, opened by the cog top right. Esc, the × or a click outside
     /// closes it.
-    pub(super) fn settings_window(&mut self, ctx: &egui::Context) {
-        let Some(mut tab) = self.setup.settings_open else { return };
-        let screen = ctx.screen_rect();
-        let size = egui::vec2((screen.width() - 48.0).clamp(380.0, 1220.0), (screen.height() - 64.0).max(300.0));
-        let panel = Rect::from_center_size(screen.center(), size);
-        let mut close = false;
-        // (Esc stays with the hotkey being recorded)
-        if self.setup.recording.is_none() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            close = true;
-        }
-        egui::Area::new(egui::Id::new("settings-window")).order(egui::Order::Middle).fixed_pos(screen.min).show(ctx, |ui| {
-            kit::settings_style(ui);
-            let (sr, scrim) = ui.allocate_exact_size(screen.size(), Sense::click());
-            ui.painter().rect_filled(sr, 0.0, Color32::from_black_alpha(150));
-            if scrim.clicked() {
-                close = true;
-            }
-            ui.painter().add(kit::shadow_tier(3).as_shape(panel, 22.0));
-            ui.painter().rect_filled(panel, 22.0, PAGE());
-            ui.painter().rect_stroke(panel, 22.0, egui::Stroke::new(1.0f32, kit::CONTROL()));
-            // the window eats its own clicks
-            ui.interact(panel, egui::Id::new("settings-window-panel"), Sense::click());
-            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(panel.shrink2(egui::vec2(26.0, 20.0))).layout(egui::Layout::top_down(egui::Align::Min)), |ui| {
-                // title and ×
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Settings").font(crate::fonts::sans_bold_font(22.0)).color(TEXT()));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let (r, _) = ui.allocate_exact_size(egui::vec2(34.0, 34.0), Sense::hover());
-                        if super::store::pill_button(ui, r, "×", false, "settings-x").on_hover_text("Close (Esc)").clicked() {
-                            close = true;
-                        }
-                    });
-                });
-                ui.add_space(10.0);
-                let before = tab;
-                kit::tab_bar(ui, &mut tab, &[(Tab::Appearance, "🎨  Appearance"), (Tab::Hotkeys, "⌨  Hotkeys"), (Tab::Advanced, "⚙  Advanced")]);
-                if tab != before {
-                    self.setup.scroll_top = true;
-                }
-                ui.add_space(12.0);
-                let mut area = egui::ScrollArea::vertical().id_salt(("settings-window-scroll", tab as u8)).auto_shrink([false, false]);
-                if std::mem::take(&mut self.setup.scroll_top) {
-                    area = area.vertical_scroll_offset(0.0);
-                }
-                area.show(ui, |ui| {
-                    ui.set_max_width(ui.available_width() - 14.0);
-                    // the pages' headings show their own icon (not the page under the window)
-                    let (icon, _, color) = super::shell::tab_meta(tab);
-                    kit::set_page_icon(kit::modern().then_some((icon, color)));
-                    match tab {
-                        Tab::Hotkeys => self.page_hotkeys(ui),
-                        Tab::Advanced => self.page_advanced(ui),
-                        _ => self.page_appearance(ui),
-                    }
-                    ui.add_space(20.0);
-                    let (icon, _, color) = super::shell::tab_meta(self.setup.tab);
-                    kit::set_page_icon(kit::modern().then_some((icon, color)));
-                });
-            });
-        });
-        if close {
-            self.setup.settings_open = None;
-        } else if self.setup.settings_open.is_some() {
-            self.setup.settings_open = Some(tab);
-        }
-    }
+    // (the settings window is in settings_apps.rs)
 
     // ─────────────────────────── pages ───────────────────────────
 

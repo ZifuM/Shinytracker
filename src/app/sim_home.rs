@@ -122,6 +122,7 @@ impl App {
         if self.setup.sim.battle.is_some() {
             return self.page_battle(ui);
         }
+        super::app_tour::here(ui.ctx(), "sim");
         kit::page_header(ui, "BATTLE SIM", "Put your teams up against wild Pokémon and trainers, in singles or doubles, and test your catch odds.");
         if let Some(e) = self.setup.sim.load_error.clone() {
             let mut close = false;
@@ -157,12 +158,16 @@ impl App {
             self.setup.sim.setup.mode = Mode::Wild;
             self.setup.sim.view = SimView::Catch;
         }
+        let tour_top = ui.cursor().min.y;
         self.sim_activity_cards(ui);
+        super::app_tour::mark_since(ui, "sim.modes", tour_top);
         ui.add_space(16.0);
+        let tour_top = ui.cursor().min.y;
         match self.sim_activity() {
             super::sim_layouts::Activity::Catch => self.catch_shelf(ui),
             _ => self.sim_versus(ui),
         }
+        super::app_tour::mark_since(ui, "sim.setup", tour_top);
     }
 
     pub(super) fn sim_ours(&mut self, ui: &mut egui::Ui) {

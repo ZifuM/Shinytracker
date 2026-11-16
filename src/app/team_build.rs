@@ -182,7 +182,9 @@ pub(super) fn item_text<'a>(w: Option<&'a Wiki>, name: &str) -> Option<&'a crate
 impl App {
     pub(super) fn team_build(&mut self, ui: &mut egui::Ui) {
         let Some(t) = self.setup.team.team().cloned() else { return };
+        let tour_top = ui.cursor().min.y;
         self.team_slots(ui, &t);
+        super::app_tour::mark_since(ui, "team.slots", tour_top);
         ui.add_space(14.0);
         if self.setup.team.import.is_some() {
             self.team_import_box(ui, Some(t.id));

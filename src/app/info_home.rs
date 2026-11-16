@@ -415,17 +415,22 @@ impl App {
             Page::Place(n) => return self.page_place(ui, &w, &n),
             Page::Home => {}
         }
+        super::app_tour::here(ui.ctx(), "info");
         kit::page_header(
             ui,
             "GAME INFO",
             &format!("Platinum Together {}: what's in the game, where to find it and how it works.", w.data.version),
         );
+        let tour_top = ui.cursor().min.y;
         self.info_search_hero(ui, &w);
+        super::app_tour::mark_since(ui, "info.search", tour_top);
         ui.add_space(18.0);
         if self.setup.info.browsing() {
             self.info_results(ui, &w);
         } else {
+            let tour_top = ui.cursor().min.y;
             self.info_front(ui, &w);
+            super::app_tour::mark_since(ui, "info.front", tour_top);
         }
         ui.add_space(18.0);
         self.info_source(ui, &w);

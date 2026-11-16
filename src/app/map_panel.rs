@@ -108,7 +108,9 @@ impl App {
         ui.horizontal(|ui| {
             let mut tab = self.mapui.panel_tab;
             let rare_label = format!("Rare grass · {}", spots.len());
+            let tour_top = ui.cursor().min;
             kit::segmented(ui, &mut tab, &[(MapTab::Area, "Area"), (MapTab::Rare, rare_label.as_str())]);
+            super::app_tour::mark(ui.ctx(), "map.tabs", egui::Rect::from_min_max(tour_top, egui::pos2(ui.min_rect().max.x, ui.min_rect().max.y)));
             self.mapui.panel_tab = tab;
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if round_button(ui, 32.0, "Hide the panel (more room for the map)", |p, r, ink| {

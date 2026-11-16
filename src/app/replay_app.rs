@@ -342,6 +342,8 @@ impl App {
     // ───────────────────────────── the page ─────────────────────────────
 
     pub(super) fn page_replay(&mut self, ui: &mut egui::Ui) {
+
+        super::app_tour::here(ui.ctx(), "replay");
         let st = self.setup.replay.status();
         ui.horizontal(|ui| {
             ui.vertical(|ui| kit::page_header(ui, "SHINY REPLAY", "The moment you found it, saved as a clip."));
@@ -370,10 +372,12 @@ impl App {
                     Some(c) => self.replay_player(ui, c),
                     None => self.replay_empty(ui, &st),
                 }
+                super::app_tour::mark(ui.ctx(), "replay.player", ui.min_rect());
             });
             ui.allocate_ui_with_layout(vec2(side, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                 ui.set_width(side);
                 self.replay_side(ui, &st, &clips);
+                super::app_tour::mark(ui.ctx(), "replay.side", ui.min_rect());
             });
         });
         if clips.len() > 1 {
@@ -383,15 +387,15 @@ impl App {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui.label(RichText::new("Newest first · click one to play it above").size(12.0).color(MUTED())));
             });
             ui.add_space(8.0);
+            let tour_top = ui.cursor().min.y;
             self.replay_shelf(ui, &clips, sel.as_ref().map(|c| c.id.clone()));
+            super::app_tour::mark_since(ui, "replay.shelf", tour_top);
         }
         ui.add_space(12.0);
-        // the settings window (the cog)
-        let mut open = self.setup.replay.settings_open;
-        let ctx = ui.ctx().clone();
-        super::app_settings::window(&ctx, "replay", "Shiny Replay settings", "How clips are recorded, and where they go.", ROSE, &mut open, |ui| self.replay_settings(ui, &st));
-        // (closed too when a setting took you to another page)
-        self.setup.replay.settings_open = open && self.setup.tab == super::Tab::Replay;
+        // the cog opens Settings → Shiny Replay
+        if std::mem::take(&mut self.setup.replay.settings_open) {
+            self.open_settings(super::Tab::Replay);
+        }
     }
 
     fn replay_state_line(&self, st: &replay::RecStatus) -> (String, Color32, bool) {
@@ -702,7 +706,7 @@ impl App {
 
     /// Recording settings (in the cog's window): on/off, size, frame rate,
     /// bitrate, where clips go, how many are kept, the hotkey.
-    fn replay_settings(&mut self, ui: &mut egui::Ui, st: &replay::RecStatus) {
+    pub(super) fn replay_settings(&mut self, ui: &mut egui::Ui, st: &replay::RecStatus) {
         use super::app_settings::{group, row};
         let before = self.cfg.replay.clone();
         let mut pick = false;
@@ -771,7 +775,6 @@ impl App {
             self.setup.replay.picking_folder = Some(crate::share::pick_folder(self.cfg.replay.folder(), ui.ctx().clone()));
         }
         if hotkeys {
-            self.setup.replay.settings_open = false;
             self.go_to(super::Tab::Hotkeys);
         }
     }

@@ -211,6 +211,8 @@ impl App {
     }
 
     pub(super) fn page_breed(&mut self, ui: &mut egui::Ui) {
+
+        super::app_tour::here(ui.ctx(), "breed");
         self.setup.breed.file();
         // Keep clear of the scrollbar on the right.
         let w = (ui.available_width() - 14.0).max(300.0);
@@ -245,7 +247,9 @@ impl App {
         ];
         let tabs_ref: Vec<(BreedView, &str)> = tabs.iter().map(|(v, l)| (*v, l.as_str())).collect();
         let mut view = self.setup.breed.view;
+        let tour_top = ui.cursor().min.y;
         kit::tab_bar(ui, &mut view, &tabs_ref);
+        super::app_tour::mark_since(ui, "breed.tabs", tour_top);
         if view != self.setup.breed.view {
             self.setup.breed.view = view;
             self.setup.breed.flash = None;

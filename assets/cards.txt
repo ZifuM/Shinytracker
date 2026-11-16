@@ -1,5 +1,6 @@
-# Pokémon TCG card list (data: PokemonTCG/pokemon-tcg-data, MIT): Base Set, Base Set 2, Jungle, Fossil, Team Rocket, Gym Heroes, Gym Challenge.
+# Pokémon TCG card list (data: PokemonTCG/pokemon-tcg-data, MIT): Base Set, Base Set 2, Jungle, Fossil, Team Rocket, Gym Heroes, Gym Challenge, Neo Genesis, Neo Discovery, Neo Revelation, Neo Destiny, Legendary Collection, Expedition, Aquapolis, Skyridge.
 # set|number|name|rarity|supertype|types|hp|dex|subtypes
+# Aquapolis and Skyridge holos are numbered H1..H32 on the cards: here 1001..1032. Shining and Crystal Pokémon are listed as Rare Holo. Expedition's basic Energy (theme decks only) is left out.
 base1|1|Alakazam|Rare Holo|Pokémon|Psychic|80|65|Stage 2
 base1|2|Blastoise|Rare Holo|Pokémon|Water|100|9|Stage 2
 base1|3|Chansey|Rare Holo|Pokémon|Colorless|120|113|Basic
@@ -705,3 +706,1001 @@ gym2|129|Grass Energy||Energy|||0|
 gym2|130|Lightning Energy||Energy|||0|
 gym2|131|Psychic Energy||Energy|||0|
 gym2|132|Water Energy||Energy|||0|
+neo1|1|Ampharos|Rare Holo|Pokémon|Lightning|80|181|Stage 2
+neo1|2|Azumarill|Rare Holo|Pokémon|Water|70|184|Stage 1
+neo1|3|Bellossom|Rare Holo|Pokémon|Grass|70|182|Stage 2
+neo1|4|Feraligatr|Rare Holo|Pokémon|Water|100|160|Stage 2
+neo1|5|Feraligatr|Rare Holo|Pokémon|Water|120|160|Stage 2
+neo1|6|Heracross|Rare Holo|Pokémon|Grass|60|214|Basic
+neo1|7|Jumpluff|Rare Holo|Pokémon|Grass|70|189|Stage 2
+neo1|8|Kingdra|Rare Holo|Pokémon|Water|90|230|Stage 2
+neo1|9|Lugia|Rare Holo|Pokémon|Colorless|90|249|Basic
+neo1|10|Meganium|Rare Holo|Pokémon|Grass|100|154|Stage 2
+neo1|11|Meganium|Rare Holo|Pokémon|Grass|100|154|Stage 2
+neo1|12|Pichu|Rare Holo|Pokémon|Lightning|30|172|Baby
+neo1|13|Skarmory|Rare Holo|Pokémon|Metal|60|227|Basic
+neo1|14|Slowking|Rare Holo|Pokémon|Psychic|80|199|Stage 1
+neo1|15|Steelix|Rare Holo|Pokémon|Metal|110|208|Stage 1
+neo1|16|Togetic|Rare Holo|Pokémon|Colorless|60|176|Stage 1
+neo1|17|Typhlosion|Rare Holo|Pokémon|Fire|100|157|Stage 2
+neo1|18|Typhlosion|Rare Holo|Pokémon|Fire|100|157|Stage 2
+neo1|19|Metal Energy|Rare Holo|Energy|||0|Special
+neo1|20|Cleffa|Rare|Pokémon|Colorless|30|173|Baby
+neo1|21|Donphan|Rare|Pokémon|Fighting|70|232|Stage 1
+neo1|22|Elekid|Rare|Pokémon|Lightning|30|239|Baby
+neo1|23|Magby|Rare|Pokémon|Fire|30|240|Baby
+neo1|24|Murkrow|Rare|Pokémon|Darkness|50|198|Basic
+neo1|25|Sneasel|Rare|Pokémon|Darkness|60|215|Basic
+neo1|26|Aipom|Uncommon|Pokémon|Colorless|40|190|Basic
+neo1|27|Ariados|Uncommon|Pokémon|Grass|60|168|Stage 1
+neo1|28|Bayleef|Uncommon|Pokémon|Grass|70|153|Stage 1
+neo1|29|Bayleef|Uncommon|Pokémon|Grass|80|153|Stage 1
+neo1|30|Clefairy|Uncommon|Pokémon|Colorless|50|35|Basic
+neo1|31|Croconaw|Uncommon|Pokémon|Water|70|159|Stage 1
+neo1|32|Croconaw|Uncommon|Pokémon|Water|80|159|Stage 1
+neo1|33|Electabuzz|Uncommon|Pokémon|Lightning|70|125|Basic
+neo1|34|Flaaffy|Uncommon|Pokémon|Lightning|60|180|Stage 1
+neo1|35|Furret|Uncommon|Pokémon|Colorless|60|162|Stage 1
+neo1|36|Gloom|Uncommon|Pokémon|Grass|60|44|Stage 1
+neo1|37|Granbull|Uncommon|Pokémon|Colorless|70|210|Stage 1
+neo1|38|Lanturn|Uncommon|Pokémon|Lightning|70|171|Stage 1
+neo1|39|Ledian|Uncommon|Pokémon|Grass|60|166|Stage 1
+neo1|40|Magmar|Uncommon|Pokémon|Fire|70|126|Basic
+neo1|41|Miltank|Uncommon|Pokémon|Colorless|70|241|Basic
+neo1|42|Noctowl|Uncommon|Pokémon|Colorless|60|164|Stage 1
+neo1|43|Phanpy|Uncommon|Pokémon|Fighting|40|231|Basic
+neo1|44|Piloswine|Uncommon|Pokémon|Water|80|221|Stage 1
+neo1|45|Quagsire|Uncommon|Pokémon|Water|70|195|Stage 1
+neo1|46|Quilava|Uncommon|Pokémon|Fire|60|156|Stage 1
+neo1|47|Quilava|Uncommon|Pokémon|Fire|70|156|Stage 1
+neo1|48|Seadra|Uncommon|Pokémon|Water|70|117|Stage 1
+neo1|49|Skiploom|Uncommon|Pokémon|Grass|60|188|Stage 1
+neo1|50|Sunflora|Uncommon|Pokémon|Grass|70|192|Stage 1
+neo1|51|Togepi|Uncommon|Pokémon|Colorless|40|175|Basic
+neo1|52|Xatu|Uncommon|Pokémon|Psychic|80|178|Stage 1
+neo1|53|Chikorita|Common|Pokémon|Grass|40|152|Basic
+neo1|54|Chikorita|Common|Pokémon|Grass|50|152|Basic
+neo1|55|Chinchou|Common|Pokémon|Lightning|50|170|Basic
+neo1|56|Cyndaquil|Common|Pokémon|Fire|40|155|Basic
+neo1|57|Cyndaquil|Common|Pokémon|Fire|50|155|Basic
+neo1|58|Girafarig|Common|Pokémon|Psychic|60|203|Basic
+neo1|59|Gligar|Common|Pokémon|Fighting|60|207|Basic
+neo1|60|Hoothoot|Common|Pokémon|Colorless|50|163|Basic
+neo1|61|Hoppip|Common|Pokémon|Grass|50|187|Basic
+neo1|62|Horsea|Common|Pokémon|Water|50|116|Basic
+neo1|63|Ledyba|Common|Pokémon|Grass|40|165|Basic
+neo1|64|Mantine|Common|Pokémon|Water|60|226|Basic
+neo1|65|Mareep|Common|Pokémon|Lightning|40|179|Basic
+neo1|66|Marill|Common|Pokémon|Water|40|183|Basic
+neo1|67|Natu|Common|Pokémon|Psychic|30|177|Basic
+neo1|68|Oddish|Common|Pokémon|Grass|40|43|Basic
+neo1|69|Onix|Common|Pokémon|Fighting|60|95|Basic
+neo1|70|Pikachu|Common|Pokémon|Lightning|50|25|Basic
+neo1|71|Sentret|Common|Pokémon|Colorless|40|161|Basic
+neo1|72|Shuckle|Common|Pokémon|Grass|50|213|Basic
+neo1|73|Slowpoke|Common|Pokémon|Psychic|50|79|Basic
+neo1|74|Snubbull|Common|Pokémon|Colorless|50|209|Basic
+neo1|75|Spinarak|Common|Pokémon|Grass|40|167|Basic
+neo1|76|Stantler|Common|Pokémon|Colorless|60|234|Basic
+neo1|77|Sudowoodo|Common|Pokémon|Fighting|60|185|Basic
+neo1|78|Sunkern|Common|Pokémon|Grass|40|191|Basic
+neo1|79|Swinub|Common|Pokémon|Water|40|220|Basic
+neo1|80|Totodile|Common|Pokémon|Water|40|158|Basic
+neo1|81|Totodile|Common|Pokémon|Water|50|158|Basic
+neo1|82|Wooper|Common|Pokémon|Water|50|194|Basic
+neo1|83|Arcade Game|Rare|Trainer|||0|
+neo1|84|Ecogym|Rare|Trainer|||0|
+neo1|85|Energy Charge|Rare|Trainer|||0|
+neo1|86|Focus Band|Rare|Trainer|||0|
+neo1|87|Mary|Rare|Trainer|||0|
+neo1|88|PokéGear|Rare|Trainer|||0|
+neo1|89|Super Energy Retrieval|Rare|Trainer|||0|
+neo1|90|Time Capsule|Rare|Trainer|||0|
+neo1|91|Bill's Teleporter|Uncommon|Trainer|||0|
+neo1|92|Card-Flip Game|Uncommon|Trainer|||0|
+neo1|93|Gold Berry|Uncommon|Trainer|||0|
+neo1|94|Miracle Berry|Uncommon|Trainer|||0|
+neo1|95|New Pokédex|Uncommon|Trainer|||0|
+neo1|96|Professor Elm|Uncommon|Trainer|||0|
+neo1|97|Sprout Tower|Uncommon|Trainer|||0|
+neo1|98|Super Scoop Up|Uncommon|Trainer|||0|
+neo1|99|Berry|Common|Trainer|||0|
+neo1|100|Double Gust|Common|Trainer|||0|
+neo1|101|Moo-Moo Milk|Common|Trainer|||0|
+neo1|102|Pokémon March|Common|Trainer|||0|
+neo1|103|Super Rod|Common|Trainer|||0|
+neo1|104|Darkness Energy|Rare|Energy|||0|Special
+neo1|105|Recycle Energy|Rare|Energy|||0|Special
+neo1|106|Fighting Energy||Energy|||0|Basic
+neo1|107|Fire Energy||Energy|||0|Basic
+neo1|108|Grass Energy||Energy|||0|Basic
+neo1|109|Lightning Energy||Energy|||0|Basic
+neo1|110|Psychic Energy||Energy|||0|Basic
+neo1|111|Water Energy||Energy|||0|Basic
+neo2|1|Espeon|Rare Holo|Pokémon|Psychic|80|196|Stage 1
+neo2|2|Forretress|Rare Holo|Pokémon|Metal|80|205|Stage 1
+neo2|3|Hitmontop|Rare Holo|Pokémon|Fighting|60|237|Basic
+neo2|4|Houndoom|Rare Holo|Pokémon|Darkness|70|229|Stage 1
+neo2|5|Houndour|Rare Holo|Pokémon|Fire|50|228|Basic
+neo2|6|Kabutops|Rare Holo|Pokémon|Water|90|141|Stage 2
+neo2|7|Magnemite|Rare Holo|Pokémon|Metal|40|81|Basic
+neo2|8|Politoed|Rare Holo|Pokémon|Water|100|186|Stage 2
+neo2|9|Poliwrath|Rare Holo|Pokémon|Fighting|90|62|Stage 2
+neo2|10|Scizor|Rare Holo|Pokémon|Metal|80|212|Stage 1
+neo2|11|Smeargle|Rare Holo|Pokémon|Colorless|50|235|Basic
+neo2|12|Tyranitar|Rare Holo|Pokémon|Darkness|100|248|Stage 2
+neo2|13|Umbreon|Rare Holo|Pokémon|Darkness|80|197|Stage 1
+neo2|14|Unown [A]|Rare Holo|Pokémon|Psychic|40|201|Basic
+neo2|15|Ursaring|Rare Holo|Pokémon|Colorless|80|217|Stage 1
+neo2|16|Wobbuffet|Rare Holo|Pokémon|Psychic|90|202|Basic
+neo2|17|Yanma|Rare Holo|Pokémon|Grass|60|193|Basic
+neo2|18|Beedrill|Rare|Pokémon|Grass|80|15|Stage 2
+neo2|19|Butterfree|Rare|Pokémon|Grass|80|12|Stage 2
+neo2|20|Espeon|Rare|Pokémon|Psychic|70|196|Stage 1
+neo2|21|Forretress|Rare|Pokémon|Metal|80|205|Stage 1
+neo2|22|Hitmontop|Rare|Pokémon|Fighting|60|237|Basic
+neo2|23|Houndoom|Rare|Pokémon|Darkness|70|229|Stage 1
+neo2|24|Houndour|Rare|Pokémon|Fire|50|228|Basic
+neo2|25|Kabutops|Rare|Pokémon|Water|90|141|Stage 2
+neo2|26|Magnemite|Rare|Pokémon|Metal|40|81|Basic
+neo2|27|Politoed|Rare|Pokémon|Water|100|186|Stage 2
+neo2|28|Poliwrath|Rare|Pokémon|Fighting|90|62|Stage 2
+neo2|29|Scizor|Rare|Pokémon|Metal|80|212|Stage 1
+neo2|30|Smeargle|Rare|Pokémon|Colorless|50|235|Basic
+neo2|31|Tyranitar|Rare|Pokémon|Darkness|100|248|Stage 2
+neo2|32|Umbreon|Rare|Pokémon|Darkness|70|197|Stage 1
+neo2|33|Unown [A]|Rare|Pokémon|Psychic|40|201|Basic
+neo2|34|Ursaring|Rare|Pokémon|Colorless|80|217|Stage 1
+neo2|35|Wobbuffet|Rare|Pokémon|Psychic|90|202|Basic
+neo2|36|Yanma|Rare|Pokémon|Grass|60|193|Basic
+neo2|37|Corsola|Uncommon|Pokémon|Water|50|222|Basic
+neo2|38|Eevee|Uncommon|Pokémon|Colorless|50|133|Basic
+neo2|39|Houndour|Uncommon|Pokémon|Darkness|40|228|Basic
+neo2|40|Igglybuff|Uncommon|Pokémon|Colorless|30|174|Baby
+neo2|41|Kakuna|Uncommon|Pokémon|Grass|70|14|Stage 1
+neo2|42|Metapod|Uncommon|Pokémon|Grass|70|11|Stage 1
+neo2|43|Omastar|Uncommon|Pokémon|Fighting|80|139|Stage 2
+neo2|44|Poliwhirl|Uncommon|Pokémon|Water|70|61|Stage 1
+neo2|45|Pupitar|Uncommon|Pokémon|Fighting|70|247|Stage 1
+neo2|46|Scyther|Uncommon|Pokémon|Grass|60|123|Basic
+neo2|47|Unown [D]|Uncommon|Pokémon|Psychic|40|201|Basic
+neo2|48|Unown [F]|Uncommon|Pokémon|Psychic|40|201|Basic
+neo2|49|Unown [M]|Uncommon|Pokémon|Psychic|40|201|Basic
+neo2|50|Unown [N]|Uncommon|Pokémon|Psychic|40|201|Basic
+neo2|51|Unown [U]|Uncommon|Pokémon|Psychic|40|201|Basic
+neo2|52|Xatu|Uncommon|Pokémon|Psychic|70|178|Stage 1
+neo2|53|Caterpie|Common|Pokémon|Grass|50|10|Basic
+neo2|54|Dunsparce|Common|Pokémon|Colorless|30|206|Basic
+neo2|55|Hoppip|Common|Pokémon|Grass|30|187|Basic
+neo2|56|Kabuto|Common|Pokémon|Water|50|140|Stage 1
+neo2|57|Larvitar|Common|Pokémon|Fighting|40|246|Basic
+neo2|58|Mareep|Common|Pokémon|Lightning|50|179|Basic
+neo2|59|Natu|Common|Pokémon|Psychic|40|177|Basic
+neo2|60|Omanyte|Common|Pokémon|Fighting|50|138|Stage 1
+neo2|61|Pineco|Common|Pokémon|Grass|40|204|Basic
+neo2|62|Poliwag|Common|Pokémon|Water|40|60|Basic
+neo2|63|Sentret|Common|Pokémon|Colorless|50|161|Basic
+neo2|64|Spinarak|Common|Pokémon|Grass|50|167|Basic
+neo2|65|Teddiursa|Common|Pokémon|Colorless|40|216|Basic
+neo2|66|Tyrogue|Common|Pokémon|Fighting|30|236|Baby
+neo2|67|Unown [E]|Common|Pokémon|Psychic|40|201|Basic
+neo2|68|Unown [I]|Common|Pokémon|Psychic|40|201|Basic
+neo2|69|Unown [O]|Common|Pokémon|Psychic|40|201|Basic
+neo2|70|Weedle|Common|Pokémon|Grass|40|13|Basic
+neo2|71|Wooper|Common|Pokémon|Water|50|194|Basic
+neo2|72|Fossil Egg|Uncommon|Trainer|||0|
+neo2|73|Hyper Devolution Spray|Uncommon|Trainer|||0|
+neo2|74|Ruin Wall|Uncommon|Trainer|||0|
+neo2|75|Energy Ark|Common|Trainer|||0|
+neo3|1|Ampharos|Rare Holo|Pokémon|Lightning|90|181|Stage 2
+neo3|2|Blissey|Rare Holo|Pokémon|Colorless|120|242|Stage 1
+neo3|3|Celebi|Rare Holo|Pokémon|Psychic|50|251|Basic
+neo3|4|Crobat|Rare Holo|Pokémon|Grass|90|169|Stage 2
+neo3|5|Delibird|Rare Holo|Pokémon|Colorless|60|225|Basic
+neo3|6|Entei|Rare Holo|Pokémon|Fire|80|244|Basic
+neo3|7|Ho-oh|Rare Holo|Pokémon|Fire|90|250|Basic
+neo3|8|Houndoom|Rare Holo|Pokémon|Darkness|70|229|Stage 1
+neo3|9|Jumpluff|Rare Holo|Pokémon|Grass|70|189|Stage 2
+neo3|10|Magneton|Rare Holo|Pokémon|Metal|80|82|Stage 1
+neo3|11|Misdreavus|Rare Holo|Pokémon|Psychic|50|200|Basic
+neo3|12|Porygon2|Rare Holo|Pokémon|Colorless|70|233|Stage 1
+neo3|13|Raikou|Rare Holo|Pokémon|Lightning|80|243|Basic
+neo3|14|Suicune|Rare Holo|Pokémon|Water|70|245|Basic
+neo3|15|Aerodactyl|Rare|Pokémon|Fighting|60|142|Stage 1
+neo3|16|Celebi|Rare|Pokémon|Grass|50|251|Basic
+neo3|17|Entei|Rare|Pokémon|Fire|60|244|Basic
+neo3|18|Ho-oh|Rare|Pokémon|Colorless|90|250|Basic
+neo3|19|Kingdra|Rare|Pokémon|Water|90|230|Stage 2
+neo3|20|Lugia|Rare|Pokémon|Psychic|90|249|Basic
+neo3|21|Raichu|Rare|Pokémon|Lightning|80|26|Stage 1
+neo3|22|Raikou|Rare|Pokémon|Lightning|60|243|Basic
+neo3|23|Skarmory|Rare|Pokémon|Metal|60|227|Basic
+neo3|24|Sneasel|Rare|Pokémon|Darkness|60|215|Basic
+neo3|25|Starmie|Rare|Pokémon|Psychic|70|121|Stage 1
+neo3|26|Sudowoodo|Rare|Pokémon|Fighting|60|185|Basic
+neo3|27|Suicune|Rare|Pokémon|Water|60|245|Basic
+neo3|28|Flaaffy|Uncommon|Pokémon|Lightning|70|180|Stage 1
+neo3|29|Golbat|Uncommon|Pokémon|Grass|60|42|Stage 1
+neo3|30|Graveler|Uncommon|Pokémon|Fighting|70|75|Stage 1
+neo3|31|Jynx|Uncommon|Pokémon|Water|60|124|Basic
+neo3|32|Lanturn|Uncommon|Pokémon|Lightning|80|171|Stage 1
+neo3|33|Magcargo|Uncommon|Pokémon|Fire|80|219|Stage 1
+neo3|34|Octillery|Uncommon|Pokémon|Water|80|224|Stage 1
+neo3|35|Parasect|Uncommon|Pokémon|Grass|60|47|Stage 1
+neo3|36|Piloswine|Uncommon|Pokémon|Fighting|90|221|Stage 1
+neo3|37|Seaking|Uncommon|Pokémon|Water|70|119|Stage 1
+neo3|38|Stantler|Uncommon|Pokémon|Colorless|60|234|Basic
+neo3|39|Unown [B]|Uncommon|Pokémon|Psychic|50|201|Basic
+neo3|40|Unown [Y]|Uncommon|Pokémon|Psychic|40|201|Basic
+neo3|41|Aipom|Common|Pokémon|Colorless|40|190|Basic
+neo3|42|Chinchou|Common|Pokémon|Lightning|50|170|Basic
+neo3|43|Farfetch'd|Common|Pokémon|Colorless|50|83|Basic
+neo3|44|Geodude|Common|Pokémon|Fighting|40|74|Basic
+neo3|45|Goldeen|Common|Pokémon|Water|40|118|Basic
+neo3|46|Murkrow|Common|Pokémon|Darkness|40|198|Basic
+neo3|47|Paras|Common|Pokémon|Grass|40|46|Basic
+neo3|48|Quagsire|Common|Pokémon|Water|70|195|Stage 1
+neo3|49|Qwilfish|Common|Pokémon|Water|60|211|Basic
+neo3|50|Remoraid|Common|Pokémon|Water|40|223|Basic
+neo3|51|Shuckle|Common|Pokémon|Fighting|40|213|Basic
+neo3|52|Skiploom|Common|Pokémon|Grass|60|188|Stage 1
+neo3|53|Slugma|Common|Pokémon|Fire|50|218|Basic
+neo3|54|Smoochum|Common|Pokémon|Psychic|30|238|Baby
+neo3|55|Snubbull|Common|Pokémon|Colorless|50|209|Basic
+neo3|56|Staryu|Common|Pokémon|Water|40|120|Basic
+neo3|57|Swinub|Common|Pokémon|Fighting|40|220|Basic
+neo3|58|Unown [K]|Common|Pokémon|Psychic|40|201|Basic
+neo3|59|Zubat|Common|Pokémon|Grass|40|41|Basic
+neo3|60|Balloon Berry|Uncommon|Trainer|||0|
+neo3|61|Healing Field|Uncommon|Trainer|||0|
+neo3|62|Pokémon Breeder Fields|Uncommon|Trainer|||0|
+neo3|63|Rocket's Hideout|Uncommon|Trainer|||0|
+neo3|64|Old Rod|Common|Trainer|||0|
+neo3|65|Shining Gyarados|Rare Holo|Pokémon|Water|100|130|Basic
+neo3|66|Shining Magikarp|Rare Holo|Pokémon|Water|30|129|Basic
+neo4|1|Dark Ampharos|Rare Holo|Pokémon|Lightning|70|181|Stage 2
+neo4|2|Dark Crobat|Rare Holo|Pokémon|Grass|70|169|Stage 2
+neo4|3|Dark Donphan|Rare Holo|Pokémon|Fighting|60|232|Stage 1
+neo4|4|Dark Espeon|Rare Holo|Pokémon|Psychic|60|196|Stage 1
+neo4|5|Dark Feraligatr|Rare Holo|Pokémon|Water|80|160|Stage 2
+neo4|6|Dark Gengar|Rare Holo|Pokémon|Psychic|70|94|Stage 2
+neo4|7|Dark Houndoom|Rare Holo|Pokémon|Fire|60|229|Stage 1
+neo4|8|Dark Porygon2|Rare Holo|Pokémon|Colorless|60|233|Stage 1
+neo4|9|Dark Scizor|Rare Holo|Pokémon|Metal|70|212|Stage 1
+neo4|10|Dark Typhlosion|Rare Holo|Pokémon|Fire|80|157|Stage 2
+neo4|11|Dark Tyranitar|Rare Holo|Pokémon|Fighting|90|248|Stage 2
+neo4|12|Light Arcanine|Rare Holo|Pokémon|Fire|100|59|Stage 1
+neo4|13|Light Azumarill|Rare Holo|Pokémon|Water|80|184|Stage 1
+neo4|14|Light Dragonite|Rare Holo|Pokémon|Colorless|100|149|Stage 2
+neo4|15|Light Togetic|Rare Holo|Pokémon|Colorless|60|176|Stage 1
+neo4|16|Miracle Energy|Rare Holo|Energy|||0|Special
+neo4|17|Dark Ariados|Rare|Pokémon|Grass|60|168|Stage 1
+neo4|18|Dark Magcargo|Rare|Pokémon|Fire|60|219|Stage 1
+neo4|19|Dark Omastar|Rare|Pokémon|Water|70|139|Stage 2
+neo4|20|Dark Slowking|Rare|Pokémon|Psychic|60|199|Stage 1
+neo4|21|Dark Ursaring|Rare|Pokémon|Colorless|60|217|Stage 1
+neo4|22|Light Dragonair|Rare|Pokémon|Colorless|80|148|Stage 1
+neo4|23|Light Lanturn|Rare|Pokémon|Lightning|80|171|Stage 1
+neo4|24|Light Ledian|Rare|Pokémon|Grass|70|166|Stage 1
+neo4|25|Light Machamp|Rare|Pokémon|Fighting|100|68|Stage 2
+neo4|26|Light Piloswine|Rare|Pokémon|Water|90|221|Stage 1
+neo4|27|Unown [G]|Rare|Pokémon|Psychic|40|201|Basic
+neo4|28|Unown [H]|Rare|Pokémon|Psychic|40|201|Basic
+neo4|29|Unown [W]|Rare|Pokémon|Psychic|40|201|Basic
+neo4|30|Unown [X]|Rare|Pokémon|Psychic|50|201|Basic
+neo4|31|Chansey|Uncommon|Pokémon|Colorless|90|113|Basic
+neo4|32|Dark Croconaw|Uncommon|Pokémon|Water|60|159|Stage 1
+neo4|33|Dark Exeggutor|Uncommon|Pokémon|Psychic|60|103|Stage 1
+neo4|34|Dark Flaaffy|Uncommon|Pokémon|Lightning|60|180|Stage 1
+neo4|35|Dark Forretress|Uncommon|Pokémon|Grass|60|205|Stage 1
+neo4|36|Dark Haunter|Uncommon|Pokémon|Psychic|50|93|Stage 1
+neo4|37|Dark Omanyte|Uncommon|Pokémon|Water|40|138|Stage 1
+neo4|38|Dark Pupitar|Uncommon|Pokémon|Fighting|60|247|Stage 1
+neo4|39|Dark Quilava|Uncommon|Pokémon|Fire|60|156|Stage 1
+neo4|40|Dark Wigglytuff|Uncommon|Pokémon|Colorless|60|40|Stage 1
+neo4|41|Heracross|Uncommon|Pokémon|Grass|60|214|Basic
+neo4|42|Hitmonlee|Uncommon|Pokémon|Fighting|60|106|Basic
+neo4|43|Houndour|Uncommon|Pokémon|Darkness|40|228|Basic
+neo4|44|Jigglypuff|Uncommon|Pokémon|Colorless|50|39|Basic
+neo4|45|Light Dewgong|Uncommon|Pokémon|Water|80|87|Stage 1
+neo4|46|Light Flareon|Uncommon|Pokémon|Fire|80|136|Stage 1
+neo4|47|Light Golduck|Uncommon|Pokémon|Water|80|55|Stage 1
+neo4|48|Light Jolteon|Uncommon|Pokémon|Lightning|70|135|Stage 1
+neo4|49|Light Machoke|Uncommon|Pokémon|Fighting|80|67|Stage 1
+neo4|50|Light Ninetales|Uncommon|Pokémon|Fire|90|38|Stage 1
+neo4|51|Light Slowbro|Uncommon|Pokémon|Psychic|80|80|Stage 1
+neo4|52|Light Vaporeon|Uncommon|Pokémon|Water|80|134|Stage 1
+neo4|53|Light Venomoth|Uncommon|Pokémon|Grass|80|49|Stage 1
+neo4|54|Light Wigglytuff|Uncommon|Pokémon|Colorless|80|40|Stage 1
+neo4|55|Scyther|Uncommon|Pokémon|Grass|60|123|Basic
+neo4|56|Togepi|Uncommon|Pokémon|Colorless|40|175|Basic
+neo4|57|Unown [C]|Uncommon|Pokémon|Psychic|40|201|Basic
+neo4|58|Unown [P]|Uncommon|Pokémon|Psychic|40|201|Basic
+neo4|59|Unown [Q]|Uncommon|Pokémon|Psychic|40|201|Basic
+neo4|60|Unown [Z]|Uncommon|Pokémon|Psychic|40|201|Basic
+neo4|61|Cyndaquil|Common|Pokémon|Fire|40|155|Basic
+neo4|62|Dark Octillery|Common|Pokémon|Water|60|224|Stage 1
+neo4|63|Dratini|Common|Pokémon|Colorless|40|147|Basic
+neo4|64|Exeggcute|Common|Pokémon|Psychic|40|102|Basic
+neo4|65|Gastly|Common|Pokémon|Psychic|40|92|Basic
+neo4|66|Girafarig|Common|Pokémon|Colorless|60|203|Basic
+neo4|67|Gligar|Common|Pokémon|Fighting|50|207|Basic
+neo4|68|Growlithe|Common|Pokémon|Fire|50|58|Basic
+neo4|69|Hitmonchan|Common|Pokémon|Fighting|60|107|Basic
+neo4|70|Larvitar|Common|Pokémon|Fighting|40|246|Basic
+neo4|71|Ledyba|Common|Pokémon|Grass|40|165|Basic
+neo4|72|Light Sunflora|Common|Pokémon|Grass|80|192|Stage 1
+neo4|73|Machop|Common|Pokémon|Fighting|40|66|Basic
+neo4|74|Mantine|Common|Pokémon|Water|60|226|Basic
+neo4|75|Mareep|Common|Pokémon|Lightning|50|179|Basic
+neo4|76|Phanpy|Common|Pokémon|Fighting|40|231|Basic
+neo4|77|Pineco|Common|Pokémon|Grass|40|204|Basic
+neo4|78|Porygon|Common|Pokémon|Colorless|50|137|Basic
+neo4|79|Psyduck|Common|Pokémon|Water|50|54|Basic
+neo4|80|Remoraid|Common|Pokémon|Water|40|223|Basic
+neo4|81|Seel|Common|Pokémon|Water|50|86|Basic
+neo4|82|Slugma|Common|Pokémon|Fire|50|218|Basic
+neo4|83|Sunkern|Common|Pokémon|Grass|40|191|Basic
+neo4|84|Swinub|Common|Pokémon|Water|50|220|Basic
+neo4|85|Totodile|Common|Pokémon|Water|50|158|Basic
+neo4|86|Unown [L]|Common|Pokémon|Psychic|50|201|Basic
+neo4|87|Unown [S]|Common|Pokémon|Psychic|50|201|Basic
+neo4|88|Unown [T]|Common|Pokémon|Psychic|40|201|Basic
+neo4|89|Unown [V]|Common|Pokémon|Psychic|40|201|Basic
+neo4|90|Venonat|Common|Pokémon|Grass|40|48|Basic
+neo4|91|Vulpix|Common|Pokémon|Fire|50|37|Basic
+neo4|92|Broken Ground Gym|Rare|Trainer|||0|
+neo4|93|EXP.ALL|Rare|Trainer|||0|
+neo4|94|Impostor Professor Oak's Invention|Rare|Trainer|||0|
+neo4|95|Radio Tower|Rare|Trainer|||0|
+neo4|96|Thought Wave Machine|Rare|Trainer|||0|
+neo4|97|Counterattack Claws|Uncommon|Trainer|||0|
+neo4|98|Energy Amplifier|Uncommon|Trainer|||0|
+neo4|99|Energy Stadium|Uncommon|Trainer|||0|
+neo4|100|Lucky Stadium|Uncommon|Trainer|||0|
+neo4|101|Magnifier|Uncommon|Trainer|||0|
+neo4|102|Pokémon Personality Test|Uncommon|Trainer|||0|
+neo4|103|Team Rocket's Evil Deeds|Uncommon|Trainer|||0|
+neo4|104|Heal Powder|Common|Trainer|||0|
+neo4|105|Mail from Bill|Common|Trainer|||0|
+neo4|106|Shining Celebi|Rare Holo|Pokémon|Grass|50|251|Basic
+neo4|107|Shining Charizard|Rare Holo|Pokémon|Fire|100|6|Basic
+neo4|108|Shining Kabutops|Rare Holo|Pokémon|Fighting|80|141|Basic
+neo4|109|Shining Mewtwo|Rare Holo|Pokémon|Psychic|70|150|Basic
+neo4|110|Shining Noctowl|Rare Holo|Pokémon|Colorless|60|164|Basic
+neo4|111|Shining Raichu|Rare Holo|Pokémon|Lightning|70|26|Basic
+neo4|112|Shining Steelix|Rare Holo|Pokémon|Metal|90|208|Basic
+neo4|113|Shining Tyranitar|Rare Holo|Pokémon|Darkness|80|248|Basic
+base6|1|Alakazam|Rare Holo|Pokémon|Psychic|80|65|Stage 2
+base6|2|Articuno|Rare Holo|Pokémon|Water|70|144|Basic
+base6|3|Charizard|Rare Holo|Pokémon|Fire|120|6|Stage 2
+base6|4|Dark Blastoise|Rare Holo|Pokémon|Water|70|9|Stage 2
+base6|5|Dark Dragonite|Rare Holo|Pokémon|Colorless|70|149|Stage 2
+base6|6|Dark Persian|Rare Holo|Pokémon|Colorless|60|53|Stage 1
+base6|7|Dark Raichu|Rare Holo|Pokémon|Lightning|70|26|Stage 1
+base6|8|Dark Slowbro|Rare Holo|Pokémon|Psychic|60|80|Stage 1
+base6|9|Dark Vaporeon|Rare Holo|Pokémon|Water|60|134|Stage 1
+base6|10|Flareon|Rare Holo|Pokémon|Fire|70|136|Stage 1
+base6|11|Gengar|Rare Holo|Pokémon|Psychic|80|94|Stage 2
+base6|12|Gyarados|Rare Holo|Pokémon|Water|100|130|Stage 1
+base6|13|Hitmonlee|Rare Holo|Pokémon|Fighting|60|106|Basic
+base6|14|Jolteon|Rare Holo|Pokémon|Lightning|70|135|Stage 1
+base6|15|Machamp|Rare Holo|Pokémon|Fighting|100|68|Stage 2
+base6|16|Muk|Rare Holo|Pokémon|Grass|70|89|Stage 1
+base6|17|Ninetales|Rare Holo|Pokémon|Fire|80|38|Stage 1
+base6|18|Venusaur|Rare Holo|Pokémon|Grass|100|3|Stage 2
+base6|19|Zapdos|Rare Holo|Pokémon|Lightning|90|145|Basic
+base6|20|Beedrill|Rare|Pokémon|Grass|80|15|Stage 2
+base6|21|Butterfree|Rare|Pokémon|Grass|70|12|Stage 2
+base6|22|Electrode|Rare|Pokémon|Lightning|90|101|Stage 1
+base6|23|Exeggutor|Rare|Pokémon|Grass|80|103|Stage 1
+base6|24|Golem|Rare|Pokémon|Fighting|80|76|Stage 2
+base6|25|Hypno|Rare|Pokémon|Psychic|90|97|Stage 1
+base6|26|Jynx|Rare|Pokémon|Psychic|70|124|Basic
+base6|27|Kabutops|Rare|Pokémon|Fighting|60|141|Stage 2
+base6|28|Magneton|Rare|Pokémon|Lightning|80|82|Stage 1
+base6|29|Mewtwo|Rare|Pokémon|Psychic|60|150|Basic
+base6|30|Moltres|Rare|Pokémon|Fire|70|146|Basic
+base6|31|Nidoking|Rare|Pokémon|Grass|90|34|Stage 2
+base6|32|Nidoqueen|Rare|Pokémon|Grass|90|31|Stage 2
+base6|33|Pidgeot|Rare|Pokémon|Colorless|80|18|Stage 2
+base6|34|Pidgeotto|Rare|Pokémon|Colorless|60|17|Stage 1
+base6|35|Rhydon|Rare|Pokémon|Fighting|100|112|Stage 1
+base6|36|Arcanine|Uncommon|Pokémon|Fire|100|59|Stage 1
+base6|37|Charmeleon|Uncommon|Pokémon|Fire|80|5|Stage 1
+base6|38|Dark Dragonair|Uncommon|Pokémon|Colorless|60|148|Stage 1
+base6|39|Dark Wartortle|Uncommon|Pokémon|Water|60|8|Stage 1
+base6|40|Dewgong|Uncommon|Pokémon|Water|80|87|Stage 1
+base6|41|Dodrio|Uncommon|Pokémon|Colorless|70|85|Stage 1
+base6|42|Fearow|Uncommon|Pokémon|Colorless|70|22|Stage 1
+base6|43|Golduck|Uncommon|Pokémon|Water|70|55|Stage 1
+base6|44|Graveler|Uncommon|Pokémon|Fighting|60|75|Stage 1
+base6|45|Growlithe|Uncommon|Pokémon|Fire|60|58|Basic
+base6|46|Haunter|Uncommon|Pokémon|Psychic|50|93|Stage 1
+base6|47|Ivysaur|Uncommon|Pokémon|Grass|60|2|Stage 1
+base6|48|Kabuto|Uncommon|Pokémon|Fighting|30|140|Stage 1
+base6|49|Kadabra|Uncommon|Pokémon|Psychic|60|64|Stage 1
+base6|50|Kakuna|Uncommon|Pokémon|Grass|80|14|Stage 1
+base6|51|Machoke|Uncommon|Pokémon|Fighting|80|67|Stage 1
+base6|52|Magikarp|Uncommon|Pokémon|Water|30|129|Basic
+base6|53|Meowth|Uncommon|Pokémon|Colorless|50|52|Basic
+base6|54|Metapod|Uncommon|Pokémon|Grass|70|11|Stage 1
+base6|55|Nidorina|Uncommon|Pokémon|Grass|70|30|Stage 1
+base6|56|Nidorino|Uncommon|Pokémon|Grass|60|33|Stage 1
+base6|57|Omanyte|Uncommon|Pokémon|Water|40|138|Stage 1
+base6|58|Omastar|Uncommon|Pokémon|Water|70|139|Stage 2
+base6|59|Primeape|Uncommon|Pokémon|Fighting|70|57|Stage 1
+base6|60|Rapidash|Uncommon|Pokémon|Fire|70|78|Stage 1
+base6|61|Raticate|Uncommon|Pokémon|Colorless|60|20|Stage 1
+base6|62|Sandslash|Uncommon|Pokémon|Fighting|70|28|Stage 1
+base6|63|Seadra|Uncommon|Pokémon|Water|60|117|Stage 1
+base6|64|Snorlax|Uncommon|Pokémon|Colorless|90|143|Basic
+base6|65|Tauros|Uncommon|Pokémon|Colorless|60|128|Basic
+base6|66|Tentacruel|Uncommon|Pokémon|Water|60|73|Stage 1
+base6|67|Abra|Common|Pokémon|Psychic|30|63|Basic
+base6|68|Bulbasaur|Common|Pokémon|Grass|40|1|Basic
+base6|69|Caterpie|Common|Pokémon|Grass|40|10|Basic
+base6|70|Charmander|Common|Pokémon|Fire|50|4|Basic
+base6|71|Doduo|Common|Pokémon|Colorless|50|84|Basic
+base6|72|Dratini|Common|Pokémon|Colorless|40|147|Basic
+base6|73|Drowzee|Common|Pokémon|Psychic|50|96|Basic
+base6|74|Eevee|Common|Pokémon|Colorless|50|133|Basic
+base6|75|Exeggcute|Common|Pokémon|Grass|50|102|Basic
+base6|76|Gastly|Common|Pokémon|Psychic|50|92|Basic
+base6|77|Geodude|Common|Pokémon|Fighting|50|74|Basic
+base6|78|Grimer|Common|Pokémon|Grass|50|88|Basic
+base6|79|Machop|Common|Pokémon|Fighting|50|66|Basic
+base6|80|Magnemite|Common|Pokémon|Lightning|40|81|Basic
+base6|81|Mankey|Common|Pokémon|Fighting|40|56|Basic
+base6|82|Nidoran ♀|Common|Pokémon|Grass|60|29|Basic
+base6|83|Nidoran ♂|Common|Pokémon|Grass|40|32|Basic
+base6|84|Onix|Common|Pokémon|Fighting|90|95|Basic
+base6|85|Pidgey|Common|Pokémon|Colorless|40|16|Basic
+base6|86|Pikachu|Common|Pokémon|Lightning|50|25|Basic
+base6|87|Ponyta|Common|Pokémon|Fire|40|77|Basic
+base6|88|Psyduck|Common|Pokémon|Water|50|54|Basic
+base6|89|Rattata|Common|Pokémon|Colorless|30|19|Basic
+base6|90|Rhyhorn|Common|Pokémon|Fighting|70|111|Basic
+base6|91|Sandshrew|Common|Pokémon|Fighting|40|27|Basic
+base6|92|Seel|Common|Pokémon|Water|60|86|Basic
+base6|93|Slowpoke|Common|Pokémon|Psychic|50|79|Basic
+base6|94|Spearow|Common|Pokémon|Colorless|50|21|Basic
+base6|95|Squirtle|Common|Pokémon|Water|40|7|Basic
+base6|96|Tentacool|Common|Pokémon|Water|30|72|Basic
+base6|97|Voltorb|Common|Pokémon|Lightning|40|100|Basic
+base6|98|Vulpix|Common|Pokémon|Fire|50|37|Basic
+base6|99|Weedle|Common|Pokémon|Grass|40|13|Basic
+base6|100|Full Heal Energy|Uncommon|Energy|||0|Special
+base6|101|Potion Energy|Uncommon|Energy|||0|Special
+base6|102|Pokémon Breeder|Rare|Trainer|||0|
+base6|103|Pokémon Trader|Rare|Trainer|||0|
+base6|104|Scoop Up|Rare|Trainer|||0|
+base6|105|The Boss's Way|Uncommon|Trainer|||0|
+base6|106|Challenge!|Uncommon|Trainer|||0|
+base6|107|Energy Retrieval|Uncommon|Trainer|||0|
+base6|108|Bill|Common|Trainer|||0|
+base6|109|Mysterious Fossil|Common|Trainer||10|0|
+base6|110|Potion|Common|Trainer|||0|
+ecard1|1|Alakazam|Rare Holo|Pokémon|Psychic|100|65|Stage 2
+ecard1|2|Ampharos|Rare Holo|Pokémon|Lightning|100|181|Stage 2
+ecard1|3|Arbok|Rare Holo|Pokémon|Grass|70|24|Stage 1
+ecard1|4|Blastoise|Rare Holo|Pokémon|Water|100|9|Stage 2
+ecard1|5|Butterfree|Rare Holo|Pokémon|Grass|80|12|Stage 2
+ecard1|6|Charizard|Rare Holo|Pokémon|Fire|120|6|Stage 2
+ecard1|7|Clefable|Rare Holo|Pokémon|Colorless|70|36|Stage 1
+ecard1|8|Cloyster|Rare Holo|Pokémon|Water|80|91|Stage 1
+ecard1|9|Dragonite|Rare Holo|Pokémon|Colorless|100|149|Stage 2
+ecard1|10|Dugtrio|Rare Holo|Pokémon|Fighting|70|51|Stage 1
+ecard1|11|Fearow|Rare Holo|Pokémon|Colorless|70|22|Stage 1
+ecard1|12|Feraligatr|Rare Holo|Pokémon|Water|120|160|Stage 2
+ecard1|13|Gengar|Rare Holo|Pokémon|Psychic|90|94|Stage 2
+ecard1|14|Golem|Rare Holo|Pokémon|Fighting|100|76|Stage 2
+ecard1|15|Kingler|Rare Holo|Pokémon|Water|80|99|Stage 1
+ecard1|16|Machamp|Rare Holo|Pokémon|Fighting|120|68|Stage 2
+ecard1|17|Magby|Rare Holo|Pokémon|Fire|30|240|Baby
+ecard1|18|Meganium|Rare Holo|Pokémon|Grass|100|154|Stage 2
+ecard1|19|Mew|Rare Holo|Pokémon|Psychic|50|151|Basic
+ecard1|20|Mewtwo|Rare Holo|Pokémon|Psychic|70|150|Basic
+ecard1|21|Ninetales|Rare Holo|Pokémon|Fire|80|38|Stage 1
+ecard1|22|Pichu|Rare Holo|Pokémon|Lightning|30|172|Baby
+ecard1|23|Pidgeot|Rare Holo|Pokémon|Colorless|80|18|Stage 2
+ecard1|24|Poliwrath|Rare Holo|Pokémon|Water|100|62|Stage 2
+ecard1|25|Raichu|Rare Holo|Pokémon|Lightning|80|26|Stage 1
+ecard1|26|Rapidash|Rare Holo|Pokémon|Fire|70|78|Stage 1
+ecard1|27|Skarmory|Rare Holo|Pokémon|Metal|60|227|Basic
+ecard1|28|Typhlosion|Rare Holo|Pokémon|Fire|100|157|Stage 2
+ecard1|29|Tyranitar|Rare Holo|Pokémon|Darkness|120|248|Stage 2
+ecard1|30|Venusaur|Rare Holo|Pokémon|Grass|100|3|Stage 2
+ecard1|31|Vileplume|Rare Holo|Pokémon|Grass|90|45|Stage 2
+ecard1|32|Weezing|Rare Holo|Pokémon|Grass|80|110|Stage 1
+ecard1|33|Alakazam|Rare|Pokémon|Psychic|100|65|Stage 2
+ecard1|34|Ampharos|Rare|Pokémon|Lightning|100|181|Stage 2
+ecard1|35|Arbok|Rare|Pokémon|Grass|70|24|Stage 1
+ecard1|36|Blastoise|Rare|Pokémon|Water|100|9|Stage 2
+ecard1|37|Blastoise|Rare|Pokémon|Water|100|9|Stage 2
+ecard1|38|Butterfree|Rare|Pokémon|Grass|80|12|Stage 2
+ecard1|39|Charizard|Rare|Pokémon|Fire|100|6|Stage 2
+ecard1|40|Charizard|Rare|Pokémon|Fire|120|6|Stage 2
+ecard1|41|Clefable|Rare|Pokémon|Colorless|70|36|Stage 1
+ecard1|42|Cloyster|Rare|Pokémon|Water|80|91|Stage 1
+ecard1|43|Dragonite|Rare|Pokémon|Colorless|100|149|Stage 2
+ecard1|44|Dugtrio|Rare|Pokémon|Fighting|70|51|Stage 1
+ecard1|45|Fearow|Rare|Pokémon|Colorless|70|22|Stage 1
+ecard1|46|Feraligatr|Rare|Pokémon|Water|100|160|Stage 2
+ecard1|47|Feraligatr|Rare|Pokémon|Water|120|160|Stage 2
+ecard1|48|Gengar|Rare|Pokémon|Psychic|90|94|Stage 2
+ecard1|49|Golem|Rare|Pokémon|Fighting|100|76|Stage 2
+ecard1|50|Kingler|Rare|Pokémon|Water|80|99|Stage 1
+ecard1|51|Machamp|Rare|Pokémon|Fighting|120|68|Stage 2
+ecard1|52|Magby|Rare|Pokémon|Fire|30|240|Baby
+ecard1|53|Meganium|Rare|Pokémon|Grass|100|154|Stage 2
+ecard1|54|Meganium|Rare|Pokémon|Grass|100|154|Stage 2
+ecard1|55|Mew|Rare|Pokémon|Psychic|50|151|Basic
+ecard1|56|Mewtwo|Rare|Pokémon|Psychic|70|150|Basic
+ecard1|57|Ninetales|Rare|Pokémon|Fire|80|38|Stage 1
+ecard1|58|Pichu|Rare|Pokémon|Lightning|30|172|Baby
+ecard1|59|Pidgeot|Rare|Pokémon|Colorless|80|18|Stage 2
+ecard1|60|Poliwrath|Rare|Pokémon|Water|100|62|Stage 2
+ecard1|61|Raichu|Rare|Pokémon|Lightning|80|26|Stage 1
+ecard1|62|Rapidash|Rare|Pokémon|Fire|70|78|Stage 1
+ecard1|63|Skarmory|Rare|Pokémon|Metal|60|227|Basic
+ecard1|64|Typhlosion|Rare|Pokémon|Fire|100|157|Stage 2
+ecard1|65|Typhlosion|Rare|Pokémon|Fire|100|157|Stage 2
+ecard1|66|Tyranitar|Rare|Pokémon|Darkness|120|248|Stage 2
+ecard1|67|Venusaur|Rare|Pokémon|Grass|100|3|Stage 2
+ecard1|68|Venusaur|Rare|Pokémon|Grass|100|3|Stage 2
+ecard1|69|Vileplume|Rare|Pokémon|Grass|90|45|Stage 2
+ecard1|70|Weezing|Rare|Pokémon|Grass|80|110|Stage 1
+ecard1|71|Bayleef|Uncommon|Pokémon|Grass|70|153|Stage 1
+ecard1|72|Chansey|Uncommon|Pokémon|Colorless|90|113|Basic
+ecard1|73|Charmeleon|Uncommon|Pokémon|Fire|80|5|Stage 1
+ecard1|74|Croconaw|Uncommon|Pokémon|Water|80|159|Stage 1
+ecard1|75|Dragonair|Uncommon|Pokémon|Colorless|70|148|Stage 1
+ecard1|76|Electabuzz|Uncommon|Pokémon|Lightning|60|125|Basic
+ecard1|77|Flaaffy|Uncommon|Pokémon|Lightning|80|180|Stage 1
+ecard1|78|Gloom|Uncommon|Pokémon|Grass|70|44|Stage 1
+ecard1|79|Graveler|Uncommon|Pokémon|Fighting|80|75|Stage 1
+ecard1|80|Haunter|Uncommon|Pokémon|Psychic|70|93|Stage 1
+ecard1|81|Hitmonlee|Uncommon|Pokémon|Fighting|60|106|Basic
+ecard1|82|Ivysaur|Uncommon|Pokémon|Grass|80|2|Stage 1
+ecard1|83|Jynx|Uncommon|Pokémon|Water|60|124|Basic
+ecard1|84|Kadabra|Uncommon|Pokémon|Psychic|70|64|Stage 1
+ecard1|85|Machoke|Uncommon|Pokémon|Fighting|80|67|Stage 1
+ecard1|86|Magmar|Uncommon|Pokémon|Fire|60|126|Basic
+ecard1|87|Metapod|Uncommon|Pokémon|Grass|60|11|Stage 1
+ecard1|88|Pidgeotto|Uncommon|Pokémon|Colorless|60|17|Stage 1
+ecard1|89|Poliwhirl|Uncommon|Pokémon|Water|70|61|Stage 1
+ecard1|90|Pupitar|Uncommon|Pokémon|Fighting|70|247|Stage 1
+ecard1|91|Quilava|Uncommon|Pokémon|Fire|70|156|Stage 1
+ecard1|92|Wartortle|Uncommon|Pokémon|Water|80|8|Stage 1
+ecard1|93|Abra|Common|Pokémon|Psychic|40|63|Basic
+ecard1|94|Bulbasaur|Common|Pokémon|Grass|50|1|Basic
+ecard1|95|Bulbasaur|Common|Pokémon|Grass|40|1|Basic
+ecard1|96|Caterpie|Common|Pokémon|Grass|40|10|Basic
+ecard1|97|Charmander|Common|Pokémon|Fire|50|4|Basic
+ecard1|98|Charmander|Common|Pokémon|Fire|50|4|Basic
+ecard1|99|Chikorita|Common|Pokémon|Grass|40|152|Basic
+ecard1|100|Chikorita|Common|Pokémon|Grass|50|152|Basic
+ecard1|101|Clefairy|Common|Pokémon|Colorless|50|35|Basic
+ecard1|102|Corsola|Common|Pokémon|Water|60|222|Basic
+ecard1|103|Cubone|Common|Pokémon|Fighting|40|104|Basic
+ecard1|104|Cyndaquil|Common|Pokémon|Fire|40|155|Basic
+ecard1|105|Cyndaquil|Common|Pokémon|Fire|50|155|Basic
+ecard1|106|Diglett|Common|Pokémon|Fighting|40|50|Basic
+ecard1|107|Dratini|Common|Pokémon|Colorless|40|147|Basic
+ecard1|108|Ekans|Common|Pokémon|Grass|50|23|Basic
+ecard1|109|Gastly|Common|Pokémon|Psychic|40|92|Basic
+ecard1|110|Geodude|Common|Pokémon|Fighting|50|74|Basic
+ecard1|111|Goldeen|Common|Pokémon|Water|50|118|Basic
+ecard1|112|Hoppip|Common|Pokémon|Grass|40|187|Basic
+ecard1|113|Houndour|Common|Pokémon|Darkness|50|228|Basic
+ecard1|114|Koffing|Common|Pokémon|Grass|50|109|Basic
+ecard1|115|Krabby|Common|Pokémon|Water|50|98|Basic
+ecard1|116|Larvitar|Common|Pokémon|Fighting|50|246|Basic
+ecard1|117|Machop|Common|Pokémon|Fighting|50|66|Basic
+ecard1|118|Magikarp|Common|Pokémon|Water|30|129|Basic
+ecard1|119|Mareep|Common|Pokémon|Lightning|40|179|Basic
+ecard1|120|Marill|Common|Pokémon|Water|40|183|Basic
+ecard1|121|Meowth|Common|Pokémon|Colorless|50|52|Basic
+ecard1|122|Oddish|Common|Pokémon|Grass|50|43|Basic
+ecard1|123|Pidgey|Common|Pokémon|Colorless|40|16|Basic
+ecard1|124|Pikachu|Common|Pokémon|Lightning|50|25|Basic
+ecard1|125|Poliwag|Common|Pokémon|Water|50|60|Basic
+ecard1|126|Ponyta|Common|Pokémon|Fire|40|77|Basic
+ecard1|127|Qwilfish|Common|Pokémon|Water|60|211|Basic
+ecard1|128|Rattata|Common|Pokémon|Colorless|30|19|Basic
+ecard1|129|Shellder|Common|Pokémon|Water|50|90|Basic
+ecard1|130|Spearow|Common|Pokémon|Colorless|40|21|Basic
+ecard1|131|Squirtle|Common|Pokémon|Water|50|7|Basic
+ecard1|132|Squirtle|Common|Pokémon|Water|40|7|Basic
+ecard1|133|Tauros|Common|Pokémon|Colorless|70|128|Basic
+ecard1|134|Totodile|Common|Pokémon|Water|50|158|Basic
+ecard1|135|Totodile|Common|Pokémon|Water|50|158|Basic
+ecard1|136|Vulpix|Common|Pokémon|Fire|50|37|Basic
+ecard1|137|Bill's Maintenance|Uncommon|Trainer|||0|
+ecard1|138|Copycat|Uncommon|Trainer|||0|
+ecard1|139|Dual Ball|Uncommon|Trainer|||0|
+ecard1|140|Energy Removal 2|Uncommon|Trainer|||0|
+ecard1|141|Energy Restore|Uncommon|Trainer|||0|
+ecard1|142|Mary's Impulse|Uncommon|Trainer|||0|
+ecard1|143|Master Ball|Uncommon|Trainer|||0|
+ecard1|144|Multi Technical Machine 01|Uncommon|Trainer|||0|
+ecard1|145|Pokémon Nurse|Uncommon|Trainer|||0|
+ecard1|146|Pokémon Reversal|Uncommon|Trainer|||0|
+ecard1|147|Power Charge|Uncommon|Trainer|||0|
+ecard1|148|Professor Elm's Training Method|Uncommon|Trainer|||0|
+ecard1|149|Professor Oak's Research|Uncommon|Trainer|||0|
+ecard1|150|Strength Charm|Uncommon|Trainer|||0|
+ecard1|151|Super Scoop Up|Uncommon|Trainer|||0|
+ecard1|152|Warp Point|Uncommon|Trainer|||0|
+ecard1|153|Energy Search|Common|Trainer|||0|
+ecard1|154|Full Heal|Common|Trainer|||0|
+ecard1|155|Moo-Moo Milk|Common|Trainer|||0|
+ecard1|156|Potion|Common|Trainer|||0|
+ecard1|157|Switch|Common|Trainer|||0|
+ecard1|158|Darkness Energy|Rare|Energy|||0|Special
+ecard1|159|Metal Energy|Rare|Energy|||0|Special
+ecard2|1|Ampharos|Rare|Pokémon|Lightning|100|181|Stage 2
+ecard2|2|Arcanine|Rare|Pokémon|Fire|90|59|Stage 1
+ecard2|3|Ariados|Rare|Pokémon|Grass|70|168|Stage 1
+ecard2|4|Azumarill|Rare|Pokémon|Water|70|184|Stage 1
+ecard2|5|Bellossom|Rare|Pokémon|Grass|90|182|Stage 2
+ecard2|6|Blissey|Rare|Pokémon|Colorless|120|242|Stage 1
+ecard2|7|Donphan|Rare|Pokémon|Fighting|80|232|Stage 1
+ecard2|8|Electrode|Rare|Pokémon|Lightning|70|101|Stage 1
+ecard2|9|Elekid|Rare|Pokémon|Lightning|30|239|Baby
+ecard2|10|Entei|Rare|Pokémon|Fire|70|244|Basic
+ecard2|11|Espeon|Rare|Pokémon|Psychic|80|196|Stage 1
+ecard2|12|Exeggutor|Rare|Pokémon|Grass|80|103|Stage 1
+ecard2|13|Exeggutor|Rare|Pokémon|Psychic|80|103|Stage 1
+ecard2|14|Houndoom|Rare|Pokémon|Fire|80|229|Stage 1
+ecard2|15|Houndoom|Rare|Pokémon|Darkness|70|229|Stage 1
+ecard2|16|Hypno|Rare|Pokémon|Psychic|80|97|Stage 1
+ecard2|17|Jumpluff|Rare|Pokémon|Grass|70|189|Stage 2
+ecard2|18|Jynx|Rare|Pokémon|Psychic|60|124|Basic
+ecard2|19|Kingdra|Rare|Pokémon|Water|120|230|Stage 2
+ecard2|20|Lanturn|Rare|Pokémon|Water|80|171|Stage 1
+ecard2|21|Lanturn|Rare|Pokémon|Lightning|80|171|Stage 1
+ecard2|22|Magneton|Rare|Pokémon|Metal|70|82|Stage 1
+ecard2|23|Muk|Rare|Pokémon|Grass|70|89|Stage 1
+ecard2|24|Nidoking|Rare|Pokémon|Fighting|110|34|Stage 2
+ecard2|25|Ninetales|Rare|Pokémon|Fire|80|38|Stage 1
+ecard2|26|Octillery|Rare|Pokémon|Water|80|224|Stage 1
+ecard2|27|Parasect|Rare|Pokémon|Grass|70|47|Stage 1
+ecard2|28|Porygon2|Rare|Pokémon|Colorless|70|233|Stage 1
+ecard2|29|Primeape|Rare|Pokémon|Fighting|80|57|Stage 1
+ecard2|30|Quagsire|Rare|Pokémon|Water|80|195|Stage 1
+ecard2|31|Rapidash|Rare|Pokémon|Fire|70|78|Stage 1
+ecard2|32|Scizor|Rare|Pokémon|Metal|80|212|Stage 1
+ecard2|33|Slowbro|Rare|Pokémon|Water|80|80|Stage 1
+ecard2|34|Slowking|Rare|Pokémon|Psychic|80|199|Stage 1
+ecard2|35|Steelix|Rare|Pokémon|Metal|100|208|Stage 1
+ecard2|36|Sudowoodo|Rare|Pokémon|Fighting|60|185|Basic
+ecard2|37|Suicune|Rare|Pokémon|Water|70|245|Basic
+ecard2|38|Tentacruel|Rare|Pokémon|Water|70|73|Stage 1
+ecard2|39|Togetic|Rare|Pokémon|Colorless|60|176|Stage 1
+ecard2|40|Tyranitar|Rare|Pokémon|Darkness|120|248|Stage 2
+ecard2|41|Umbreon|Rare|Pokémon|Darkness|80|197|Stage 1
+ecard2|42|Victreebel|Rare|Pokémon|Grass|90|71|Stage 2
+ecard2|43|Vileplume|Rare|Pokémon|Grass|100|45|Stage 2
+ecard2|44|Zapdos|Rare|Pokémon|Lightning|80|145|Basic
+ecard2|45|Bellsprout|Uncommon|Pokémon|Grass|50|69|Basic
+ecard2|46|Dodrio|Uncommon|Pokémon|Colorless|70|85|Stage 1
+ecard2|47|Flaaffy|Uncommon|Pokémon|Lightning|80|180|Stage 1
+ecard2|48|Furret|Uncommon|Pokémon|Colorless|70|162|Stage 1
+ecard2|49|Gloom|Uncommon|Pokémon|Grass|70|44|Stage 1
+ecard2|50|Golduck|Uncommon|Pokémon|Water|70|55|Stage 1
+ecard2|51|Growlithe|Uncommon|Pokémon|Fire|60|58|Basic
+ecard2|52|Magnemite|Uncommon|Pokémon|Metal|40|81|Basic
+ecard2|53|Marill|Uncommon|Pokémon|Water|50|183|Basic
+ecard2|54|Marowak|Uncommon|Pokémon|Fighting|70|105|Stage 1
+ecard2|55|Nidorino|Uncommon|Pokémon|Grass|70|33|Stage 1
+ecard2|56|Pupitar|Uncommon|Pokémon|Fighting|80|247|Stage 1
+ecard2|57|Scyther|Uncommon|Pokémon|Grass|60|123|Basic
+ecard2|58|Seadra|Uncommon|Pokémon|Water|70|117|Stage 1
+ecard2|59|Seaking|Uncommon|Pokémon|Water|70|119|Stage 1
+ecard2|60|Skiploom|Uncommon|Pokémon|Grass|60|188|Stage 1
+ecard2|61|Smoochum|Uncommon|Pokémon|Psychic|30|238|Baby
+ecard2|62|Spinarak|Uncommon|Pokémon|Grass|50|167|Basic
+ecard2|63|Tyrogue|Uncommon|Pokémon|Fighting|30|236|Baby
+ecard2|64|Voltorb|Uncommon|Pokémon|Lightning|50|100|Basic
+ecard2|65|Weepinbell|Uncommon|Pokémon|Grass|70|70|Stage 1
+ecard2|66|Wooper|Uncommon|Pokémon|Water|50|194|Basic
+ecard2|67|Aipom|Common|Pokémon|Colorless|50|190|Basic
+ecard2|68|Bellsprout|Common|Pokémon|Grass|40|69|Basic
+ecard2|69|Chansey|Common|Pokémon|Colorless|100|113|Basic
+ecard2|70|Chinchou|Common|Pokémon|Water|50|170|Basic
+ecard2|71|Chinchou|Common|Pokémon|Lightning|50|170|Basic
+ecard2|72|Cubone|Common|Pokémon|Fighting|40|104|Basic
+ecard2|73|Doduo|Common|Pokémon|Colorless|40|84|Basic
+ecard2|74|Drowzee|Common|Pokémon|Psychic|50|96|Basic
+ecard2|75|Eevee|Common|Pokémon|Colorless|50|133|Basic
+ecard2|76|Exeggcute|Common|Pokémon|Grass|40|102|Basic
+ecard2|77|Exeggcute|Common|Pokémon|Psychic|50|102|Basic
+ecard2|78|Goldeen|Common|Pokémon|Water|40|118|Basic
+ecard2|79|Grimer|Common|Pokémon|Grass|50|88|Basic
+ecard2|80|Growlithe|Common|Pokémon|Fire|50|58|Basic
+ecard2|81|Hitmonchan|Common|Pokémon|Fighting|60|107|Basic
+ecard2|82|Hitmontop|Common|Pokémon|Fighting|60|237|Basic
+ecard2|83|Hoppip|Common|Pokémon|Grass|40|187|Basic
+ecard2|84|Horsea|Common|Pokémon|Water|40|116|Basic
+ecard2|85|Horsea|Common|Pokémon|Water|50|116|Basic
+ecard2|86|Houndour|Common|Pokémon|Fire|50|228|Basic
+ecard2|87|Houndour|Common|Pokémon|Darkness|50|228|Basic
+ecard2|88|Kangaskhan|Common|Pokémon|Colorless|70|115|Basic
+ecard2|89|Larvitar|Common|Pokémon|Fighting|40|246|Basic
+ecard2|90|Lickitung|Common|Pokémon|Colorless|80|108|Basic
+ecard2|91|Magnemite|Common|Pokémon|Lightning|50|81|Basic
+ecard2|92|Mankey|Common|Pokémon|Fighting|40|56|Basic
+ecard2|93|Mareep|Common|Pokémon|Lightning|40|179|Basic
+ecard2|94|Miltank|Common|Pokémon|Colorless|60|241|Basic
+ecard2|95|Mr. Mime|Common|Pokémon|Psychic|50|122|Basic
+ecard2|96|Nidoran ♂|Common|Pokémon|Grass|50|32|Basic
+ecard2|97|Oddish|Common|Pokémon|Grass|50|43|Basic
+ecard2|98|Onix|Common|Pokémon|Fighting|60|95|Basic
+ecard2|99|Paras|Common|Pokémon|Grass|50|46|Basic
+ecard2|100|Phanpy|Common|Pokémon|Fighting|40|231|Basic
+ecard2|101|Pinsir|Common|Pokémon|Grass|60|127|Basic
+ecard2|102|Ponyta|Common|Pokémon|Fire|40|77|Basic
+ecard2|103|Porygon|Common|Pokémon|Colorless|40|137|Basic
+ecard2|104|Psyduck|Common|Pokémon|Water|50|54|Basic
+ecard2|105|Remoraid|Common|Pokémon|Water|50|223|Basic
+ecard2|106|Scyther|Common|Pokémon|Grass|50|123|Basic
+ecard2|107|Sentret|Common|Pokémon|Colorless|50|161|Basic
+ecard2|108|Slowpoke|Common|Pokémon|Water|50|79|Basic
+ecard2|109|Smeargle|Common|Pokémon|Colorless|60|235|Basic
+ecard2|110|Sneasel|Common|Pokémon|Darkness|60|215|Basic
+ecard2|111|Spinarak|Common|Pokémon|Grass|40|167|Basic
+ecard2|112|Tangela|Common|Pokémon|Grass|60|114|Basic
+ecard2|113|Tentacool|Common|Pokémon|Water|50|72|Basic
+ecard2|114|Togepi|Common|Pokémon|Colorless|40|175|Basic
+ecard2|115|Voltorb|Common|Pokémon|Lightning|40|100|Basic
+ecard2|116|Vulpix|Common|Pokémon|Fire|50|37|Basic
+ecard2|117|Wooper|Common|Pokémon|Water|40|194|Basic
+ecard2|118|Apricorn Forest|Rare|Trainer|||0|
+ecard2|119|Darkness Cube 01|Uncommon|Trainer|||0|
+ecard2|120|Energy Switch|Uncommon|Trainer|||0|
+ecard2|121|Fighting Cube 01|Uncommon|Trainer|||0|
+ecard2|122|Fire Cube 01|Uncommon|Trainer|||0|
+ecard2|123|Forest Guardian|Uncommon|Trainer|||0|
+ecard2|124|Grass Cube 01|Uncommon|Trainer|||0|
+ecard2|125|Healing Berry|Uncommon|Trainer|||0|
+ecard2|126|Juggler|Uncommon|Trainer|||0|
+ecard2|127|Lightning Cube 01|Uncommon|Trainer|||0|
+ecard2|128|Memory Berry|Uncommon|Trainer|||0|
+ecard2|129|Metal Cube 01|Uncommon|Trainer|||0|
+ecard2|130|Pokémon Fan Club|Uncommon|Trainer|||0|
+ecard2|131|Pokémon Park|Uncommon|Trainer|||0|
+ecard2|132|Psychic Cube 01|Uncommon|Trainer|||0|
+ecard2|133|Seer|Uncommon|Trainer|||0|
+ecard2|134|Super Energy Removal 2|Uncommon|Trainer|||0|
+ecard2|135|Time Shard|Uncommon|Trainer|||0|
+ecard2|136|Town Volunteers|Uncommon|Trainer|||0|
+ecard2|137|Traveling Salesman|Uncommon|Trainer|||0|
+ecard2|138|Undersea Ruins|Uncommon|Trainer|||0|
+ecard2|139|Power Plant|Uncommon|Trainer|||0|
+ecard2|140|Water Cube 01|Uncommon|Trainer|||0|
+ecard2|141|Weakness Guard|Uncommon|Trainer|||0|
+ecard2|142|Darkness Energy|Rare|Energy|||0|Special
+ecard2|143|Metal Energy|Rare|Energy|||0|Special
+ecard2|144|Rainbow Energy|Rare|Energy|||0|Special
+ecard2|145|Boost Energy|Uncommon|Energy|||0|Special
+ecard2|146|Crystal Energy|Uncommon|Energy|||0|Special
+ecard2|147|Warp Energy|Uncommon|Energy|||0|Special
+ecard2|148|Kingdra|Rare Holo|Pokémon|Colorless|110|230|Stage 2
+ecard2|149|Lugia|Rare Holo|Pokémon|Colorless|80|249|Basic
+ecard2|150|Nidoking|Rare Holo|Pokémon|Colorless|100|34|Stage 2
+ecard2|1001|Ampharos|Rare Holo|Pokémon|Lightning|100|181|Stage 2
+ecard2|1002|Arcanine|Rare Holo|Pokémon|Fire|90|59|Stage 1
+ecard2|1003|Ariados|Rare Holo|Pokémon|Grass|70|168|Stage 1
+ecard2|1004|Azumarill|Rare Holo|Pokémon|Water|70|184|Stage 1
+ecard2|1005|Bellossom|Rare Holo|Pokémon|Grass|90|182|Stage 2
+ecard2|1006|Blissey|Rare Holo|Pokémon|Colorless|120|242|Stage 1
+ecard2|1007|Electrode|Rare Holo|Pokémon|Lightning|70|101|Stage 1
+ecard2|1008|Entei|Rare Holo|Pokémon|Fire|70|244|Basic
+ecard2|1009|Espeon|Rare Holo|Pokémon|Psychic|80|196|Stage 1
+ecard2|1010|Exeggutor|Rare Holo|Pokémon|Grass|80|103|Stage 1
+ecard2|1011|Houndoom|Rare Holo|Pokémon|Darkness|70|229|Stage 1
+ecard2|1012|Hypno|Rare Holo|Pokémon|Psychic|80|97|Stage 1
+ecard2|1013|Jumpluff|Rare Holo|Pokémon|Grass|70|189|Stage 2
+ecard2|1014|Kingdra|Rare Holo|Pokémon|Water|120|230|Stage 2
+ecard2|1015|Lanturn|Rare Holo|Pokémon|Lightning|80|171|Stage 1
+ecard2|1016|Magneton|Rare Holo|Pokémon|Metal|70|82|Stage 1
+ecard2|1017|Muk|Rare Holo|Pokémon|Grass|70|89|Stage 1
+ecard2|1018|Nidoking|Rare Holo|Pokémon|Fighting|110|34|Stage 2
+ecard2|1019|Ninetales|Rare Holo|Pokémon|Fire|80|38|Stage 1
+ecard2|1020|Octillery|Rare Holo|Pokémon|Water|80|224|Stage 1
+ecard2|1021|Scizor|Rare Holo|Pokémon|Metal|80|212|Stage 1
+ecard2|1022|Slowking|Rare Holo|Pokémon|Psychic|80|199|Stage 1
+ecard2|1023|Steelix|Rare Holo|Pokémon|Metal|100|208|Stage 1
+ecard2|1024|Sudowoodo|Rare Holo|Pokémon|Fighting|60|185|Basic
+ecard2|1025|Suicune|Rare Holo|Pokémon|Water|70|245|Basic
+ecard2|1026|Tentacruel|Rare Holo|Pokémon|Water|70|73|Stage 1
+ecard2|1027|Togetic|Rare Holo|Pokémon|Colorless|60|176|Stage 1
+ecard2|1028|Tyranitar|Rare Holo|Pokémon|Darkness|120|248|Stage 2
+ecard2|1029|Umbreon|Rare Holo|Pokémon|Darkness|80|197|Stage 1
+ecard2|1030|Victreebel|Rare Holo|Pokémon|Grass|90|71|Stage 2
+ecard2|1031|Vileplume|Rare Holo|Pokémon|Grass|100|45|Stage 2
+ecard2|1032|Zapdos|Rare Holo|Pokémon|Lightning|80|145|Basic
+ecard3|1|Aerodactyl|Rare|Pokémon|Fighting|70|142|Stage 1
+ecard3|2|Alakazam|Rare|Pokémon|Psychic|100|65|Stage 2
+ecard3|3|Arcanine|Rare|Pokémon|Fire|80|59|Stage 1
+ecard3|4|Articuno|Rare|Pokémon|Water|80|144|Basic
+ecard3|5|Beedrill|Rare|Pokémon|Grass|80|15|Stage 2
+ecard3|6|Crobat|Rare|Pokémon|Grass|90|169|Stage 2
+ecard3|7|Dewgong|Rare|Pokémon|Water|80|87|Stage 1
+ecard3|8|Flareon|Rare|Pokémon|Fire|70|136|Stage 1
+ecard3|9|Forretress|Rare|Pokémon|Metal|70|205|Stage 1
+ecard3|10|Gengar|Rare|Pokémon|Psychic|100|94|Stage 2
+ecard3|11|Gyarados|Rare|Pokémon|Water|90|130|Stage 1
+ecard3|12|Houndoom|Rare|Pokémon|Darkness|70|229|Stage 1
+ecard3|13|Jolteon|Rare|Pokémon|Lightning|70|135|Stage 1
+ecard3|14|Kabutops|Rare|Pokémon|Fighting|90|141|Stage 2
+ecard3|15|Ledian|Rare|Pokémon|Grass|70|166|Stage 1
+ecard3|16|Machamp|Rare|Pokémon|Fighting|120|68|Stage 2
+ecard3|17|Magcargo|Rare|Pokémon|Fire|80|219|Stage 1
+ecard3|18|Magcargo|Rare|Pokémon|Fighting|80|219|Stage 1
+ecard3|19|Magneton|Rare|Pokémon|Lightning|80|82|Stage 1
+ecard3|20|Magneton|Rare|Pokémon|Metal|70|82|Stage 1
+ecard3|21|Moltres|Rare|Pokémon|Fire|80|146|Basic
+ecard3|22|Nidoqueen|Rare|Pokémon|Grass|110|31|Stage 2
+ecard3|23|Omastar|Rare|Pokémon|Water|90|139|Stage 2
+ecard3|24|Piloswine|Rare|Pokémon|Water|90|221|Stage 1
+ecard3|25|Politoed|Rare|Pokémon|Water|110|186|Stage 2
+ecard3|26|Poliwrath|Rare|Pokémon|Fighting|110|62|Stage 2
+ecard3|27|Raichu|Rare|Pokémon|Lightning|80|26|Stage 1
+ecard3|28|Raikou|Rare|Pokémon|Lightning|70|243|Basic
+ecard3|29|Rhydon|Rare|Pokémon|Fighting|90|112|Stage 1
+ecard3|30|Starmie|Rare|Pokémon|Psychic|80|121|Stage 1
+ecard3|31|Steelix|Rare|Pokémon|Metal|100|208|Stage 1
+ecard3|32|Umbreon|Rare|Pokémon|Darkness|70|197|Stage 1
+ecard3|33|Vaporeon|Rare|Pokémon|Water|70|134|Stage 1
+ecard3|34|Wigglytuff|Rare|Pokémon|Colorless|70|40|Stage 1
+ecard3|35|Xatu|Rare|Pokémon|Psychic|80|178|Stage 1
+ecard3|36|Electrode|Uncommon|Pokémon|Lightning|70|101|Stage 1
+ecard3|37|Kabuto|Uncommon|Pokémon|Fighting|50|140|Stage 1
+ecard3|38|Machoke|Uncommon|Pokémon|Fighting|80|67|Stage 1
+ecard3|39|Misdreavus|Uncommon|Pokémon|Psychic|50|200|Basic
+ecard3|40|Noctowl|Uncommon|Pokémon|Colorless|70|164|Stage 1
+ecard3|41|Omanyte|Uncommon|Pokémon|Water|60|138|Stage 1
+ecard3|42|Persian|Uncommon|Pokémon|Colorless|70|53|Stage 1
+ecard3|43|Piloswine|Uncommon|Pokémon|Fighting|80|221|Stage 1
+ecard3|44|Starmie|Uncommon|Pokémon|Water|70|121|Stage 1
+ecard3|45|Wobbuffet|Uncommon|Pokémon|Psychic|70|202|Basic
+ecard3|46|Abra|Common|Pokémon|Psychic|40|63|Basic
+ecard3|47|Buried Fossil|Common|Pokémon|Colorless|30|0|Basic
+ecard3|48|Cleffa|Common|Pokémon|Colorless|30|173|Baby
+ecard3|49|Delibird|Common|Pokémon|Water|50|225|Basic
+ecard3|50|Diglett|Common|Pokémon|Fighting|40|50|Basic
+ecard3|51|Ditto|Common|Pokémon|Colorless|50|132|Basic
+ecard3|52|Dugtrio|Common|Pokémon|Fighting|70|51|Stage 1
+ecard3|53|Dunsparce|Common|Pokémon|Colorless|40|206|Basic
+ecard3|54|Eevee|Common|Pokémon|Colorless|50|133|Basic
+ecard3|55|Farfetch'd|Common|Pokémon|Colorless|50|83|Basic
+ecard3|56|Forretress|Common|Pokémon|Grass|70|205|Stage 1
+ecard3|57|Gastly|Common|Pokémon|Psychic|50|92|Basic
+ecard3|58|Girafarig|Common|Pokémon|Psychic|60|203|Basic
+ecard3|59|Gligar|Common|Pokémon|Fighting|60|207|Basic
+ecard3|60|Golbat|Common|Pokémon|Grass|70|42|Stage 1
+ecard3|61|Granbull|Common|Pokémon|Colorless|80|210|Stage 1
+ecard3|62|Growlithe|Common|Pokémon|Fire|50|58|Basic
+ecard3|63|Haunter|Common|Pokémon|Psychic|70|93|Stage 1
+ecard3|64|Heracross|Common|Pokémon|Grass|60|214|Basic
+ecard3|65|Hoothoot|Common|Pokémon|Colorless|40|163|Basic
+ecard3|66|Houndour|Common|Pokémon|Fire|50|228|Basic
+ecard3|67|Igglybuff|Common|Pokémon|Colorless|30|174|Baby
+ecard3|68|Jigglypuff|Common|Pokémon|Colorless|50|39|Basic
+ecard3|69|Kadabra|Common|Pokémon|Psychic|70|64|Stage 1
+ecard3|70|Kakuna|Common|Pokémon|Grass|70|14|Stage 1
+ecard3|71|Lapras|Common|Pokémon|Water|60|131|Basic
+ecard3|72|Ledyba|Common|Pokémon|Grass|40|165|Basic
+ecard3|73|Ledyba|Common|Pokémon|Grass|50|165|Basic
+ecard3|74|Machop|Common|Pokémon|Fighting|50|66|Basic
+ecard3|75|Magikarp|Common|Pokémon|Water|30|129|Basic
+ecard3|76|Magnemite|Common|Pokémon|Lightning|40|81|Basic
+ecard3|77|Mantine|Common|Pokémon|Water|60|226|Basic
+ecard3|78|Meowth|Common|Pokémon|Colorless|40|52|Basic
+ecard3|79|Murkrow|Common|Pokémon|Darkness|50|198|Basic
+ecard3|80|Natu|Common|Pokémon|Psychic|50|177|Basic
+ecard3|81|Nidoran ♀|Common|Pokémon|Grass|50|29|Basic
+ecard3|82|Nidoran ♀|Common|Pokémon|Grass|50|29|Basic
+ecard3|83|Nidorina|Common|Pokémon|Grass|80|30|Stage 1
+ecard3|84|Pikachu|Common|Pokémon|Lightning|50|25|Basic
+ecard3|85|Pineco|Common|Pokémon|Grass|40|204|Basic
+ecard3|86|Pineco|Common|Pokémon|Grass|50|204|Basic
+ecard3|87|Poliwag|Common|Pokémon|Water|40|60|Basic
+ecard3|88|Poliwhirl|Common|Pokémon|Water|70|61|Stage 1
+ecard3|89|Raticate|Common|Pokémon|Colorless|70|20|Stage 1
+ecard3|90|Rattata|Common|Pokémon|Colorless|30|19|Basic
+ecard3|91|Rhyhorn|Common|Pokémon|Fighting|60|111|Basic
+ecard3|92|Sandshrew|Common|Pokémon|Fighting|40|27|Basic
+ecard3|93|Sandslash|Common|Pokémon|Fighting|70|28|Stage 1
+ecard3|94|Seel|Common|Pokémon|Water|50|86|Basic
+ecard3|95|Seel|Common|Pokémon|Water|50|86|Basic
+ecard3|96|Shuckle|Common|Pokémon|Grass|30|213|Basic
+ecard3|97|Skarmory|Common|Pokémon|Metal|60|227|Basic
+ecard3|98|Slugma|Common|Pokémon|Fire|50|218|Basic
+ecard3|99|Slugma|Common|Pokémon|Fire|50|218|Basic
+ecard3|100|Snorlax|Common|Pokémon|Colorless|80|143|Basic
+ecard3|101|Snubbull|Common|Pokémon|Colorless|50|209|Basic
+ecard3|102|Stantler|Common|Pokémon|Colorless|60|234|Basic
+ecard3|103|Staryu|Common|Pokémon|Water|40|120|Basic
+ecard3|104|Staryu|Common|Pokémon|Water|50|120|Basic
+ecard3|105|Sunflora|Common|Pokémon|Grass|70|192|Stage 1
+ecard3|106|Sunkern|Common|Pokémon|Grass|40|191|Basic
+ecard3|107|Swinub|Common|Pokémon|Water|50|220|Basic
+ecard3|108|Swinub|Common|Pokémon|Fighting|50|220|Basic
+ecard3|109|Teddiursa|Common|Pokémon|Colorless|40|216|Basic
+ecard3|110|Ursaring|Common|Pokémon|Colorless|80|217|Stage 1
+ecard3|111|Venomoth|Common|Pokémon|Grass|70|49|Stage 1
+ecard3|112|Venonat|Common|Pokémon|Grass|50|48|Basic
+ecard3|113|Voltorb|Common|Pokémon|Lightning|50|100|Basic
+ecard3|114|Weedle|Common|Pokémon|Grass|40|13|Basic
+ecard3|115|Weedle|Common|Pokémon|Grass|50|13|Basic
+ecard3|116|Yanma|Common|Pokémon|Grass|60|193|Basic
+ecard3|117|Zubat|Common|Pokémon|Grass|40|41|Basic
+ecard3|118|Zubat|Common|Pokémon|Grass|50|41|Basic
+ecard3|119|Ancient Ruins|Uncommon|Trainer|||0|
+ecard3|120|Relic Hunter|Uncommon|Trainer|||0|
+ecard3|121|Apricorn Maker|Uncommon|Trainer|||0|
+ecard3|122|Crystal Shard|Uncommon|Trainer|||0|
+ecard3|123|Desert Shaman|Uncommon|Trainer|||0|
+ecard3|124|Fast Ball|Uncommon|Trainer|||0|
+ecard3|125|Fisherman|Uncommon|Trainer|||0|
+ecard3|126|Friend Ball|Uncommon|Trainer|||0|
+ecard3|127|Hyper Potion|Uncommon|Trainer|||0|
+ecard3|128|Lure Ball|Uncommon|Trainer|||0|
+ecard3|129|Miracle Sphere α|Uncommon|Trainer|||0|
+ecard3|130|Miracle Sphere β|Uncommon|Trainer|||0|
+ecard3|131|Miracle Sphere γ|Uncommon|Trainer|||0|
+ecard3|132|Mirage Stadium|Uncommon|Trainer|||0|
+ecard3|133|Mystery Plate α|Uncommon|Trainer|||0|
+ecard3|134|Mystery Plate β|Uncommon|Trainer|||0|
+ecard3|135|Mystery Plate γ|Uncommon|Trainer|||0|
+ecard3|136|Mystery Plate δ|Uncommon|Trainer|||0|
+ecard3|137|Mystery Zone|Uncommon|Trainer|||0|
+ecard3|138|Oracle|Uncommon|Trainer|||0|
+ecard3|139|Star Piece|Uncommon|Trainer|||0|
+ecard3|140|Underground Expedition|Uncommon|Trainer|||0|
+ecard3|141|Underground Lake|Uncommon|Trainer|||0|
+ecard3|142|Bounce Energy|Uncommon|Energy|||0|Special
+ecard3|143|Cyclone Energy|Uncommon|Energy|||0|Special
+ecard3|144|Retro Energy|Uncommon|Energy|||0|Special
+ecard3|145|Celebi|Rare Holo|Pokémon|Colorless|60|251|Basic
+ecard3|146|Charizard|Rare Holo|Pokémon|Colorless|110|6|Stage 2
+ecard3|147|Crobat|Rare Holo|Pokémon|Colorless|80|169|Stage 2
+ecard3|148|Golem|Rare Holo|Pokémon|Colorless|100|76|Stage 2
+ecard3|149|Ho-oh|Rare Holo|Pokémon|Colorless|80|250|Basic
+ecard3|150|Kabutops|Rare Holo|Pokémon|Colorless|90|141|Stage 2
+ecard3|1001|Alakazam|Rare Holo|Pokémon|Psychic|100|65|Stage 2
+ecard3|1002|Arcanine|Rare Holo|Pokémon|Fire|80|59|Stage 1
+ecard3|1003|Articuno|Rare Holo|Pokémon|Water|80|144|Basic
+ecard3|1004|Beedrill|Rare Holo|Pokémon|Grass|80|15|Stage 2
+ecard3|1005|Crobat|Rare Holo|Pokémon|Grass|90|169|Stage 2
+ecard3|1006|Dewgong|Rare Holo|Pokémon|Water|80|87|Stage 1
+ecard3|1007|Flareon|Rare Holo|Pokémon|Fire|70|136|Stage 1
+ecard3|1008|Forretress|Rare Holo|Pokémon|Metal|70|205|Stage 1
+ecard3|1009|Gengar|Rare Holo|Pokémon|Psychic|100|94|Stage 2
+ecard3|1010|Gyarados|Rare Holo|Pokémon|Water|90|130|Stage 1
+ecard3|1011|Houndoom|Rare Holo|Pokémon|Darkness|70|229|Stage 1
+ecard3|1012|Jolteon|Rare Holo|Pokémon|Lightning|70|135|Stage 1
+ecard3|1013|Kabutops|Rare Holo|Pokémon|Fighting|90|141|Stage 2
+ecard3|1014|Ledian|Rare Holo|Pokémon|Grass|70|166|Stage 1
+ecard3|1015|Machamp|Rare Holo|Pokémon|Fighting|120|68|Stage 2
+ecard3|1016|Magcargo|Rare Holo|Pokémon|Fire|80|219|Stage 1
+ecard3|1017|Magcargo|Rare Holo|Pokémon|Fighting|80|219|Stage 1
+ecard3|1018|Magneton|Rare Holo|Pokémon|Lightning|80|82|Stage 1
+ecard3|1019|Magneton|Rare Holo|Pokémon|Metal|70|82|Stage 1
+ecard3|1020|Moltres|Rare Holo|Pokémon|Fire|80|146|Basic
+ecard3|1021|Nidoqueen|Rare Holo|Pokémon|Grass|110|31|Stage 2
+ecard3|1022|Piloswine|Rare Holo|Pokémon|Water|90|221|Stage 1
+ecard3|1023|Politoed|Rare Holo|Pokémon|Water|110|186|Stage 2
+ecard3|1024|Poliwrath|Rare Holo|Pokémon|Fighting|110|62|Stage 2
+ecard3|1025|Raichu|Rare Holo|Pokémon|Lightning|80|26|Stage 1
+ecard3|1026|Raikou|Rare Holo|Pokémon|Lightning|70|243|Basic
+ecard3|1027|Rhydon|Rare Holo|Pokémon|Fighting|90|112|Stage 1
+ecard3|1028|Starmie|Rare Holo|Pokémon|Psychic|80|121|Stage 1
+ecard3|1029|Steelix|Rare Holo|Pokémon|Metal|100|208|Stage 1
+ecard3|1030|Umbreon|Rare Holo|Pokémon|Darkness|70|197|Stage 1
+ecard3|1031|Vaporeon|Rare Holo|Pokémon|Water|70|134|Stage 1
+ecard3|1032|Xatu|Rare Holo|Pokémon|Psychic|80|178|Stage 1

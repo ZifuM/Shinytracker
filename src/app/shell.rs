@@ -22,7 +22,8 @@ pub(super) fn tab_meta(t: Tab) -> (&'static str, &'static str, Color32) {
     match t {
         Tab::Home => ("🏠", "Dashboard", kit::C_BLUE),
         Tab::Store => ("🏪", "App Store", STORE_COL),
-        Tab::Library => ("⊞", "Library", LIBRARY_COL),
+        // (the ⊞ glyph isn't in the icon font: the Library's chip was blank)
+        Tab::Library => ("📚", "Library", LIBRARY_COL),
         Tab::Profile => ("🏅", "Profile", kit::C_GOLD),
         Tab::Stats => ("📊", "Stats", kit::C_CYAN),
         Tab::Shiny => ("✨", "Shiny Hunter", kit::C_VIOLET),
@@ -47,6 +48,7 @@ pub(super) fn tab_meta(t: Tab) -> (&'static str, &'static str, Color32) {
         Tab::Journal => ("📓", "Journal", super::journal_app::JOURNAL_COL),
         Tab::Boxes => ("📦", "Pokémon Boxes", super::boxes_app::BOX_COL),
         Tab::Nuzlocke => ("💀", "Nuzlocke Tracker", super::nuzlocke_app::NUZ_COL),
+        Tab::Stickers => ("📌", "Sticker Book", super::sticker_app::STICKER_COL),
         Tab::Appearance => ("🎨", "Appearance", kit::C_PINK),
         Tab::Hotkeys => ("⌨", "Hotkeys", kit::C_SLATE),
         Tab::Advanced => ("⚙", "Advanced", kit::C_SLATE),
@@ -55,7 +57,7 @@ pub(super) fn tab_meta(t: Tab) -> (&'static str, &'static str, Color32) {
 
 /// Pages that are still experimental (marked in the sidebar).
 pub(super) fn is_experimental(t: Tab) -> bool {
-    matches!(t, Tab::Sim | Tab::Breed | Tab::Cards | Tab::Gotchi | Tab::Bingo | Tab::RareGrass | Tab::Replay | Tab::Journal | Tab::Boxes | Tab::Nuzlocke)
+    matches!(t, Tab::Sim | Tab::Breed | Tab::Cards | Tab::Gotchi | Tab::Bingo | Tab::RareGrass | Tab::Replay | Tab::Journal | Tab::Boxes | Tab::Nuzlocke | Tab::Stickers)
 }
 
 /// The App Store's and the Library's colours.
@@ -63,7 +65,8 @@ pub(super) const STORE_COL: Color32 = Color32::from_rgb(255, 112, 92);
 pub(super) const LIBRARY_COL: Color32 = Color32::from_rgb(124, 150, 255);
 
 /// Shiny Hunter's own pages, shown under it in the sidebar while it's open.
-pub(super) const SHINY_PAGES: [Tab; 4] = [Tab::Hunt, Tab::Counting, Tab::Runs, Tab::Overlay];
+/// (Counting and Overlay are its settings now: Settings → Shiny Hunter.)
+pub(super) const SHINY_PAGES: [Tab; 2] = [Tab::Hunt, Tab::Runs];
 
 /// The app a page belongs to (None: Home, the store, settings and the like).
 pub(super) fn app_of(t: Tab) -> Option<AppId> {
@@ -84,6 +87,7 @@ pub(super) fn app_of(t: Tab) -> Option<AppId> {
         Tab::Journal => AppId::Journal,
         Tab::Boxes => AppId::Boxes,
         Tab::Nuzlocke => AppId::Nuzlocke,
+        Tab::Stickers => AppId::Stickers,
         _ => return None,
     })
 }
@@ -107,12 +111,13 @@ pub(super) fn app_tab(a: AppId) -> Tab {
         AppId::Journal => Tab::Journal,
         AppId::Boxes => Tab::Boxes,
         AppId::Nuzlocke => Tab::Nuzlocke,
+        AppId::Stickers => Tab::Stickers,
     }
 }
 
 /// The page above a sub-page in the sidebar.
 pub(super) fn nav_parent(t: Tab) -> Option<Tab> {
-    SHINY_PAGES.contains(&t).then_some(Tab::Shiny)
+    (SHINY_PAGES.contains(&t) || matches!(t, Tab::Counting | Tab::Overlay)).then_some(Tab::Shiny)
 }
 
 /// One row of the sidebar.
@@ -134,6 +139,10 @@ impl App {
         let mut v = vec![row(None, Tab::Home), row(None, Tab::Store), row(None, Tab::Library), row(None, Tab::Profile), row(None, Tab::Stats)];
         let mut first = true;
         let sidebar_pins = self.cfg.apps.pins_place == crate::apps::PinsPlace::Sidebar;
+        // with the bottom dock, open apps live in the dock instead
+        if self.cfg.apps.pins_place == crate::apps::PinsPlace::Dock {
+            return v;
+        }
         for a in self.cfg.apps.open_list() {
             if sidebar_pins && a != AppId::Shiny && self.cfg.apps.is_pinned(a) {
                 continue;
@@ -142,7 +151,9 @@ impl App {
             v.push(NavRow { group: first.then_some("OPEN APPS"), tab, parent: None, app: Some(a) });
             first = false;
             if a == AppId::Shiny {
-                for t in SHINY_PAGES {
+                // (Counting and Overlay too, when they're pages of the app)
+                let pages: &[Tab] = if self.cfg.apps.shiny_pages_in_app { &[Tab::Hunt, Tab::Counting, Tab::Runs, Tab::Overlay] } else { &SHINY_PAGES };
+                for t in pages.iter().copied() {
                     v.push(NavRow { group: None, tab: t, parent: Some(Tab::Shiny), app: None });
                 }
             }
@@ -158,7 +169,7 @@ impl App {
 
     /// The "nothing open" note in the sidebar (where open apps would be).
     pub(super) fn nav_none_open(&mut self, ui: &mut egui::Ui, compact: bool) {
-        if compact || !self.cfg.apps.open_list().is_empty() {
+        if compact || !self.cfg.apps.open_list().is_empty() || self.cfg.apps.pins_place == crate::apps::PinsPlace::Dock {
             return;
         }
         kit::nav_group(ui, "OPEN APPS");
@@ -239,8 +250,11 @@ impl App {
 
     /// Open a page from the sidebar (same rules as the classic sidebar).
     pub(super) fn go_to(&mut self, tab: Tab) {
-        // settings live in their own window now
-        if matches!(tab, Tab::Appearance | Tab::Hotkeys | Tab::Advanced) {
+        // settings live in their own window now (Shiny Hunter's Counting
+        // and Overlay too)
+        // (unless they're set to be Shiny Hunter pages again)
+        let settings_page = matches!(tab, Tab::Appearance | Tab::Hotkeys | Tab::Advanced) || (matches!(tab, Tab::Counting | Tab::Overlay) && !self.cfg.apps.shiny_pages_in_app);
+        if settings_page {
             self.open_settings(tab);
             return;
         }
@@ -271,13 +285,21 @@ impl App {
     }
 
     /// The top bar.
+    /// Modern Plus with the pinned apps in the bottom dock: the pages are
+    /// tabs in the title bar, there's no sidebar, and the hunt rides on the
+    /// dock (Appearance → Look).
+    pub(super) fn plus_tabs(&self) -> bool {
+        kit::plus() && self.cfg.apps.pins_place == crate::apps::PinsPlace::Dock && !self.takeover_open()
+    }
+
     pub(super) fn modern_header(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
         let rect = ui.max_rect();
         let maxed = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
         let r = if maxed { 0.0 } else { 8.0 };
         let p = ui.painter().clone();
-        // (No sidebar during the first-run welcome.)
-        let nav_w = if !self.takeover_open() { self.nav_width() } else { 0.0 };
+        let tabs = self.plus_tabs();
+        // (No sidebar during the first-run welcome, or with Modern Plus's tabs.)
+        let nav_w = if !self.takeover_open() && !tabs { self.nav_width() } else { 0.0 };
         let left = Rect::from_min_max(rect.min, egui::pos2(rect.min.x + nav_w, rect.max.y));
         let right = Rect::from_min_max(egui::pos2(left.max.x, rect.min.y), rect.max);
         p.rect_filled(left, egui::Rounding { nw: r, ..Default::default() }, SIDEBAR());
@@ -293,7 +315,7 @@ impl App {
         ));
 
         // Brand.
-        let compact = self.nav_is_compact() && !self.takeover_open();
+        let compact = self.nav_is_compact() && !self.takeover_open() && !tabs;
         let logo_c = if compact { left.center() } else { rect.left_center() + egui::vec2(30.0, 0.0) };
         p.image(
             self.icon_tex.id(),
@@ -309,12 +331,12 @@ impl App {
         // Where you are: "Shiny Hunter › Hunt".
         let tab = self.setup.tab;
         let (_, name, color) = tab_meta(tab);
-        let mut x = if !self.takeover_open() { right.min.x + 28.0 } else { rect.min.x + 200.0 };
+        let mut x = if tabs { rect.min.x + 196.0 } else if !self.takeover_open() { right.min.x + 28.0 } else { rect.min.x + 200.0 };
         let cy = right.center().y;
         // the sidebar's fold button: a panel picture, first thing after the sidebar
         // (its click is taken after the window-drag area, which would cover it)
         let fold_r = Rect::from_center_size(egui::pos2(right.min.x + 26.0, cy), egui::vec2(32.0, 30.0));
-        if !self.takeover_open() {
+        if !self.takeover_open() && !tabs {
             let hov = ui.rect_contains_pointer(fold_r);
             if hov {
                 p.rect_filled(fold_r, 7.0, theme::blend(PAGE(), TEXT(), 0.08));
@@ -322,14 +344,14 @@ impl App {
             panel_icon(&p, fold_r.center(), self.nav_is_compact(), if hov { TEXT() } else { theme::blend(PAGE(), TEXT(), 0.75) });
             x = fold_r.max.x + 14.0;
         }
-        if is_shiny_tab(tab) && tab != Tab::Shiny {
+        if is_shiny_tab(tab) && tab != Tab::Shiny && !tabs {
             let g = p.text(egui::pos2(x, cy), Align2::LEFT_CENTER, "Shiny Hunter", crate::fonts::sans_font(14.0), MUTED());
             x = g.max.x + 10.0;
             let g = p.text(egui::pos2(x, cy), Align2::LEFT_CENTER, "›", crate::fonts::sans_font(15.0), MUTED());
             x = g.max.x + 10.0;
         }
         let mut crumb_end = x;
-        if !self.takeover_open() {
+        if !self.takeover_open() && !tabs {
             p.circle_filled(egui::pos2(x + 4.0, cy), 4.0, color);
             crumb_end = p.text(egui::pos2(x + 16.0, cy), Align2::LEFT_CENTER, name, crate::fonts::sans_bold_font(15.0), TEXT()).max.x;
         }
@@ -391,11 +413,17 @@ impl App {
                 p.rect_filled(cog, 8.0, theme::blend(PAGE(), TEXT(), if open { 0.12 } else { 0.08 }));
             }
             cog_icon(&p, cog.center(), 8.0, if hov || open { TEXT() } else { theme::blend(PAGE(), TEXT(), 0.75) });
-            if resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Settings: appearance, hotkeys and advanced").clicked() {
+            super::app_tour::mark(ui.ctx(), "top.settings", cog);
+            // (it opens at the settings of the app you're on)
+            let tip = match app_of(self.setup.tab) {
+                Some(a) => format!("Settings: {} and the rest of the Companion", a.name()),
+                None => "Settings: every app's, appearance, hotkeys and more".to_string(),
+            };
+            if resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked() {
                 if open {
-                    self.setup.settings_open = None;
+                    self.close_settings();
                 } else {
-                    self.open_settings(Tab::Appearance);
+                    self.open_settings(super::settings_apps::section_for(self.setup.tab));
                 }
             }
         }
@@ -403,12 +431,29 @@ impl App {
         // The overlay's status and its Start / Stop, always in reach.
         let controls = Rect::from_min_max(egui::pos2(right.min.x + 240.0, rect.min.y), egui::pos2(cog.min.x - 8.0, rect.max.y));
         let mut drag_until = controls.max.x;
-        if !self.takeover_open() && controls.width() > 160.0 {
+        if tabs {
+            // Modern Plus: the search box lives up here (the hunt and Start
+            // overlay ride on the dock)
+            let sr = Rect::from_min_max(egui::pos2((cog.min.x - 228.0).max(rect.min.x + 560.0), rect.min.y), egui::pos2(cog.min.x - 8.0, rect.max.y));
+            if sr.width() > 120.0 {
+                let used = ui
+                    .allocate_new_ui(egui::UiBuilder::new().max_rect(sr).layout(egui::Layout::right_to_left(egui::Align::Center)), |ui| {
+                        kit::settings_style(ui);
+                        let w = sr.width().min(220.0);
+                        let r = ui.allocate_ui(egui::vec2(w, 34.0), |ui| self.nav_search_bar(ui, w < 160.0)).response.rect;
+                        super::app_tour::mark(ui.ctx(), "nav.search", r);
+                        ui.min_rect()
+                    })
+                    .inner;
+                drag_until = used.min.x - 6.0;
+            }
+        } else if !self.takeover_open() && controls.width() > 160.0 {
             let used = ui
                 .allocate_new_ui(egui::UiBuilder::new().max_rect(controls).layout(egui::Layout::right_to_left(egui::Align::Center)), |ui| {
                     kit::settings_style(ui);
                     ui.spacing_mut().item_spacing.x = 10.0;
-                    self.overlay_button(ui, egui::vec2(146.0, 34.0));
+                    let start = self.overlay_button(ui, egui::vec2(146.0, 34.0));
+                    super::app_tour::mark(ui.ctx(), "top.start", start);
                     if controls.width() > 420.0 {
                         let (dot, text) = if self.overlay_on && self.ov_hidden {
                             (theme::HP_YELLOW, "Minimised, still counting")
@@ -453,7 +498,11 @@ impl App {
         } else if dr.drag_started() {
             ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
-        if !self.takeover_open() {
+        // Modern Plus: the pages as tabs (taken after the drag area, so they click)
+        if tabs {
+            self.plus_title_tabs(ui, &p, x, cy, drag_until - 8.0);
+        }
+        if !self.takeover_open() && !tabs {
             let tip = if self.nav_is_compact() { "Show the sidebar's names" } else { "Fold the sidebar to icons" };
             if ui.interact(fold_r, ui.id().with("mhdr-fold"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked() {
                 self.nav_fold_toggle();
@@ -462,6 +511,62 @@ impl App {
         // Pinned apps, as a dock after the page name (when they live up here).
         if !self.takeover_open() {
             self.top_dock(ui, crumb_end + 22.0, cy, drag_until - 6.0);
+        }
+    }
+
+    /// Modern Plus's title bar tabs: Dashboard, App Store, Library, Profile
+    /// and Stats from `x`, and the app you're in after them. Stops before
+    /// `max_x` (tabs that don't fit are left out; the Ctrl K search still
+    /// reaches them).
+    fn plus_title_tabs(&mut self, ui: &mut egui::Ui, p: &egui::Painter, x: f32, cy: f32, max_x: f32) {
+        let cur = self.setup.tab;
+        let mut x = x;
+        let mut go: Option<Tab> = None;
+        // (all the tabs together, for the welcome tour)
+        let mut all: Option<Rect> = None;
+        for (t, key) in [(Tab::Home, "nav.home"), (Tab::Store, "nav.store"), (Tab::Library, "nav.library"), (Tab::Profile, "nav.profile"), (Tab::Stats, "nav.stats")] {
+            let (_, name, _) = tab_meta(t);
+            let on = cur == t;
+            let font = if on { crate::fonts::sans_bold_font(13.5) } else { crate::fonts::sans_font(13.5) };
+            let g = p.layout_no_wrap(name.to_string(), font, TEXT());
+            let w = g.size().x + 24.0;
+            if x + w > max_x {
+                break;
+            }
+            let r = Rect::from_min_size(egui::pos2(x, cy - 16.0), egui::vec2(w, 32.0));
+            let resp = ui.interact(r, ui.id().with(("plus-tab", t as u8)), Sense::click());
+            let hov = resp.hovered();
+            if hov && !on {
+                p.rect_filled(r, 8.0, theme::blend(PAGE(), TEXT(), 0.06));
+            }
+            let ink = if on || hov { TEXT() } else { MUTED() };
+            p.galley(egui::pos2(r.center().x - g.size().x / 2.0, cy - g.size().y / 2.0), g, ink);
+            if on {
+                p.rect_filled(Rect::from_min_size(egui::pos2(r.min.x + 10.0, r.max.y - 1.0), egui::vec2(w - 20.0, 3.0)), 1.5, kit::primary());
+            }
+            super::app_tour::mark(ui.ctx(), key, r);
+            all = Some(all.map_or(r, |a| a.union(r)));
+            if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                go = Some(t);
+            }
+            x = r.max.x + 2.0;
+        }
+        if let Some(a) = all {
+            super::app_tour::mark(ui.ctx(), "nav.tabs", a);
+        }
+        // the app you're in, after the tabs
+        if !matches!(cur, Tab::Home | Tab::Store | Tab::Library | Tab::Profile | Tab::Stats) {
+            let (_, name, color) = tab_meta(cur);
+            let x0 = x + 10.0;
+            if x0 + 60.0 < max_x {
+                p.line_segment([egui::pos2(x0, cy - 9.0), egui::pos2(x0, cy + 9.0)], Stroke::new(1.0f32, kit::LINE()));
+                p.circle_filled(egui::pos2(x0 + 16.0, cy), 4.0, color);
+                let clip = p.with_clip_rect(Rect::from_min_max(egui::pos2(x0, cy - 16.0), egui::pos2(max_x, cy + 16.0)));
+                clip.text(egui::pos2(x0 + 28.0, cy), Align2::LEFT_CENTER, name, crate::fonts::sans_bold_font(13.5), TEXT());
+            }
+        }
+        if let Some(t) = go {
+            self.go_to(t);
         }
     }
 
@@ -476,7 +581,9 @@ impl App {
         let footer_h = if compact { 96.0 } else { 108.0 };
         // The search bar (Ctrl K), always at the top.
         ui.add_space(6.0);
+        let search_top = ui.cursor().min.y;
         self.nav_search_bar(ui, compact);
+        super::app_tour::mark_since(ui, "nav.search", search_top);
         let list_h = (ui.available_height() - footer_h).max(80.0);
         ui.style_mut().spacing.scroll = egui::style::ScrollStyle::floating();
         egui::ScrollArea::vertical().id_salt("modern-nav").max_height(list_h).auto_shrink([false, true]).scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(ui, |ui| {
@@ -524,6 +631,20 @@ impl App {
                 };
                 if selected || (parent.is_some() && current == tab) {
                     open_rect = Some(resp.rect);
+                }
+                // the Companion's tour points at these
+                if parent.is_none() && app.is_none() {
+                    let key = match tab {
+                        Tab::Home => Some("nav.home"),
+                        Tab::Store => Some("nav.store"),
+                        Tab::Library => Some("nav.library"),
+                        Tab::Profile => Some("nav.profile"),
+                        Tab::Stats => Some("nav.stats"),
+                        _ => None,
+                    };
+                    if let Some(k) = key {
+                        super::app_tour::mark(ui.ctx(), k, resp.rect);
+                    }
                 }
                 // An open app's ✕ (on hover, or while it's the page you're on)
                 // takes the chevron's and the warning's place.

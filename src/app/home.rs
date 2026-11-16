@@ -10,14 +10,20 @@ use eframe::egui::{self, Align2, Color32, Rect, RichText, Sense, Stroke};
 
 impl App {
     pub(super) fn page_home_modern(&mut self, ui: &mut egui::Ui) {
+        // the Companion's own tour plays here, the first time
+        super::app_tour::here(ui.ctx(), "home");
         kit::page_header(ui, "DASHBOARD", &self.greeting());
         self.home_notices(ui);
         // the hunt you're on: the banner from before, front and centre
+        let tour_top = ui.cursor().min.y;
         self.hunt_hero(ui, true);
+        super::app_tour::mark_since(ui, "home.hero", tour_top);
         ui.add_space(22.0);
         // then your widgets, in a waterfall grid you can arrange
+        let tour_top = ui.cursor().min.y;
         self.home_widgets_bar(ui);
         self.home_widget_grid(ui);
+        super::app_tour::mark_since(ui, "home.widgets", tour_top);
         // left open for a Journal canvas: that's not this page's
         if self.setup.home.gallery.to_canvas.take().is_some() {
             self.setup.home.gallery.open = false;
@@ -47,7 +53,9 @@ impl App {
 
     /// "Good evening, Zifu."
     fn greeting(&self) -> String {
-        let hour = crate::stats::local_hour(crate::config::now_unix());
+        // (local_hour counts hours since 1970: take the hour of the day, or
+        // it was always "Good evening")
+        let hour = crate::stats::local_hour(crate::config::now_unix()).rem_euclid(24);
         let part = match hour {
             5..=11 => "Good morning",
             12..=17 => "Good afternoon",
@@ -123,7 +131,11 @@ impl App {
                     ui.add_space(10.0);
                     ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
-                        self.overlay_button(ui, egui::vec2(150.0, 36.0));
+                        // (Modern Plus with the dock: Start overlay lives on the
+                        // hunt capsule only)
+                        if !self.plus_tabs() {
+                            self.overlay_button(ui, egui::vec2(150.0, 36.0));
+                        }
                         change = sec_button(ui, "+  New hunt", "Set up a new hunt, step by step");
                         if home {
                             open_hunter = sec_button(ui, "Open Shiny Hunter  ›", "Hunt settings, counting, runs and the overlay");

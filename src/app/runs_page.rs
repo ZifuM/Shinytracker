@@ -101,13 +101,19 @@ impl App {
     }
 
     pub(super) fn page_runs(&mut self, ui: &mut egui::Ui) {
+
+        super::app_tour::here(ui.ctx(), "shiny-runs");
         kit::page_header(ui, "RUNS", "Every hunt you've started, saved or caught. Pick any of them back up.");
         let rows = self.run_rows();
         let mut act: Option<Act> = None;
 
+        let tour_top = ui.cursor().min.y;
         self.runs_summary(ui, &rows);
+        super::app_tour::mark_since(ui, "runs.summary", tour_top);
         ui.add_space(18.0);
+        let tour_top = ui.cursor().min.y;
         self.runs_now(ui, &mut act);
+        super::app_tour::mark_since(ui, "runs.now", tour_top);
         ui.add_space(26.0);
 
         // ── toolbar ──

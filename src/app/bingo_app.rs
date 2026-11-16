@@ -469,6 +469,8 @@ impl App {
     // ───────────────────────────── the page ─────────────────────────────
 
     pub(super) fn page_bingo(&mut self, ui: &mut egui::Ui) {
+
+        super::app_tour::here(ui.ctx(), "bingo");
         let card = self.bingo_card();
         kit::page_header(ui, "SHINY BINGO", "Hunt as usual: squares tick themselves from the game's log. Lines win rewards.");
         if let Some(e) = self.setup.bingo.load_error.clone() {
@@ -494,10 +496,12 @@ impl App {
             ui.allocate_ui_with_layout(vec2(left, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
                 ui.set_width(left);
                 kit::card(ui, |ui| self.bingo_grid(ui, false, Some((sq_w, sq_h))));
+                super::app_tour::mark(ui.ctx(), "bingo.card", ui.min_rect());
             });
             ui.allocate_ui_with_layout(vec2(side, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
                 ui.set_width(side);
                 self.bingo_side(ui, &card);
+                super::app_tour::mark(ui.ctx(), "bingo.side", ui.min_rect());
             });
         });
         if self.setup.bingo.past {

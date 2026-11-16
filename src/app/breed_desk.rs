@@ -204,6 +204,8 @@ impl App {
     }
 
     pub(super) fn page_breed_desk(&mut self, ui: &mut egui::Ui, w: &Arc<Wiki>) {
+
+        super::app_tour::here(ui.ctx(), "breed/desk");
         self.desk_refresh(w);
         let full = ui.available_width();
         let gap = 14.0;
@@ -219,26 +221,48 @@ impl App {
             let mid = (full - 2.0 * side - 2.0 * gap).floor();
             ui.horizontal_top(|ui| {
                 ui.spacing_mut().item_spacing.x = gap;
-                col(ui, side, &mut |ui| self.desk_game(ui));
-                col(ui, mid, &mut |ui| self.desk_plan(ui, w));
-                col(ui, side, &mut |ui| self.desk_feed(ui, w));
+                col(ui, side, &mut |ui| {
+                    self.desk_game(ui);
+                    super::app_tour::mark(ui.ctx(), "breed.game", ui.min_rect());
+                });
+                col(ui, mid, &mut |ui| {
+                    self.desk_plan(ui, w);
+                    super::app_tour::mark(ui.ctx(), "breed.plan", ui.min_rect());
+                });
+                col(ui, side, &mut |ui| {
+                    self.desk_feed(ui, w);
+                    super::app_tour::mark(ui.ctx(), "breed.feed", ui.min_rect());
+                });
             });
         } else if full >= 700.0 {
             // the plan first, your game and the feed beside it
             let mid = (full - side - gap).floor();
             ui.horizontal_top(|ui| {
                 ui.spacing_mut().item_spacing.x = gap;
-                col(ui, mid, &mut |ui| self.desk_plan(ui, w));
+                col(ui, mid, &mut |ui| {
+                    self.desk_plan(ui, w);
+                    super::app_tour::mark(ui.ctx(), "breed.plan", ui.min_rect());
+                });
                 col(ui, side, &mut |ui| {
+                    let tour_top = ui.cursor().min.y;
                     self.desk_game(ui);
+                    super::app_tour::mark_since(ui, "breed.game", tour_top);
+                    let tour_top = ui.cursor().min.y;
                     self.desk_feed(ui, w);
+                    super::app_tour::mark_since(ui, "breed.feed", tour_top);
                 });
             });
         } else {
             ui.spacing_mut().item_spacing.y = gap;
+            let tour_top = ui.cursor().min.y;
             self.desk_plan(ui, w);
+            super::app_tour::mark_since(ui, "breed.plan", tour_top);
+            let tour_top = ui.cursor().min.y;
             self.desk_game(ui);
+            super::app_tour::mark_since(ui, "breed.game", tour_top);
+            let tour_top = ui.cursor().min.y;
             self.desk_feed(ui, w);
+            super::app_tour::mark_since(ui, "breed.feed", tour_top);
         }
     }
 

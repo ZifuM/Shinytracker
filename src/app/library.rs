@@ -35,6 +35,7 @@ fn measure() -> Vec<(String, u64)> {
         ("Game Info".to_string(), f(&cache.join("wiki.json")) + f(&cache.join("wiki-seen.json"))),
         ("Pokédex".to_string(), f(&cache.join("pokemondb"))),
         ("Store pictures".to_string(), f(&cache.join("store"))),
+        ("Card art".to_string(), f(&cache.join("cards"))),
         ("Your saves".to_string(), f(&data.join("config.json")) + f(&data.join("teams.json")) + f(&data.join("battle-sim.json")) + f(&data.join("breeding.json"))),
         ("Backups".to_string(), f(&data.join("backups"))),
     ];
@@ -73,7 +74,9 @@ impl App {
         let open = self.cfg.apps.open_list();
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
-                kit::page_header(ui, "Library", &format!("{} apps installed, {} open. Open one and it joins your sidebar.", installed.len(), open.len()));
+                // (open apps join the dock when the pins live at the bottom)
+                let joins = if self.cfg.apps.pins_place == crate::apps::PinsPlace::Dock { "the dock" } else { "your sidebar" };
+                kit::page_header(ui, "Library", &format!("{} apps installed, {} open. Open one and it joins {joins}.", installed.len(), open.len()));
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
                 ui.add_space(4.0);
@@ -84,14 +87,32 @@ impl App {
         });
         self.library_storage(ui);
         ui.add_space(14.0);
+        // Apps, or (with the Card Collector) its card art: each set's
+        // pictures to download or remove
+        let tab_id = egui::Id::new("library-card-art");
+        let has_cards = self.cfg.apps.is_installed(AppId::Cards);
+        let mut art_tab: bool = has_cards && ui.ctx().data(|d| d.get_temp(tab_id)).unwrap_or(false);
         ui.horizontal(|ui| {
-            let mut list = self.cfg.apps.list_view;
-            if kit::segmented(ui, &mut list, &[(false, "Tiles"), (true, "List")]) {
-                self.cfg.apps.list_view = list;
-                self.dirty = true;
+            if has_cards {
+                kit::segmented(ui, &mut art_tab, &[(false, "Apps"), (true, "Card art")]);
+                ui.add_space(12.0);
+            }
+            if !art_tab {
+                let mut list = self.cfg.apps.list_view;
+                if kit::segmented(ui, &mut list, &[(false, "Tiles"), (true, "List")]) {
+                    self.cfg.apps.list_view = list;
+                    self.dirty = true;
+                }
             }
         });
+        ui.ctx().data_mut(|d| d.insert_temp(tab_id, art_tab));
         ui.add_space(12.0);
+        if art_tab {
+            ui.label(egui::RichText::new("The Card Collector's card pictures, set by set. Remove a set's art to free up space (its cards show as drawn cards until you download it again); your cards themselves are never touched.").size(kit::fs(12.5)).color(MUTED()));
+            ui.add_space(10.0);
+            self.cards_art_list(ui);
+            return;
+        }
         if self.cfg.apps.list_view {
             self.library_list(ui, &installed);
         } else {
@@ -134,7 +155,7 @@ impl App {
         }
         let sizes = st.sizes_got.as_ref().map(|x| x.1.clone()).unwrap_or_default();
         let total: u64 = sizes.iter().map(|x| x.1).sum();
-        let cols = [kit::C_RED, kit::C_ORANGE, kit::C_PINK, super::shell::STORE_COL, kit::C_VIOLET, kit::C_SLATE];
+        let cols = [kit::C_RED, kit::C_ORANGE, kit::C_PINK, super::shell::STORE_COL, kit::C_GOLD, kit::C_VIOLET, kit::C_SLATE];
         egui::Frame::none().fill(CARD()).stroke(Stroke::new(1.0f32, LINE())).rounding(14.0).inner_margin(egui::Margin::symmetric(16.0, 12.0)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
@@ -196,7 +217,8 @@ impl App {
                     kit::icon_chip(&p, ic, app_icon(a), app_col(a), false);
                     let is_open = self.cfg.apps.is_open(a);
                     p.text(pos2(ic.max.x + 12.0, ic.min.y + 6.0), Align2::LEFT_TOP, a.name(), crate::fonts::sans_bold_font(14.5), TEXT());
-                    let (st, c) = if is_open { ("● Open", kit::C_CYAN) } else if a.meta().core { ("Core app", MUTED()) } else { ("Installed", MUTED()) };
+                    // (Modern Plus: say open or not, the one thing the buttons depend on)
+                    let (st, c) = if is_open { ("● Open", kit::C_CYAN) } else if kit::plus() { ("○ Not open", MUTED()) } else if a.meta().core { ("Core app", MUTED()) } else { ("Installed", MUTED()) };
                     p.text(pos2(ic.max.x + 12.0, ic.min.y + 28.0), Align2::LEFT_TOP, st, crate::fonts::sans_font(12.0), c);
                     // ⋯ menu
                     let mr = Rect::from_min_size(pos2(rect.max.x - 40.0, rect.min.y + 12.0), vec2(28.0, 28.0));
@@ -210,7 +232,8 @@ impl App {
                     let by = rect.max.y - 44.0;
                     let mut x = rect.min.x + 16.0;
                     if is_open {
-                        if pill_button(ui, Rect::from_min_size(pos2(x, by), vec2(76.0, 30.0)), "Go to", true, ("lib-go", a)).clicked() {
+                        // (Modern Plus: one verb, Open, whether it's open or not)
+                        if pill_button(ui, Rect::from_min_size(pos2(x, by), vec2(76.0, 30.0)), if kit::plus() { "Open" } else { "Go to" }, true, ("lib-go", a)).clicked() {
                             self.open_app(a);
                         }
                         x += 84.0;
@@ -251,7 +274,7 @@ impl App {
                     close = true;
                 }
                 let pinned = self.cfg.apps.is_pinned(a);
-                let full = self.cfg.apps.pin_list().len() >= crate::apps::MAX_PINS;
+                let full = self.cfg.apps.pin_list().len() >= self.cfg.apps.max_pins();
                 if pinned && item(ui, "Unpin", TEXT()) {
                     self.cfg.apps.unpin(a);
                     self.dirty = true;

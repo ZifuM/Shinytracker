@@ -264,6 +264,8 @@ impl App {
     }
 
     fn pokedex_list(&mut self, ui: &mut egui::Ui, w: &Arc<Wiki>) {
+
+        super::app_tour::here(ui.ctx(), "pokedex");
         // (Re)build the summary when new data arrives.
         let key = Arc::as_ptr(w) as usize;
         if self.setup.pokedex.index.as_ref().map(|(k, _)| *k) != Some(key) {
@@ -284,14 +286,18 @@ impl App {
         targets.extend(self.also_slugs());
 
         let gdex = if self.setup.pokedex.game { self.game_dex() } else { None };
+        let tour_top = ui.cursor().min.y;
         if self.setup.pokedex.game {
             let dexes: Vec<(u32, bool)> = index.iter().filter(|m| !m.cant_get).map(|m| (m.dex, m.modern)).collect();
             self.game_dex_card(ui, &dexes, gdex.as_ref());
         } else {
             self.dex_progress_card(ui, &index, &caught);
         }
+        super::app_tour::mark_since(ui, "dex.progress", tour_top);
         ui.add_space(16.0);
+        let tour_top = ui.cursor().min.y;
         self.dex_toolbar(ui, w, &index);
+        super::app_tour::mark_since(ui, "dex.tools", tour_top);
         ui.add_space(14.0);
 
         // ── filter and sort
@@ -681,6 +687,18 @@ impl App {
             }
         }
         let st = &mut self.setup.pokedex;
+        // Modern Plus: one row, the rest behind Filters (open or not, this session)
+        let plus = kit::plus();
+        let open_id = egui::Id::new("dex-filters-open");
+        let mut filters_open: bool = ui.ctx().data(|d| d.get_temp(open_id)).unwrap_or(false);
+        // (the tour opens them while it talks about them, then puts them back)
+        if super::app_tour::wants(ui.ctx(), "dex.filters") {
+            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("tour-dex-prev"), filters_open));
+            filters_open = true;
+        }
+        if super::app_tour::wants_undo(ui.ctx(), "dex.filters") {
+            filters_open = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("tour-dex-prev"))).unwrap_or(false);
+        }
         // row 1: search, normal/shiny, sort
         let rest_id = egui::Id::new("dex-tools-w");
         let rest_w = ui.ctx().data(|d| d.get_temp::<f32>(rest_id)).unwrap_or(330.0);
@@ -701,6 +719,19 @@ impl App {
             }
             ui.add_space((ui.available_width() - rest_w - 2.0).max(8.0));
             let start = ui.cursor().min.x;
+            // Modern Plus: the type chips and the rest sit behind one button
+            if plus {
+                let n = plus_filter_count(st);
+                let label = if n > 0 { format!("⚙  Filters · {n}") } else { "⚙  Filters".to_string() };
+                let b = egui::Button::new(RichText::new(label).size(13.0).strong().color(if n > 0 || filters_open { kit::primary() } else { TEXT() }))
+                    .fill(if filters_open { theme::blend(CARD(), kit::primary(), 0.18) } else { kit::btn_fill() })
+                    .stroke(Stroke::new(1.0f32, if n > 0 || filters_open { kit::primary() } else { LINE() }))
+                    .rounding(15.0)
+                    .min_size(vec2(0.0, 30.0));
+                if ui.add(b).on_hover_text("Type, caught, how to get it, when and era").clicked() {
+                    filters_open = !filters_open;
+                }
+            }
             let mut mode = if st.game { 2u8 } else if st.shiny { 1 } else { 0 };
             if kit::segmented(ui, &mut mode, &[(0, "Normal"), (1, "✨ Shiny Dex"), (2, "📖 Your game")]) {
                 st.shiny = mode == 1;
@@ -722,6 +753,17 @@ impl App {
             }
         });
         ui.add_space(10.0);
+        ui.ctx().data_mut(|d| d.insert_temp(open_id, filters_open));
+        if plus {
+            // the filters that are on, each one a chip that takes it off
+            if self.dex_plus_chips(ui, &stages) {
+                ui.add_space(10.0);
+            }
+            if !filters_open {
+                return;
+            }
+        }
+        let st = &mut self.setup.pokedex;
         // row 2: types as chips
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
@@ -766,6 +808,75 @@ impl App {
         if clear {
             self.dex_clear_filters();
         }
+    }
+}
+
+/// Modern Plus: how many filters (beside the search) are on.
+fn plus_filter_count(st: &DexState) -> usize {
+    let caught = if st.game { st.game_filter != GameFilter::All } else { st.caught != CaughtFilter::All };
+    [st.type_filter.is_some(), st.how != HowFilter::Any, st.stage.is_some(), st.era != EraFilter::All, caught].iter().filter(|b| **b).count()
+}
+
+impl App {
+    /// Modern Plus: the filters that are on, as chips; click one to take it
+    /// off. True when it drew any.
+    fn dex_plus_chips(&mut self, ui: &mut egui::Ui, stages: &[String]) -> bool {
+        let st = &mut self.setup.pokedex;
+        if plus_filter_count(st) == 0 {
+            return false;
+        }
+        let mut off: Vec<u8> = Vec::new();
+        let mut all = false;
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+            let mut chip = |ui: &mut egui::Ui, label: String, k: u8| {
+                let b = egui::Button::new(RichText::new(format!("{label}   ✕")).size(12.5).color(TEXT())).fill(theme::blend(CARD(), kit::primary(), 0.22)).stroke(Stroke::NONE).rounding(13.0).min_size(vec2(0.0, 26.0));
+                if ui.add(b).on_hover_text("Take this filter off").clicked() {
+                    off.push(k);
+                }
+            };
+            if let Some(t) = st.type_filter.clone() {
+                chip(ui, t, 0);
+            }
+            if st.game && st.game_filter != GameFilter::All {
+                let l = match st.game_filter {
+                    GameFilter::Caught => "Caught",
+                    GameFilter::SeenOnly => "Seen, not caught",
+                    _ => "Not seen",
+                };
+                chip(ui, l.to_string(), 1);
+            } else if !st.game && st.caught != CaughtFilter::All {
+                chip(ui, if st.caught == CaughtFilter::Caught { "Shiny caught" } else { "Not caught" }.to_string(), 1);
+            }
+            if st.how != HowFilter::Any {
+                chip(ui, st.how.label().to_string(), 2);
+            }
+            if let Some(name) = st.stage.and_then(|i| stages.get(i)) {
+                chip(ui, format!("Wild by: {name}"), 3);
+            }
+            if st.era != EraFilter::All {
+                chip(ui, if st.era == EraFilter::Platinum { "Platinum" } else { "Modern" }.to_string(), 4);
+            }
+            if ui.link(RichText::new("Clear all").size(12.5)).clicked() {
+                all = true;
+            }
+        });
+        for k in off {
+            match k {
+                0 => st.type_filter = None,
+                1 => {
+                    st.game_filter = GameFilter::All;
+                    st.caught = CaughtFilter::All;
+                }
+                2 => st.how = HowFilter::Any,
+                3 => st.stage = None,
+                _ => st.era = EraFilter::All,
+            }
+        }
+        if all {
+            self.dex_clear_filters();
+        }
+        true
     }
 }
 
@@ -965,7 +1076,10 @@ impl App {
         }
 
         ui.add_space(6.0);
+        super::app_tour::here(ui.ctx(), "pokedex-mon");
+        let tour_top = ui.cursor().min.y;
         self.entry_header(ui, w, &m, sp.as_ref(), ready.as_ref());
+        super::app_tour::mark_since(ui, "dex.entry", tour_top);
         ui.add_space(10.0);
         let tcg = match self.tcg_count(&m) {
             0 => "TCG".to_string(),
