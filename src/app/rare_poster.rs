@@ -324,7 +324,7 @@ impl App {
                     kit::pill(ui, m, if *ok { PillKind::Ok } else { PillKind::Bad });
                 }
                 ui.add_space(4.0);
-                ui.label(RichText::new("Every patch today, from the game's own formula. New patches at midnight Central European time.").size(kit::fs(11.0)).color(TEXT().gamma_multiply(0.7)));
+                ui.label(RichText::new("Every patch today, from the game's own formula. New patches at midnight UTC.").size(kit::fs(11.0)).color(TEXT().gamma_multiply(0.7)));
             });
 
         if let Some(p) = reveal {

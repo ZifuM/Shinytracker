@@ -177,6 +177,12 @@ impl App {
             // (Modern: a top bar with the overlay's controls.)
             let modern = kit::modern();
             let top_h = if modern { super::shell::TOP_H } else { 38.0 };
+            // back / forward: the history of pages, and its keys
+            self.nav_track();
+            self.nav_sound(ctx);
+            if !self.takeover_open() {
+                self.nav_keys(ctx);
+            }
             egui::TopBottomPanel::top("settings-header")
                 .exact_height(top_h)
                 .frame(egui::Frame::none())
@@ -191,6 +197,25 @@ impl App {
                 egui::Rounding { nw: 0.0, ne: 0.0, sw: r, se: r },
                 PAGE(),
             );
+            // Modern Plus themes: Synthwave's sky and Aurora glass's glows behind the page
+            let body_bg = bg.with_clip_rect(Rect::from_min_max(egui::pos2(screen.min.x, body_top - 1.0), screen.max));
+            theme::paint_backdrop(&body_bg, Rect::from_min_max(egui::pos2(screen.min.x, body_top - 1.0), screen.max));
+            // the overlay themes' page: ruled paper, scanlines, halftone dots, stripes
+            theme::paint_skin_backdrop(&body_bg, Rect::from_min_max(egui::pos2(screen.min.x, body_top - 1.0), screen.max));
+            theme::paint_skin_top(ctx, Rect::from_min_max(egui::pos2(screen.min.x, body_top - 1.0), screen.max));
+            theme::paint_glows(&body_bg, screen);
+            // Winter's snow and Spooky's embers (Appearance → Theme can turn them off)
+            if let Some(kind) = theme::particles() {
+                theme::paint_particles(&body_bg, Rect::from_min_max(egui::pos2(screen.min.x, body_top - 1.0), screen.max), ctx.input(|i| i.time), kind);
+                if theme::motion() {
+                    // (20 frames a second is plenty for drifting specks)
+                    ctx.request_repaint_after(std::time::Duration::from_millis(50));
+                }
+            }
+            // the themes' own background motion (Synthwave's grid, Gold's glints...)
+            if theme::paint_ambient(&body_bg, Rect::from_min_max(egui::pos2(screen.min.x, body_top - 1.0), screen.max), ctx.input(|i| i.time)) {
+                ctx.request_repaint_after(std::time::Duration::from_millis(50));
+            }
             self.apps_tick(ctx);
             self.log_window(ctx);
             self.party_pick_window(ctx);
@@ -248,11 +273,14 @@ impl App {
                         }
                     });
                 } else {
+                // (Modern Plus: a page with no scroll bar keeps the bar's lane
+                // as margin, so it isn't tight to the right edge)
+                let has_bar = ctx.data(|d| d.get_temp::<bool>(egui::Id::new("page-has-bar"))).unwrap_or(true);
                 egui::CentralPanel::default()
                     .frame(egui::Frame::none().inner_margin(if modern {
                         egui::Margin {
                             left: 32.0,
-                            right: 8.0,
+                            right: if kit::plus() && !has_bar { 28.0 } else { 8.0 },
                             top: 26.0,
                             bottom: 12.0,
                         }
@@ -272,11 +300,31 @@ impl App {
                         kit::settings_style(ui);
                         // Scroll bar in its own lane beside the page (egui's
                         // default floats it over the content).
-                        ui.style_mut().spacing.scroll = egui::style::ScrollStyle {
-                            bar_width: 8.0,
-                            bar_inner_margin: 12.0,
-                            bar_outer_margin: 0.0,
-                            ..egui::style::ScrollStyle::solid()
+                        ui.style_mut().spacing.scroll = if theme::plus() {
+                            // Modern Plus: egui's bar stays for dragging but isn't drawn;
+                            // the theme draws its own over it (below)
+                            egui::style::ScrollStyle {
+                                floating: true,
+                                bar_width: 10.0,
+                                floating_width: 10.0,
+                                floating_allocated_width: 20.0,
+                                bar_inner_margin: 10.0,
+                                bar_outer_margin: 0.0,
+                                dormant_background_opacity: 0.0,
+                                active_background_opacity: 0.0,
+                                interact_background_opacity: 0.0,
+                                dormant_handle_opacity: 0.0,
+                                active_handle_opacity: 0.0,
+                                interact_handle_opacity: 0.0,
+                                ..egui::style::ScrollStyle::solid()
+                            }
+                        } else {
+                            egui::style::ScrollStyle {
+                                bar_width: 8.0,
+                                bar_inner_margin: 12.0,
+                                bar_outer_margin: 0.0,
+                                ..egui::style::ScrollStyle::solid()
+                            }
                         };
                         // The Pokédex grid keeps its own scroll spot while an entry is open.
                         let scroll_key = if self.setup.tab == Tab::Pokedex {
@@ -335,6 +383,12 @@ impl App {
                         if std::mem::take(&mut self.setup.scroll_top) {
                             area = area.vertical_scroll_offset(0.0);
                         }
+                        // A pack opening fills the window and doesn't scroll: it sizes
+                        // itself from where the page starts, so scrolling made it grow
+                        // without end.
+                        if self.setup.tab == Tab::Cards && self.setup.cards.opening.is_some() {
+                            area = area.enable_scrolling(false).vertical_scroll_offset(0.0);
+                        }
                         // A tour scrolling the part it points at into view
                         // (app_tour asks): glide there over a few frames.
                         let tour_to_id = egui::Id::new("tour-scroll-to");
@@ -353,8 +407,15 @@ impl App {
                         }
                         let page_rect = ui.max_rect();
                         ui.data_mut(|d| d.insert_temp(egui::Id::new("tour-page"), page_rect));
-                        let scrolled = area
+                        let shown = area
                             .show(ui, |ui| {
+                                // (scroll areas inside the page keep egui's own visible bar)
+                                ui.style_mut().spacing.scroll = egui::style::ScrollStyle {
+                                    bar_width: 8.0,
+                                    bar_inner_margin: 12.0,
+                                    bar_outer_margin: 0.0,
+                                    ..egui::style::ScrollStyle::solid()
+                                };
                                 // Cap the page width, but never wider than the window
                                 // (set_max_width can also widen, which cut the right side off).
                                 // Gallery pages (dex, achievements, trophies, runs) fill the window.
@@ -367,7 +428,7 @@ impl App {
                                 let w = if wide { ui.available_width() } else { ui.available_width().min(cap) };
                                 ui.set_max_width(w);
                                 // The Map fills the window itself, so it only fades.
-                                let t = kit::entering(ui.ctx(), egui::Id::new("page-enter"), page_hash, kit::ENTER);
+                                let t = kit::entering(ui.ctx(), egui::Id::new("page-enter"), page_hash, theme::enter_len());
                                 kit::enter_ui(ui, t, if self.setup.tab == Tab::Map { 0.0 } else { 14.0 });
                                 if self.setup.caught_pick {
                                     self.page_caught_pick(ui);
@@ -428,13 +489,39 @@ impl App {
                                         Tab::Appearance => self.page_appearance(ui),
                                         Tab::Hotkeys => self.page_hotkeys(ui),
                                         Tab::Advanced => self.page_advanced(ui),
+                                        Tab::Sounds => self.page_sounds(ui),
                                     }
                                 }
                                 ui.add_space(24.0 + self.dock_pad());
-                            })
-                            .state
-                            .offset
-                            .y;
+                            });
+                        let scrolled = shown.state.offset.y;
+                        // (does this page need its scroll bar? for next frame's margin)
+                        let has_bar = shown.content_size.y > shown.inner_rect.height() + 0.5;
+                        // the theme's own scroll bar
+                        if has_bar && theme::plus() {
+                            let track = Rect::from_min_max(egui::pos2(page_rect.max.x - 10.0, shown.inner_rect.min.y + 4.0), egui::pos2(page_rect.max.x, shown.inner_rect.max.y - 4.0));
+                            let (content, view) = (shown.content_size.y, shown.inner_rect.height());
+                            let th = track.height();
+                            let mut len = th * view / content;
+                            let mut top = track.min.y + th * scrolled / content;
+                            if len < 28.0 {
+                                len = 28.0;
+                                top = track.min.y + (th - len) * (scrolled / (content - view).max(1.0)).clamp(0.0, 1.0);
+                            }
+                            let handle = Rect::from_min_size(egui::pos2(track.min.x, top), egui::vec2(track.width(), len));
+                            let drag_id = egui::Id::new("theme-scroll-drag");
+                            let (hover, down, pressed) = ui.input(|i| (i.pointer.hover_pos(), i.pointer.primary_down(), i.pointer.primary_pressed()));
+                            let over = hover.is_some_and(|p| track.expand2(egui::vec2(6.0, 0.0)).contains(p));
+                            if pressed && over {
+                                ui.data_mut(|d| d.insert_temp(drag_id, true));
+                            }
+                            if !down {
+                                ui.data_mut(|d| d.remove::<bool>(drag_id));
+                            }
+                            let dragging = ui.data(|d| d.get_temp::<bool>(drag_id)).unwrap_or(false);
+                            theme::paint_scrollbar(&ui.painter().with_clip_rect(page_rect), track, handle, over || dragging, dragging);
+                        }
+                        ui.data_mut(|d| d.insert_temp(egui::Id::new("page-has-bar"), has_bar));
                         ui.data_mut(|d| d.insert_temp(egui::Id::new("page-scroll-y"), scrolled));
                         if let Some((to, asked)) = tour_glide {
                             // there, or as far as the page goes: done

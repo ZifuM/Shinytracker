@@ -668,8 +668,9 @@ impl App {
                     p.rect_filled(Rect::from_min_max(pos2(cx - slot / 2.0, plot.min.y - 18.0), pos2(cx + slot / 2.0, plot.max.y)), 8.0, ch::faint(TEXT(), 0.05));
                 }
                 if hh > 0.0 {
-                    let c = if on { theme::blend(BLUE, Color32::WHITE, 0.18) } else { BLUE };
-                    p.rect_filled(bar, (bw / 2.0).min(6.0), c);
+                    let blue = ch::tc(BLUE);
+                    let c = if on { theme::blend(blue, Color32::WHITE, 0.18) } else { blue };
+                    theme::chart_bar(&p, bar, c, on);
                 }
                 if !b.shinies.is_empty() {
                     let sy = (plot.max.y - hh - 12.0).max(plot.min.y - 8.0);
@@ -771,7 +772,7 @@ impl App {
             let x_of = |m: f64| band.min.x + band.width() * (m / hi).clamp(0.0, 1.0) as f32;
             for (a, b, c) in ch::luck_zones_mult(hi) {
                 let r = Rect::from_min_max(pos2(x_of(a), band.min.y), pos2(x_of(b), band.max.y));
-                p.rect_filled(r, 0.0, ch::faint(c, 0.75));
+                theme::chart_bar(&p, r, ch::faint(ch::tc(c), 0.75), false);
             }
             p.rect_stroke(band, 7.0, Stroke::new(1.0f32, kit::LINE()));
             for k in 0..=hi as i32 {
@@ -928,11 +929,12 @@ impl App {
                 for (i, v) in avgs.iter().enumerate() {
                     let cx = rect.min.x + slot * (i as f32 + 0.5);
                     let track = Rect::from_min_max(pos2(cx - bw / 2.0, top), pos2(cx + bw / 2.0, base));
-                    p.rect_filled(track, bw / 2.0, ch::faint(kit::LINE(), 0.6));
+                    theme::chart_track(&p, track, ch::faint(kit::LINE(), 0.6));
                     let hh = (track.height() * (*v / max) as f32 * grow).max(if *v > 0.0 { bw } else { 0.0 });
                     if hh > 0.0 {
-                        let c = if Some(i) == best { YELLOW } else { ch::faint(YELLOW, 0.55) };
-                        p.rect_filled(Rect::from_min_max(pos2(track.min.x, base - hh), track.max), bw / 2.0, c);
+                        let yellow = ch::tc(YELLOW);
+                        let c = if Some(i) == best { yellow } else { ch::faint(yellow, 0.55) };
+                        theme::chart_bar(&p, Rect::from_min_max(pos2(track.min.x, base - hh), track.max), c, Some(i) == best);
                     }
                     let wd_name = WEEKDAYS[i];
                     p.text(pos2(cx, base + 11.0), Align2::CENTER_CENTER, &wd_name[..3.min(wd_name.len())], ch::reg(10.5), if hover == Some(i) { TEXT() } else { MUTED() });
@@ -1163,8 +1165,8 @@ impl App {
                                 p.text(pos2(chip.max.x + 10.0, chip.center().y + 9.0), Align2::LEFT_CENTER, format!("{left} to go"), ch::reg(11.5), MUTED());
                                 let shown = kit::grow(ui.ctx(), resp.id, frac);
                                 let track = Rect::from_min_max(pos2(r.min.x + 12.0, r.max.y - 18.0), pos2(r.max.x - 12.0, r.max.y - 10.0));
-                                p.rect_filled(track, 4.0, ch::faint(kit::LINE(), 0.9));
-                                p.rect_filled(Rect::from_min_size(track.min, vec2((track.width() * shown).max(8.0), track.height())), 4.0, *col);
+                                theme::chart_track(&p, track, ch::faint(kit::LINE(), 0.9));
+                                theme::chart_bar(&p, Rect::from_min_size(track.min, vec2((track.width() * shown).max(8.0), track.height())), ch::tc(*col), true);
                                 p.text(pos2(r.max.x - 12.0, chip.center().y - 7.0), Align2::RIGHT_CENTER, format!("{:.0}%", frac * 100.0), ch::bold(11.5), ch::ink(*col));
                                 if last > 0.0 {
                                     p.text(pos2(r.max.x - 12.0, chip.center().y + 9.0), Align2::RIGHT_CENTER, format!("from {}", num(last)), ch::reg(10.5), MUTED());

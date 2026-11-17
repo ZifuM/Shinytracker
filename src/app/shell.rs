@@ -52,6 +52,7 @@ pub(super) fn tab_meta(t: Tab) -> (&'static str, &'static str, Color32) {
         Tab::Appearance => ("🎨", "Appearance", kit::C_PINK),
         Tab::Hotkeys => ("⌨", "Hotkeys", kit::C_SLATE),
         Tab::Advanced => ("⚙", "Advanced", kit::C_SLATE),
+        Tab::Sounds => ("🔊", "Sounds", kit::C_PINK),
     }
 }
 
@@ -253,7 +254,7 @@ impl App {
         // settings live in their own window now (Shiny Hunter's Counting
         // and Overlay too)
         // (unless they're set to be Shiny Hunter pages again)
-        let settings_page = matches!(tab, Tab::Appearance | Tab::Hotkeys | Tab::Advanced) || (matches!(tab, Tab::Counting | Tab::Overlay) && !self.cfg.apps.shiny_pages_in_app);
+        let settings_page = matches!(tab, Tab::Appearance | Tab::Sounds | Tab::Hotkeys | Tab::Advanced) || (matches!(tab, Tab::Counting | Tab::Overlay) && !self.cfg.apps.shiny_pages_in_app);
         if settings_page {
             self.open_settings(tab);
             return;
@@ -303,16 +304,22 @@ impl App {
         let left = Rect::from_min_max(rect.min, egui::pos2(rect.min.x + nav_w, rect.max.y));
         let right = Rect::from_min_max(egui::pos2(left.max.x, rect.min.y), rect.max);
         p.rect_filled(left, egui::Rounding { nw: r, ..Default::default() }, SIDEBAR());
-        p.rect_filled(right, egui::Rounding { ne: r, ..Default::default() }, PAGE());
+        // (a Modern Plus theme can paint the title bar: Pokédex's red)
+        let (hf, hi, hm) = header_colours();
+        p.rect_filled(right, egui::Rounding { ne: r, ..Default::default() }, hf);
+        // (Aurora glass: its glows run up under the title bar too)
+        theme::paint_glows(&p, ctx.screen_rect());
         p.line_segment([right.left_bottom() + egui::vec2(0.0, -0.5), right.right_bottom() + egui::vec2(0.0, -0.5)], Stroke::new(1.0f32, kit::LINE()));
         // The brand's colours as a hairline across the very top.
         let pl = theme::pal();
+        if theme::chrome().is_none() {
         p.add(theme::gradient_rect(
             Rect::from_min_size(rect.min, egui::vec2(rect.width(), 2.0)),
             [r, r, 0.0, 0.0],
             pl.accent,
             if pl.gradient { pl.accent2 } else { pl.accent },
         ));
+        }
 
         // Brand.
         let compact = self.nav_is_compact() && !self.takeover_open() && !tabs;
@@ -324,8 +331,8 @@ impl App {
             Color32::WHITE,
         );
         if !compact {
-            p.text(logo_c + egui::vec2(22.0, -8.0), Align2::LEFT_CENTER, "Poke Together", crate::fonts::sans_bold_font(14.5), TEXT());
-            p.text(logo_c + egui::vec2(22.0, 9.0), Align2::LEFT_CENTER, "Companion", crate::fonts::sans_font(12.0), MUTED());
+            p.text(logo_c + egui::vec2(22.0, -8.0), Align2::LEFT_CENTER, "Poke Together", crate::fonts::sans_bold_font(14.5), hi);
+            p.text(logo_c + egui::vec2(22.0, 9.0), Align2::LEFT_CENTER, "Companion", crate::fonts::sans_font(12.0), hm);
         }
 
         // Where you are: "Shiny Hunter › Hunt".
@@ -365,12 +372,14 @@ impl App {
             let resp = ui.interact(br, ui.id().with(("mhdr-btn", i)), Sense::click());
             let hov = resp.hovered();
             if hov {
-                let fill = if i == 2 { Color32::from_rgb(220, 50, 60) } else { theme::blend(PAGE(), TEXT(), 0.08) };
+                // (on a red title bar the close button's red hover goes deeper instead)
+                let close_fill = if theme::chrome().is_some() { theme::blend(hf, Color32::BLACK, 0.32) } else { Color32::from_rgb(220, 50, 60) };
+                let fill = if i == 2 { close_fill } else { theme::blend(hf, hi, 0.10) };
                 let rr = if i == 2 { egui::Rounding { ne: r, ..Default::default() } } else { egui::Rounding::ZERO };
                 p.rect_filled(br, rr, fill);
             }
             let c = br.center();
-            let ink = if hov && i == 2 { Color32::WHITE } else { theme::blend(PAGE(), TEXT(), 0.8) };
+            let ink = if hov && i == 2 { Color32::WHITE } else { theme::blend(hf, hi, 0.8) };
             let s = Stroke::new(1.3f32, ink);
             match i {
                 0 => {
@@ -410,9 +419,9 @@ impl App {
             let open = self.setup.settings_open.is_some();
             let hov = resp.hovered();
             if hov || open {
-                p.rect_filled(cog, 8.0, theme::blend(PAGE(), TEXT(), if open { 0.12 } else { 0.08 }));
+                p.rect_filled(cog, 8.0, theme::blend(hf, hi, if open { 0.14 } else { 0.10 }));
             }
-            cog_icon(&p, cog.center(), 8.0, if hov || open { TEXT() } else { theme::blend(PAGE(), TEXT(), 0.75) });
+            cog_icon(&p, cog.center(), 8.0, if hov || open { hi } else { theme::blend(hf, hi, 0.75) });
             super::app_tour::mark(ui.ctx(), "top.settings", cog);
             // (it opens at the settings of the app you're on)
             let tip = match app_of(self.setup.tab) {
@@ -498,9 +507,11 @@ impl App {
         } else if dr.drag_started() {
             ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
-        // Modern Plus: the pages as tabs (taken after the drag area, so they click)
+        // Modern Plus: the back button, then the pages as tabs (taken after
+        // the drag area, so they click)
         if tabs {
-            self.plus_title_tabs(ui, &p, x, cy, drag_until - 8.0);
+            let bx = self.nav_back_button(ui, &p, x, cy);
+            self.plus_title_tabs(ui, &p, bx, cy, drag_until - 8.0);
         }
         if !self.takeover_open() && !tabs {
             let tip = if self.nav_is_compact() { "Show the sidebar's names" } else { "Fold the sidebar to icons" };
@@ -514,6 +525,174 @@ impl App {
         }
     }
 
+    /// The title bar's back button (a round ‹ before the tabs). Greyed out
+    /// with nowhere to go back to. Returns where the tabs start.
+    fn nav_back_button(&mut self, ui: &mut egui::Ui, p: &egui::Painter, x: f32, cy: f32) -> f32 {
+        let (hf, hi, _) = header_colours();
+        let r = Rect::from_center_size(egui::pos2(x + 15.0, cy), egui::vec2(30.0, 30.0));
+        let can = self.can_go_back();
+        let resp = ui.interact(r, ui.id().with("nav-back"), if can { Sense::click() } else { Sense::hover() });
+        let hov = can && resp.hovered();
+        if hov {
+            p.circle_filled(r.center(), 15.0, theme::blend(hf, hi, 0.12));
+        }
+        let ink = if !can { theme::blend(hf, hi, 0.30) } else if hov { hi } else { theme::blend(hf, hi, 0.78) };
+        let c = r.center() + egui::vec2(-1.0, 0.0);
+        p.add(egui::Shape::line(vec![c + egui::vec2(3.5, -6.0), c + egui::vec2(-2.5, 0.0), c + egui::vec2(3.5, 6.0)], Stroke::new(2.0f32, ink)));
+        super::app_tour::mark(ui.ctx(), "nav.back", r);
+        let tip = match self.back_label() {
+            Some(name) => format!("Back to {name} (Alt+←, or your mouse's back button)"),
+            None => "Nothing to go back to yet".to_string(),
+        };
+        let resp = if can { resp.on_hover_cursor(egui::CursorIcon::PointingHand) } else { resp };
+        if resp.on_hover_text(tip).clicked() {
+            self.nav_go_back();
+        }
+        r.max.x + 8.0
+    }
+
+    /// Keep the page history: a page change that isn't a back / forward
+    /// step adds the page you left (once in a row, the last 40).
+    pub(super) fn nav_track(&mut self) {
+        let now = self.setup.tab;
+        if now == self.setup.nav_last {
+            return;
+        }
+        let last = self.setup.nav_last;
+        if self.setup.nav_back.last() != Some(&last) {
+            self.setup.nav_back.push(last);
+        }
+        if self.setup.nav_back.len() > 40 {
+            self.setup.nav_back.remove(0);
+        }
+        self.setup.nav_fwd.clear();
+        self.setup.nav_last = now;
+    }
+
+    /// (a page change of any kind, back / forward too: the theme's page sound)
+    pub(super) fn nav_sound(&mut self, ctx: &egui::Context) {
+        let id = egui::Id::new("nav-sound-tab");
+        let now = self.setup.tab;
+        if ctx.data(|d| d.get_temp::<Tab>(id)) != Some(now) {
+            ctx.data_mut(|d| d.insert_temp(id, now));
+            crate::theme::page_turned(ctx);
+        }
+    }
+
+    /// Something inside the page to step back out of first: an open
+    /// Pokédex entry, an app's page in the App Store, or a Game Info page
+    /// you followed a link to.
+    fn inner_back(&self) -> bool {
+        (self.setup.tab == Tab::Pokedex && self.setup.pokedex.open.is_some())
+            || (self.setup.tab == Tab::Store && self.setup.store.app.is_some())
+            || (self.setup.tab == Tab::Info && !self.setup.info.history.is_empty())
+    }
+
+    pub(super) fn can_go_back(&self) -> bool {
+        self.inner_back() || self.setup.nav_back.iter().any(|t| *t != self.setup.tab && self.page_still_there(*t))
+    }
+
+    /// Where back would take you, for the button's tip.
+    fn back_label(&self) -> Option<String> {
+        if self.inner_back() {
+            return Some(
+                match self.setup.tab {
+                    Tab::Pokedex => "the Pokédex",
+                    Tab::Store => "the App Store",
+                    _ => "the last Game Info page",
+                }
+                .to_string(),
+            );
+        }
+        let t = self.setup.nav_back.iter().rev().find(|t| **t != self.setup.tab && self.page_still_there(**t))?;
+        Some(tab_meta(*t).1.to_string())
+    }
+
+    /// Can this page still be opened? (Its app may have been uninstalled
+    /// since.)
+    fn page_still_there(&self, t: Tab) -> bool {
+        app_of(t).is_none_or(|a| self.cfg.apps.is_installed(a))
+    }
+
+    /// Open a page from the history (opening its app again if it was closed).
+    fn nav_open(&mut self, t: Tab) {
+        if let Some(a) = app_of(t) {
+            if !self.cfg.apps.is_open(a) {
+                self.open_app(a);
+            }
+        }
+        self.go_to(t);
+        // (a step through the history, not a new visit: nothing to add)
+        self.setup.nav_last = self.setup.tab;
+    }
+
+    /// Back: out of an open Pokédex entry or Game Info page first, then to
+    /// the page before.
+    pub(super) fn nav_go_back(&mut self) {
+        if self.setup.tab == Tab::Pokedex && self.setup.pokedex.open.is_some() {
+            self.setup.pokedex.open = None;
+            return;
+        }
+        if self.setup.tab == Tab::Store && self.setup.store.app.is_some() {
+            self.setup.store.app = None;
+            self.setup.scroll_top = true;
+            return;
+        }
+        if self.setup.tab == Tab::Info && !self.setup.info.history.is_empty() {
+            self.info_back();
+            return;
+        }
+        let here = self.setup.tab;
+        while let Some(t) = self.setup.nav_back.pop() {
+            if t == here || !self.page_still_there(t) {
+                continue;
+            }
+            self.setup.nav_fwd.push(here);
+            self.nav_open(t);
+            return;
+        }
+    }
+
+    /// Forward: the page you just stepped back from.
+    pub(super) fn nav_go_forward(&mut self) {
+        let here = self.setup.tab;
+        while let Some(t) = self.setup.nav_fwd.pop() {
+            if t == here || !self.page_still_there(t) {
+                continue;
+            }
+            self.setup.nav_back.push(here);
+            self.nav_open(t);
+            return;
+        }
+    }
+
+    /// Alt+← / Alt+→ and the mouse's back / forward buttons. (An open
+    /// Pokédex entry and Game Info handle their own keys, so those are left
+    /// to them.)
+    pub(super) fn nav_keys(&mut self, ctx: &egui::Context) {
+        let typing = ctx.wants_keyboard_input();
+        let (alt_back, mouse_back, alt_fwd, mouse_fwd) = ctx.input(|i| {
+            (
+                i.modifiers.alt && i.key_pressed(egui::Key::ArrowLeft),
+                i.pointer.button_pressed(egui::PointerButton::Extra1),
+                i.modifiers.alt && i.key_pressed(egui::Key::ArrowRight),
+                i.pointer.button_pressed(egui::PointerButton::Extra2),
+            )
+        });
+        let entry_open = self.setup.tab == Tab::Pokedex && self.setup.pokedex.open.is_some();
+        let info_hist = self.setup.tab == Tab::Info && !self.setup.info.history.is_empty();
+        if entry_open {
+            // (the entry closes itself on the mouse's back button and Esc)
+            return;
+        }
+        let back = (alt_back && !typing && !info_hist) || mouse_back;
+        if back {
+            self.nav_go_back();
+        } else if (alt_fwd && !typing) || mouse_fwd {
+            self.nav_go_forward();
+        }
+    }
+
     /// Modern Plus's title bar tabs: Dashboard, App Store, Library, Profile
     /// and Stats from `x`, and the app you're in after them. Stops before
     /// `max_x` (tabs that don't fit are left out; the Ctrl K search still
@@ -522,13 +701,20 @@ impl App {
         let cur = self.setup.tab;
         let mut x = x;
         let mut go: Option<Tab> = None;
+        let (hf, hi, hm) = header_colours();
+        // the open tab's line: the theme's second colour on a painted title bar
+        let under = match (theme::chrome(), theme::theme_now()) {
+            (Some(_), Some(t)) => t.accent2,
+            _ => kit::primary(),
+        };
         // (all the tabs together, for the welcome tour)
         let mut all: Option<Rect> = None;
         for (t, key) in [(Tab::Home, "nav.home"), (Tab::Store, "nav.store"), (Tab::Library, "nav.library"), (Tab::Profile, "nav.profile"), (Tab::Stats, "nav.stats")] {
             let (_, name, _) = tab_meta(t);
             let on = cur == t;
-            let font = if on { crate::fonts::sans_bold_font(13.5) } else { crate::fonts::sans_font(13.5) };
-            let g = p.layout_no_wrap(name.to_string(), font, TEXT());
+            // (a theme's own type: handwriting, Impact, console, pixels)
+            let font = theme::label_font(13.5).unwrap_or_else(|| if on { crate::fonts::sans_bold_font(13.5) } else { crate::fonts::sans_font(13.5) });
+            let g = p.layout_no_wrap(name.to_string(), font, hi);
             let w = g.size().x + 24.0;
             if x + w > max_x {
                 break;
@@ -537,12 +723,12 @@ impl App {
             let resp = ui.interact(r, ui.id().with(("plus-tab", t as u8)), Sense::click());
             let hov = resp.hovered();
             if hov && !on {
-                p.rect_filled(r, 8.0, theme::blend(PAGE(), TEXT(), 0.06));
+                p.rect_filled(r, 8.0, theme::blend(hf, hi, 0.08));
             }
-            let ink = if on || hov { TEXT() } else { MUTED() };
+            let ink = if on || hov { hi } else { hm };
             p.galley(egui::pos2(r.center().x - g.size().x / 2.0, cy - g.size().y / 2.0), g, ink);
             if on {
-                p.rect_filled(Rect::from_min_size(egui::pos2(r.min.x + 10.0, r.max.y - 1.0), egui::vec2(w - 20.0, 3.0)), 1.5, kit::primary());
+                p.rect_filled(Rect::from_min_size(egui::pos2(r.min.x + 10.0, r.max.y - 1.0), egui::vec2(w - 20.0, 3.0)), 1.5, under);
             }
             super::app_tour::mark(ui.ctx(), key, r);
             all = Some(all.map_or(r, |a| a.union(r)));
@@ -559,10 +745,10 @@ impl App {
             let (_, name, color) = tab_meta(cur);
             let x0 = x + 10.0;
             if x0 + 60.0 < max_x {
-                p.line_segment([egui::pos2(x0, cy - 9.0), egui::pos2(x0, cy + 9.0)], Stroke::new(1.0f32, kit::LINE()));
+                p.line_segment([egui::pos2(x0, cy - 9.0), egui::pos2(x0, cy + 9.0)], Stroke::new(1.0f32, theme::blend(hf, hi, 0.25)));
                 p.circle_filled(egui::pos2(x0 + 16.0, cy), 4.0, color);
                 let clip = p.with_clip_rect(Rect::from_min_max(egui::pos2(x0, cy - 16.0), egui::pos2(max_x, cy + 16.0)));
-                clip.text(egui::pos2(x0 + 28.0, cy), Align2::LEFT_CENTER, name, crate::fonts::sans_bold_font(13.5), TEXT());
+                clip.text(egui::pos2(x0 + 28.0, cy), Align2::LEFT_CENTER, name, crate::fonts::sans_bold_font(13.5), hi);
             }
         }
         if let Some(t) = go {
@@ -813,4 +999,19 @@ fn cog_icon(p: &egui::Painter, c: egui::Pos2, r: f32, col: Color32) {
         p.line_segment([c + d * (r * 0.62), c + d * (r * 1.08)], Stroke::new(r * 0.42, col));
     }
     p.circle_stroke(c, r * 0.62, Stroke::new(r * 0.36, col));
+}
+
+/// The title bar's colours: fill, ink and quiet ink. A Modern Plus theme can
+/// paint it (Pokédex's red) or use its darker chrome; otherwise it's the
+/// page's own.
+pub(super) fn header_colours() -> (Color32, Color32, Color32) {
+    if kit::plus() {
+        if let Some((fill, ink)) = theme::chrome() {
+            return (fill, ink, theme::blend(fill, ink, 0.90));
+        }
+        if theme::theme_now().is_some() {
+            return (SIDEBAR(), TEXT(), MUTED());
+        }
+    }
+    (PAGE(), TEXT(), MUTED())
 }

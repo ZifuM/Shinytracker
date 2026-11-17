@@ -898,7 +898,7 @@ impl App {
             }
             ui.add_space(8.0);
         }
-        ui.add(egui::Label::new(egui::RichText::new("Use Sweet Scent on those tiles to meet it. The list changes at the game's daily reset (midnight CET).").size(12.0).color(MUTED())).wrap());
+        ui.add(egui::Label::new(egui::RichText::new("Use Sweet Scent on those tiles to meet it. The list changes at midnight UTC.").size(12.0).color(MUTED())).wrap());
         ui.add_space(10.0);
         if ui.add(egui::Button::new(egui::RichText::new("🎯  Hunt it on rare grass").size(13.0)).fill(kit::btn_fill()).rounding(9.0)).on_hover_text("Makes it your target, with the Sweet Scent on rare grass method").clicked() {
             let (slug, name) = (spot.species.slug.clone(), spot.species.name.to_string());

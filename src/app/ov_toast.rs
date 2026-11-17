@@ -93,6 +93,7 @@ pub(super) fn skin(theme: OverlayTheme) -> Option<ToastSkin> {
         OverlayTheme::Holo => super::ov_holo::toast_skin(),
         OverlayTheme::Broadcast => super::ov_broadcast::toast_skin(),
         OverlayTheme::Terminal => super::ov_terminal::toast_skin(),
+        t => return super::ov_plus::toast_skin_for(t),
     })
 }
 

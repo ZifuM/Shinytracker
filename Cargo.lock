@@ -3217,7 +3217,7 @@ dependencies = [
 
 [[package]]
 name = "shiny-tracker"
-version = "0.7.5"
+version = "0.7.6"
 dependencies = [
  "ab_glyph",
  "color_quant",

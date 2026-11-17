@@ -71,6 +71,18 @@ pub fn plus() -> bool {
     theme::plus()
 }
 
+/// A small-caps label: upper case, SemiBold, spaced out (the share images'
+/// label style; Modern Plus's section labels).
+pub fn caps_label(ui: &mut Ui, text: &str, size: f32, color: Color32) -> Response {
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        &text.to_uppercase(),
+        0.0,
+        egui::text::TextFormat { font_id: crate::fonts::sans_bold_font(size), color, extra_letter_spacing: size * 0.09, ..Default::default() },
+    );
+    ui.label(job)
+}
+
 // ───────────────────────── Cirrus controls ─────────────────────────
 // The modern style's controls follow the Cirrus design system: every
 // interactive control is a full pill with a 1px Edge hairline, primary
@@ -218,8 +230,11 @@ pub fn enter_ui(ui: &mut Ui, t: f32, rise: f32) {
     if t >= 1.0 {
         return;
     }
-    ui.set_opacity(t.max(0.0));
-    ui.add_space(rise * (1.0 - t));
+    // (each Modern Plus theme brings a page in its own way)
+    let (op, space) = theme::enter_style(t, rise);
+    ui.set_opacity(op.clamp(0.0, 1.0));
+    ui.add_space(space.max(0.0));
+    theme::paint_enter(ui.ctx(), ui.clip_rect(), t);
 }
 
 /// A number that changes each time a page is opened (so bars on it can
@@ -312,6 +327,21 @@ fn page_icon() -> Option<(&'static str, Color32)> {
 /// A rounded square with an icon: solid in its colour, or a soft tint with
 /// the icon in the colour.
 pub fn icon_chip(p: &egui::Painter, rect: Rect, icon: &str, color: Color32, solid: bool) {
+    // each Modern Plus theme's own tiles (sticky notes, stickers, coins…)
+    if theme::skin_chip(p, rect, icon, color) {
+        return;
+    }
+    // Pixel style (Pokédex, Pocket): the UI Lab's 8×8 pixel icons on square
+    // bevelled tiles; anything without one keeps its icon on a square tile
+    if plus() && theme::pixel() {
+        if let Some(bits) = theme::pixel_icon(icon) {
+            theme::pixel_chip(p, rect, bits, color, Color32::WHITE);
+            return;
+        }
+        p.rect_filled(rect, 0.0, if solid { color } else { theme::blend(CARD(), color, if theme::pal().light { 0.22 } else { 0.25 }) });
+        p.text(rect.center(), Align2::CENTER_CENTER, icon, egui::FontId::proportional(rect.height() * 0.56), if solid { Color32::WHITE } else { color });
+        return;
+    }
     let r = (rect.height() * 0.3).round();
     if solid {
         p.rect_filled(rect, r, color);
@@ -523,8 +553,9 @@ pub fn settings_style(ui: &mut Ui) {
             x.rounding = egui::Rounding::same(CONTROL_H);
         }
         v.extreme_bg_color = if theme::pal().light { sf.card } else { sf.field };
-        v.window_rounding = egui::Rounding::same(20.0);
-        v.menu_rounding = egui::Rounding::same(14.0);
+        // (a Modern Plus theme can make corners squarer: Field guide)
+        v.window_rounding = egui::Rounding::same(20.0 * theme::round_scale());
+        v.menu_rounding = egui::Rounding::same(14.0 * theme::round_scale());
         v.window_shadow = shadow_tier(2);
         v.popup_shadow = shadow_tier(2);
         v.window_stroke = Stroke::new(1.0f32, sf.line);
@@ -536,6 +567,119 @@ pub fn settings_style(ui: &mut Ui) {
         style.spacing.button_padding = egui::vec2(16.0, 6.0);
         style.spacing.item_spacing = egui::vec2(8.0, 8.0);
         style.spacing.slider_rail_height = 6.0;
+        // Pixel style (Pokédex, Pocket, Retro DS): every button, box and
+        // text field square, with a solid 2px outline like the pixel keys
+        if plus() && theme::pixel() {
+            let w = &mut style.visuals.widgets;
+            let edge = theme::blend(sf.control, sf.text, 0.55);
+            for x in [&mut w.inactive, &mut w.hovered, &mut w.active, &mut w.open] {
+                x.rounding = egui::Rounding::ZERO;
+                x.bg_stroke = Stroke::new(2.0f32, edge);
+            }
+            w.hovered.bg_stroke = Stroke::new(2.0f32, sf.text);
+            style.visuals.menu_rounding = egui::Rounding::ZERO;
+            style.visuals.handle_shape = egui::style::HandleShape::Rect { aspect_ratio: 0.6 };
+        }
+        // the overlay themes' controls (Modern Plus themes that match them)
+        let sk = theme::skin();
+        {
+            let w = &mut style.visuals.widgets;
+            let all = |w: &mut egui::style::Widgets, f: &dyn Fn(&mut egui::style::WidgetVisuals)| {
+                for x in [&mut w.inactive, &mut w.hovered, &mut w.active, &mut w.open] {
+                    f(x);
+                }
+            };
+            match sk {
+                theme::Skin::Sticker => {
+                    // white stickers with a 2px ink outline
+                    let ink = sf.text;
+                    all(&mut *w, &|x| {
+                        x.rounding = egui::Rounding::same(12.0);
+                        x.bg_stroke = Stroke::new(2.0f32, ink);
+                    });
+                    // (white stickers on light; card-coloured ones on dark)
+                    if theme::pal().light {
+                        w.inactive.weak_bg_fill = Color32::WHITE;
+                        w.hovered.weak_bg_fill = Color32::from_rgb(255, 244, 196);
+                        w.active.weak_bg_fill = Color32::from_rgb(255, 232, 150);
+                    } else {
+                        w.inactive.weak_bg_fill = sf.card;
+                        w.hovered.weak_bg_fill = theme::blend(sf.card, theme::BUTTON(), 0.18);
+                        w.active.weak_bg_fill = theme::blend(sf.card, theme::BUTTON(), 0.30);
+                    }
+                }
+                theme::Skin::Journal => {
+                    // pen-drawn boxes: no fill, a blue pen line
+                    let pen = theme::blend(sf.line, sf.text, 0.55);
+                    all(&mut *w, &|x| {
+                        x.rounding = egui::Rounding::same(5.0);
+                        x.bg_stroke = Stroke::new(1.5f32, pen);
+                    });
+                    w.inactive.weak_bg_fill = Color32::TRANSPARENT;
+                    w.hovered.weak_bg_fill = Color32::from_rgba_unmultiplied(255, 232, 80, 70);
+                    w.hovered.bg_stroke = Stroke::new(2.0f32, sf.text);
+                }
+                theme::Skin::Broadcast => {
+                    all(&mut *w, &|x| {
+                        x.rounding = egui::Rounding::ZERO;
+                    });
+                    w.inactive.weak_bg_fill = sf.card;
+                    w.inactive.bg_stroke = Stroke::NONE;
+                    w.hovered.bg_stroke = Stroke::new(1.0f32, theme::BUTTON());
+                }
+                theme::Skin::Terminal => {
+                    // [ bracket ] boxes: no fill, a dim green line, lit on hover
+                    let dim = sf.line;
+                    all(&mut *w, &|x| {
+                        x.rounding = egui::Rounding::ZERO;
+                        x.bg_stroke = Stroke::new(1.0f32, dim);
+                    });
+                    w.inactive.weak_bg_fill = Color32::TRANSPARENT;
+                    w.hovered.weak_bg_fill = sf.selected;
+                    w.hovered.bg_stroke = Stroke::new(1.0f32, sf.text);
+                }
+                theme::Skin::Glass => {
+                    // ghost controls: see-through with a light rim
+                    // (light rims on dark; ink rims on the light version)
+                    let rim = |al: u8| if theme::pal().light { Color32::from_rgba_unmultiplied(sf.text.r(), sf.text.g(), sf.text.b(), al) } else { Color32::from_white_alpha(al) };
+                    all(&mut *w, &|x| {
+                        x.rounding = egui::Rounding::same(99.0);
+                        x.bg_stroke = Stroke::new(1.0f32, rim(60));
+                    });
+                    w.inactive.weak_bg_fill = rim(14);
+                    w.hovered.weak_bg_fill = rim(26);
+                    w.hovered.bg_stroke = Stroke::new(1.0f32, rim(120));
+                }
+                _ => {}
+            }
+            // the ready-made themes' fields, dropdowns, search boxes and plain buttons
+            if let Some((round, line, hover_line, fill, hover_fill)) = theme::skin_widgets() {
+                all(&mut *w, &|x| {
+                    if let Some(r) = round {
+                        x.rounding = egui::Rounding::same(r);
+                    }
+                    x.bg_stroke = line;
+                });
+                w.inactive.weak_bg_fill = fill;
+                w.hovered.weak_bg_fill = hover_fill;
+                w.hovered.bg_stroke = hover_line;
+                w.active.weak_bg_fill = hover_fill;
+                w.active.bg_stroke = hover_line;
+                w.open.bg_stroke = hover_line;
+                if let Some(r) = round {
+                    style.visuals.menu_rounding = egui::Rounding::same(r + 2.0);
+                }
+            }
+        }
+        // their faces: buttons in the skin's own type (the game themes'
+        // pixel face; Terminal's console type for everything)
+        if let Some(f) = theme::label_font(14.0) {
+            style.text_styles.insert(egui::TextStyle::Button, f);
+        }
+        if sk == theme::Skin::Terminal {
+            style.text_styles.insert(egui::TextStyle::Body, crate::fonts::mono_font(13.5));
+            style.text_styles.insert(egui::TextStyle::Small, crate::fonts::mono_font(11.5));
+        }
     }
 }
 
@@ -1579,7 +1723,10 @@ pub(crate) mod modern {
             }
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 2.0;
-                ui.label(RichText::new(title_case(title)).font(crate::fonts::sans_bold_font(24.0)).color(TEXT()));
+                // (Modern Plus: Inter ExtraBold, like the share images)
+                // (a theme can bring its own face: the overlay themes', the pixel one)
+                let font = if super::plus() { theme::theme_font(26.0).unwrap_or_else(|| crate::fonts::heavy_font(24.0)) } else { crate::fonts::sans_bold_font(24.0) };
+                ui.label(RichText::new(title_case(title)).font(font).color(theme::title_ink().unwrap_or(TEXT())));
                 if !subtitle.is_empty() {
                     ui.label(RichText::new(subtitle).size(13.5).color(MUTED()));
                 }
@@ -1590,17 +1737,47 @@ pub(crate) mod modern {
 
     pub fn section(ui: &mut Ui, text: &str) {
         ui.add_space(12.0);
-        ui.label(RichText::new(text).font(crate::fonts::sans_bold_font(16.0)).color(TEXT()));
+        if super::plus() {
+            // Modern Plus: a small-caps label, spaced out (the share images' style)
+            match theme::theme_font(16.0) {
+                // (a theme's own face reads better as it is than spaced-out capitals)
+                Some(f) => {
+                    ui.label(RichText::new(text).font(f).color(TEXT()));
+                }
+                None => {
+                    super::caps_label(ui, text, 12.0, theme::blend(MUTED(), TEXT(), 0.35));
+                }
+            }
+        } else {
+            ui.label(RichText::new(text).font(crate::fonts::sans_bold_font(16.0)).color(TEXT()));
+        }
         ui.add_space(6.0);
     }
 
     pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
         let fill = super::take_card_fill();
+        // Aurora glass: see-through cards with a light rim, no shadow
+        // (it would show through)
+        let glass = super::plus() && theme::glass();
+        let (glass_fill, glass_rim) = theme::glass_colours(theme::pal().light);
+        // (Brutal and Pocket: a hard, unblurred shadow down and right)
+        let shadow = match theme::hard_shadow() {
+            Some(c) if super::plus() => egui::epaint::Shadow { offset: egui::vec2(5.0, 5.0), blur: 0.0, spread: 0.0, color: c },
+            _ if glass => egui::epaint::Shadow::NONE,
+            _ => card_shadow(),
+        };
         let shown = egui::Frame::none()
-            .fill(CARD())
-            .rounding(14.0)
-            .stroke(Stroke::new(1.0f32, LINE()))
-            .shadow(card_shadow())
+            .fill(if glass { glass_fill } else { CARD() })
+            .rounding(14.0 * theme::round_scale())
+            .stroke(if glass {
+                Stroke::new(1.0f32, glass_rim)
+            } else if super::plus() && theme::pixel() {
+                // pixel themes: a solid 2px outline
+                Stroke::new(2.0f32, theme::blend(LINE(), TEXT(), 0.45))
+            } else {
+                Stroke::new(1.0f32, LINE())
+            })
+            .shadow(shadow)
             .inner_margin(egui::Margin::same(18.0))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
@@ -1610,6 +1787,12 @@ pub(crate) mod modern {
                 add(ui)
             });
         super::note_card(ui, shown.response.rect);
+        // Broadcast: a stripe in your colour across each card's top, like a
+        // scoreboard plate
+        if theme::skin() == theme::Skin::Broadcast {
+            let cr = shown.response.rect;
+            ui.painter().rect_filled(egui::Rect::from_min_size(cr.min, egui::vec2(cr.width(), 3.0)), 0.0, theme::BUTTON());
+        }
         let r = shown.inner;
         ui.add_space(14.0);
         r
@@ -1837,6 +2020,19 @@ pub(crate) mod modern {
         let hovered = resp.hovered();
         let p = ui.painter();
         let rad = rect.height() / 2.0;
+        if super::plus() && theme::pixel() {
+            // pixel style: a square track with a 2px outline and a square knob
+            p.rect_filled(rect, 0.0, sunken());
+            if t > 0.0 {
+                p.rect_filled(rect, 0.0, (if hovered { primary_hover() } else { primary() }).gamma_multiply(t));
+            }
+            p.rect_stroke(rect.shrink(1.0), 0.0, Stroke::new(2.0f32, theme::blend(CONTROL(), TEXT(), if hovered { 0.9 } else { 0.55 })));
+            let k = rect.height() - 10.0;
+            let x = egui::lerp((rect.left() + 5.0 + k / 2.0)..=(rect.right() - 5.0 - k / 2.0), t);
+            let kr = egui::Rect::from_center_size(egui::pos2(x, rect.center().y), egui::vec2(k, k));
+            p.rect_filled(kr, 0.0, if *on { on_primary() } else { TEXT() });
+            return resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+        }
         p.rect_filled(rect, rad, sunken());
         p.rect_stroke(rect.shrink(0.5), rad, Stroke::new(1.0f32, if hovered { CONTROL() } else { LINE() }));
         if t > 0.0 {
@@ -2032,13 +2228,41 @@ pub(crate) mod modern {
     /// lifted by the tier-1 shadow; it sinks a pixel on press.
     pub fn accent_button(ui: &mut Ui, btn: egui::Button<'_>, min_w: f32) -> Response {
         let slot = ui.painter().add(egui::Shape::Noop);
-        let resp = ui.add(btn.fill(Color32::TRANSPARENT).stroke(Stroke::NONE).rounding(CONTROL_H).min_size(egui::vec2(min_w, CONTROL_H + 2.0)));
+        let pixel = super::plus() && theme::pixel();
+        let skinned = theme::skin() != theme::Skin::Plain;
+        let btn = btn.fill(Color32::TRANSPARENT).stroke(Stroke::NONE).rounding(CONTROL_H).min_size(egui::vec2(min_w, CONTROL_H + 2.0));
+        // Pixel style: the label in the pixel font, like the UI Lab's keys
+        let resp = if skinned {
+            ui.scope(|ui| {
+                if let Some(f) = theme::label_font(14.0) {
+                    ui.style_mut().text_styles.insert(egui::TextStyle::Button, f);
+                }
+                ui.add(btn)
+            })
+            .inner
+        } else {
+            ui.add(btn)
+        };
         let down = resp.is_pointer_button_down_on();
         let press = anim(ui.ctx(), resp.id.with("press"), down, 0.08);
         let ht = anim(ui.ctx(), resp.id.with("hover"), resp.hovered() && !down, QUICK);
+        if pixel {
+            // a pixel key: it drops onto its shadow as it's pressed
+            let shape = if resp.enabled() {
+                theme::pixel_key(resp.rect, primary(), ht, press)
+            } else {
+                egui::Shape::rect_filled(resp.rect, 0.0, primary().gamma_multiply(0.35))
+            };
+            ui.painter().set(slot, shape);
+            if resp.has_focus() {
+                ui.painter().rect_stroke(resp.rect.expand(6.0), 0.0, Stroke::new(2.0f32, SIGNAL.gamma_multiply(0.5)));
+            }
+            return resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+        }
         let r = resp.rect.translate(egui::vec2(0.0, press));
         let mut shapes = vec![];
-        if resp.enabled() {
+        // (the skins bring their own shadows, or none)
+        if resp.enabled() && !skinned {
             shapes.push(shadow_tier(1).as_shape(r, r.height() / 2.0).into());
             if ht > 0.0 {
                 shapes.push(egui::epaint::Shadow { offset: egui::vec2(0.0, 6.0), blur: 16.0, spread: 0.0, color: theme::BUTTON().gamma_multiply(0.3 * ht) }.as_shape(r, r.height() / 2.0).into());

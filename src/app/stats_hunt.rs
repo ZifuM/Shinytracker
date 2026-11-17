@@ -617,9 +617,9 @@ impl App {
                 let x1 = r.max.x - 230.0;
                 if x1 > x0 + 20.0 {
                     let tr = Rect::from_min_max(egui::pos2(x0, r.center().y - 5.0), egui::pos2(x1, r.center().y + 5.0));
-                    p.rect_filled(tr, 5.0, CARD_HOVER());
+                    theme::chart_track(&p, tr, CARD_HOVER());
                     let fw = (tr.width() * s.secs as f32 / longest as f32).max(6.0);
-                    p.rect_filled(Rect::from_min_size(tr.min, egui::vec2(fw, tr.height())), 5.0, if is_live { GREEN } else { ch::faint(PURPLE, 0.8) });
+                    theme::chart_bar(&p, Rect::from_min_size(tr.min, egui::vec2(fw, tr.height())), if is_live { ch::tc(GREEN) } else { ch::faint(ch::tc(PURPLE), 0.8) }, is_live);
                     if is_live {
                         p.text(egui::pos2(tr.min.x + fw + 8.0, r.center().y), Align2::LEFT_CENTER, "LIVE", ch::bold(10.5), ch::ink(GREEN));
                     }

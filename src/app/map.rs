@@ -445,12 +445,12 @@ pub(super) fn tile_edges(tiles: &[(usize, usize)]) -> Vec<(Pos2, Pos2)> {
 /// otherwise Downloads. Returns a line saying where it went.
 fn export_shared_rare(rare: &[Rare]) -> String {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
-    let reset = gamemap::last_reset(now);
+    let reset = crate::rare_calc::day_start(now);
     let mut spots: Vec<(usize, usize, u32)> = rare.iter().filter_map(|r| Some((r.x, r.y, r.species?))).collect();
     spots.sort();
     spots.dedup();
     let body = serde_json::json!({
-        "about": "Rare grass Pokémon seen today, shared with everyone. 'reset' is the daily reset (midnight Central European time) these are for.",
+        "about": "Rare grass Pokémon seen today, shared with everyone. 'reset' is when these patches started (midnight UTC).",
         "reset": reset,
         "spots": spots,
     });
@@ -2519,7 +2519,7 @@ impl App {
                 });
             };
             let reset = format!(
-                "Every rare grass patch today, worked out from the game's own formula. New patches in {}h {:02}m (midnight, Central European time).",
+                "Every rare grass patch today, worked out from the game's own formula. New patches in {}h {:02}m (midnight UTC).",
                 left / 3600,
                 left % 3600 / 60
             );

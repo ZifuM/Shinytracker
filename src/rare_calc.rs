@@ -1,9 +1,10 @@
 //! Rare grass, worked out the way Platinum Together does it, so the app
 //! knows every patch of the day without reading the game.
 //!
-//! - The day: the server's date (Central European time), made into a
-//!   number: yy·372 + mm·31 + dd + 0x5EED, scrambled. So the grass changes
-//!   at the daily reset, midnight CET, for everyone at once.
+//! - The day: the UTC date, made into a number: yy·372 + mm·31 + dd +
+//!   0x5EED, scrambled. So the grass changes at midnight UTC (11am in
+//!   Sydney in summer), for everyone at once. Not at the game's daily reset
+//!   (midnight CET), which is an hour earlier: the patches don't change then.
 //! - Each 3×3 block of tiles gets a number from its position and the day. A
 //!   tall-grass tile is rare grass when that number ends 000–024 (out of
 //!   1000): about 2.5% of the grass each day.
@@ -144,19 +145,20 @@ pub fn spots_on(date: i64, modern: bool) -> Vec<Spot> {
     out
 }
 
-/// The server's date at `now` (days since 1970): the rare grass day.
+/// The rare grass day at `now` (days since 1970): the UTC date, so the
+/// patches change at midnight UTC.
 pub fn today(now: i64) -> i64 {
-    crate::bingo::card_day(now)
+    now.div_euclid(86_400)
 }
 
-/// When today's rare grass started (the daily reset, midnight CET).
+/// When today's rare grass started (midnight UTC).
 pub fn day_start(now: i64) -> i64 {
-    crate::gamemap::last_reset(now)
+    today(now) * 86_400
 }
 
-/// When it changes next (the next reset).
+/// When it changes next (the next midnight UTC).
 pub fn next_change(now: i64) -> i64 {
-    crate::gamemap::next_reset(now)
+    day_start(now) + 86_400
 }
 
 /// Game species number → the wiki's id, for the newer Pokémon (the rest are
@@ -231,6 +233,12 @@ mod tests {
         // 14 Nov 2026 09:00 in Sydney is still 13 Nov on the server (CET).
         let now = 1_794_607_200;
         assert_eq!(crate::worldclock::civil_from_days(today(now)), (2026, 11, 13));
+        // 17 Nov 2026 10:30 in Sydney (23:30 UTC on the 16th): past the CET
+        // reset, but the patches are still the 16th's until 11:00
+        let now = 1_794_871_800;
+        assert_eq!(crate::worldclock::civil_from_days(today(now)), (2026, 11, 16));
+        assert_eq!(next_change(now), 1_794_873_600);
+        assert_eq!(crate::worldclock::civil_from_days(today(1_794_873_600)), (2026, 11, 17));
         assert_eq!(next_change(now) - day_start(now), 86_400);
         assert!(day_start(now) <= now && now < next_change(now));
         assert_eq!(game_species_id(577).is_some(), true);

@@ -356,10 +356,24 @@ pub enum OverlayTheme {
     Holo,
     Broadcast,
     Terminal,
+    // made to go with the Modern Plus app themes
+    Studio,
+    Pokedex,
+    Aurora,
+    FieldGuide,
+    Synthwave,
+    Gold,
+    Companion,
+    Pocket,
+    Candy,
+    Brutal,
+    Liquid,
+    Winter,
+    Spooky,
 }
 
 impl OverlayTheme {
-    pub const ALL: [OverlayTheme; 10] = [
+    pub const ALL: [OverlayTheme; 23] = [
         OverlayTheme::Classic,
         OverlayTheme::Anime,
         OverlayTheme::Glass,
@@ -370,6 +384,19 @@ impl OverlayTheme {
         OverlayTheme::Holo,
         OverlayTheme::Broadcast,
         OverlayTheme::Terminal,
+        OverlayTheme::Studio,
+        OverlayTheme::Pokedex,
+        OverlayTheme::Aurora,
+        OverlayTheme::FieldGuide,
+        OverlayTheme::Synthwave,
+        OverlayTheme::Gold,
+        OverlayTheme::Companion,
+        OverlayTheme::Pocket,
+        OverlayTheme::Candy,
+        OverlayTheme::Brutal,
+        OverlayTheme::Liquid,
+        OverlayTheme::Winter,
+        OverlayTheme::Spooky,
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -383,6 +410,19 @@ impl OverlayTheme {
             OverlayTheme::Holo => "Holo card",
             OverlayTheme::Broadcast => "Broadcast",
             OverlayTheme::Terminal => "Terminal",
+            OverlayTheme::Studio => "Studio",
+            OverlayTheme::Pokedex => "Pokédex",
+            OverlayTheme::Aurora => "Aurora glass",
+            OverlayTheme::FieldGuide => "Field guide",
+            OverlayTheme::Synthwave => "Synthwave",
+            OverlayTheme::Gold => "Gold",
+            OverlayTheme::Companion => "Companion",
+            OverlayTheme::Pocket => "Pocket",
+            OverlayTheme::Candy => "Candy",
+            OverlayTheme::Brutal => "Brutal",
+            OverlayTheme::Liquid => "Liquid",
+            OverlayTheme::Winter => "Winter",
+            OverlayTheme::Spooky => "Spooky",
         }
     }
     pub fn about(self) -> &'static str {
@@ -397,6 +437,19 @@ impl OverlayTheme {
             OverlayTheme::Holo => "A shiny trading card with a moving foil shimmer.",
             OverlayTheme::Broadcast => "An esports-style scoreboard with a match clock and ticker.",
             OverlayTheme::Terminal => "A console window: log lines, ASCII bars and a blinking cursor.",
+            OverlayTheme::Studio => "Deep slate with a violet-to-orange edge and soft gradient pills.",
+            OverlayTheme::Pokedex => "The red Pokédex: a black hinge, an LCD screen for the sprite, pixel type.",
+            OverlayTheme::Aurora => "Dark glass with aurora ribbons rippling over the top.",
+            OverlayTheme::FieldGuide => "A printed guide page: cream paper, a specimen stamp, ruler gauges.",
+            OverlayTheme::Synthwave => "A dusk sky, a striped sun and a neon grid rolling in below.",
+            OverlayTheme::Gold => "Black and gold: a double frame, a medallion and twinkling glints.",
+            OverlayTheme::Companion => "Soft pastels, round everything and little hearts.",
+            OverlayTheme::Pocket => "A Game Boy screen: four greens, a bezel and pixel type.",
+            OverlayTheme::Candy => "White and candy pink: jelly buttons, sprinkles and a lollipop swirl.",
+            OverlayTheme::Brutal => "Cream, thick black outlines, a hard shadow, square everything.",
+            OverlayTheme::Liquid => "Glossy deep blue with a wave rolling along the bottom and bubbles.",
+            OverlayTheme::Winter => "Frosty blue with snow piled on top and icicle gauges.",
+            OverlayTheme::Spooky => "A dark night: cobwebs, a pale moon and tombstone buttons.",
         }
     }
 }
@@ -548,6 +601,53 @@ pub struct Appearance {
     /// actions, tidier Library, Pokédex filters, Rare Grass cards, the next
     /// card set's countdown, shorter tours). Off = Modern exactly as it was.
     pub plus: bool,
+    /// Modern Plus's colour theme (Appearance → Theme). `Yours` keeps your
+    /// own mode and colours; the others bring their own.
+    pub plus_theme: PlusTheme,
+    /// The themes' drifting particles (Winter's snow, Spooky's embers).
+    pub particles: bool,
+    /// The theme in the other mode: a dark theme made light, a light one dark.
+    pub theme_flip: bool,
+    /// Your own colours (Colours card) through the theme, instead of its own.
+    pub theme_colours: bool,
+    /// The theme's own sound pack for clicks, hovers and pages (off by default).
+    pub theme_sounds: bool,
+    /// Their own volume, 0..1 (on the Sounds output device).
+    pub theme_volume: f32,
+    /// The theme's startup animation as the app opens.
+    pub theme_intro: bool,
+    /// The themes' own page transitions (off by default: some find them a lot).
+    pub theme_transitions: bool,
+}
+
+/// A ready-made colour theme for Modern Plus (from the UI Lab).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum PlusTheme {
+    /// Your own mode (light, semi-dark, dark) and colours.
+    #[default]
+    Yours,
+    Studio,
+    Pokedex,
+    Aurora,
+    Field,
+    Synthwave,
+    Gold,
+    /// The Companion's own pink look, as it was.
+    Companion,
+    /// Four greens, pixel type, hard shadows.
+    Pocket,
+    Candy,
+    Brutal,
+    Liquid,
+    Winter,
+    Spooky,
+    // ── matching the overlay themes
+    Sticker,
+    GlassHud,
+    RetroDs,
+    Journal,
+    Broadcast,
+    Terminal,
 }
 
 impl Default for Appearance {
@@ -569,6 +669,14 @@ impl Default for Appearance {
             follow_system: false,
             // (Modern Plus is the default look)
             plus: true,
+            plus_theme: PlusTheme::Yours,
+            particles: true,
+            theme_flip: false,
+            theme_colours: false,
+            theme_sounds: false,
+            theme_volume: 0.4,
+            theme_intro: true,
+            theme_transitions: false,
         }
     }
 }
@@ -636,6 +744,7 @@ pub struct TeamOv {
     /// The Card look: which member (None: the first not done).
     pub focus: Option<usize>,
 }
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]

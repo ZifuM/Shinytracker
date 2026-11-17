@@ -31,7 +31,8 @@ const DOCK_REACH: f32 = 120.0;
 const DOCK_BADGE: f32 = 8.0;
 /// Modern Plus: the hunt capsule's width, and how close (px) to the bottom
 /// of the page the pointer has to come for the hidden dock to slide up.
-const CAP_W: f32 = 250.0;
+// (wide enough for the count beside "Hunt in progress")
+const CAP_W: f32 = 276.0;
 const DOCK_REVEAL: f32 = 70.0;
 /// The gap between the lone hunt pill and the apps button beside it.
 const APPS_GAP: f32 = 8.0;
@@ -454,41 +455,41 @@ impl App {
             p.circle_filled(sc + vec2(13.0, -13.0), 5.0, kit::CARD());
             p.circle_filled(sc + vec2(13.0, -13.0), 3.5, if minimised { theme::HP_YELLOW } else { theme::GREEN });
         }
-        // the count and who it's for
-        let tx = r.min.x + 50.0;
-        let clip = p.with_clip_rect(Rect::from_min_max(pos2(tx, r.min.y), pos2(r.max.x - 128.0, r.max.y)));
-        clip.text(pos2(tx, r.center().y - 7.0), Align2::LEFT_CENTER, theme::thousands(self.cfg.count), crate::fonts::sans_bold_font(15.5), TEXT());
-        clip.text(pos2(tx, r.center().y + 9.0), Align2::LEFT_CENTER, self.target_label(), crate::fonts::sans_font(10.5), MUTED());
         // Start overlay / the overlay menu / bring a minimised overlay back,
         // in words
         let quiet = running && !minimised;
-        let word = if minimised { "Show overlay" } else if running { "Overlay on" } else { "Start overlay" };
-        let g = ui.painter().layout_no_wrap(word.to_string(), crate::fonts::sans_bold_font(12.5), TEXT());
-        let bw = g.size().x + 36.0;
+        let word = if minimised { "Show overlay" } else { "Start overlay" };
+        // (running: the UI Lab's orbit border, "Hunt in progress", turning to
+        // "Stop overlay" under the pointer; sized for the longer of the two)
+        let bw = if quiet {
+            let w = |t: &str| ui.painter().layout_no_wrap(t.to_string(), crate::fonts::sans_bold_font(12.5), TEXT()).size().x;
+            w("Hunt in progress").max(w("Stop overlay")) + 38.0
+        } else {
+            ui.painter().layout_no_wrap(word.to_string(), crate::fonts::sans_bold_font(12.5), TEXT()).size().x + 36.0
+        };
         let br = Rect::from_min_size(pos2(r.max.x - 8.0 - bw, r.center().y - 15.0), vec2(bw, 30.0));
+        // the count and who it's for
+        let tx = r.min.x + 50.0;
+        let clip = p.with_clip_rect(Rect::from_min_max(pos2(tx, r.min.y), pos2(br.min.x - 6.0, r.max.y)));
+        clip.text(pos2(tx, r.center().y - 7.0), Align2::LEFT_CENTER, theme::thousands(self.cfg.count), crate::fonts::sans_bold_font(15.5), TEXT());
+        clip.text(pos2(tx, r.center().y + 9.0), Align2::LEFT_CENTER, self.target_label(), crate::fonts::sans_font(10.5), MUTED());
         let bresp = ui.interact(br, ui.id().with("hunt-capsule-go"), Sense::click());
         let bh = bresp.hovered();
-        let fill = if quiet {
-            theme::blend(kit::CARD(), TEXT(), if bh { 0.18 } else { 0.11 })
-        } else if bh {
-            kit::primary_hover()
-        } else {
-            kit::primary()
-        };
-        p.rect_filled(br, 15.0, fill);
-        let ink = if quiet { TEXT() } else { kit::on_primary() };
-        let c = pos2(br.min.x + 16.0, br.center().y);
         if quiet {
-            p.rect_filled(Rect::from_center_size(c, vec2(8.0, 8.0)), 1.5, ink);
+            let ht = kit::anim(ui.ctx(), bresp.id.with("h"), bh, kit::QUICK);
+            super::launcher::paint_hunt_live(ui, &p, br, 15.0, ht, 12.5);
         } else {
+            p.rect_filled(br, 15.0, if bh { kit::primary_hover() } else { kit::primary() });
+            let ink = kit::on_primary();
+            let c = pos2(br.min.x + 16.0, br.center().y);
             p.add(egui::Shape::convex_polygon(vec![c + vec2(-3.0, -5.0), c + vec2(5.0, 0.0), c + vec2(-3.0, 5.0)], ink, Stroke::NONE));
+            p.text(pos2(br.min.x + 26.0, br.center().y), Align2::LEFT_CENTER, word, crate::fonts::sans_bold_font(12.5), ink);
         }
-        p.text(pos2(br.min.x + 26.0, br.center().y), Align2::LEFT_CENTER, word, crate::fonts::sans_bold_font(12.5), ink);
         super::app_tour::mark(ui.ctx(), "top.start", br);
         let tip = if minimised {
             "The overlay is minimised and still counting. Bring it back."
         } else if running {
-            "The overlay menu: stop the overlay, or change what's open"
+            "Hunt in progress. Click for the overlay menu: stop the overlay, or change what's open"
         } else {
             "Start overlay: pick which overlays to open on top of the game"
         };

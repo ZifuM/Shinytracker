@@ -483,6 +483,12 @@ impl App {
                 OverlayTheme::Broadcast => this.broadcast_ui(ui, ctx, &v),
                 OverlayTheme::Terminal => this.terminal_ui(ui, ctx, &v),
                 OverlayTheme::Classic => {}
+                // the overlays made for the Modern Plus app themes
+                t => {
+                    if let Some(st) = super::ov_plus::style_of(t) {
+                        this.plus_ui(ui, ctx, &v, &st);
+                    }
+                }
             }
             if v.celebrate.is_some() || v.alert.is_some() {
                 ctx.request_repaint();
@@ -868,6 +874,7 @@ pub(super) fn look(theme: OverlayTheme) -> Look {
         OverlayTheme::Broadcast => super::ov_broadcast::look(),
         OverlayTheme::Terminal => super::ov_terminal::look(),
         OverlayTheme::Classic => super::ov_anime::look(),
+        t => super::ov_plus::look_for(t),
     }
 }
 
@@ -1260,6 +1267,7 @@ fn theme_preview(p: &Painter, r: Rect, theme: OverlayTheme) {
         OverlayTheme::Holo => super::ov_holo::preview(p, r, 0.0),
         OverlayTheme::Broadcast => super::ov_broadcast::preview(p, r),
         OverlayTheme::Terminal => super::ov_terminal::preview(p, card),
+        t => super::ov_plus::preview_for(p, r, t),
     }
 }
 

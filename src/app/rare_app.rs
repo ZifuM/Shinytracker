@@ -113,12 +113,12 @@ pub(super) fn day_of(day: i64) -> i64 {
     day
 }
 
-/// Today's server date (CET): the game's rare grass day.
+/// Today's rare grass day (the UTC date).
 pub(super) fn reset_now() -> i64 {
     crate::rare_calc::today(now_unix() as i64)
 }
 
-/// Seconds until the rare grass changes (the daily reset, midnight CET).
+/// Seconds until the rare grass changes (midnight UTC).
 pub(super) fn secs_to_reset() -> i64 {
     let now = now_unix() as i64;
     (crate::rare_calc::next_change(now) - now).max(0)

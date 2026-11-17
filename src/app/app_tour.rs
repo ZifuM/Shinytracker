@@ -165,11 +165,21 @@ static TOURS: &[(&str, &[Step])] = &[
         &[
             s("none", "Welcome to Modern Plus", "The new look moves a few things around. Here's where everything is now."),
             s("nav.tabs", "Your pages are tabs", "Dashboard, App Store, Library, Profile and Stats sit along the top now, instead of a sidebar. The app you're in shows beside them."),
+            s("nav.back", "Back", "Takes you back to the page you were on. Alt+← and your mouse's back button do it too."),
             s("nav.search", "Search", "Search moved up here too. Find an app, a Pokémon, a page or a setting; Ctrl+K jumps here from anywhere."),
             s("top.start", "Your hunt, on the dock", "Your target and count. Start overlay is right here; click the rest to open Shiny Hunter. It stays on screen when the dock tucks away."),
             s("nav.dock", "Your apps, on the dock", "Your apps live on the dock at the bottom now. It tucks away while you work: move to the bottom of the window to bring it back."),
             sa("nav.dockedit", "Edit the dock", "Press the pencil to pin, unpin or close apps, or drag them into the order you like (it's on now, so you can see). Press it again (or Esc) when you're done.", "dock.edit"),
-            s("top.settings", "Settings, all in one place", "Every app's settings, appearance and hotkeys in one window. It opens at the app you're on. Counting and the Overlay moved in here too, and you can switch back to Modern here."),
+            s("top.settings", "Settings, all in one place", "Every app's settings, appearance and hotkeys in one window. It opens at the app you're on. Counting and the Overlay moved in here too. Appearance has themes, and you can switch back to Modern there."),
+        ],
+    ),
+    // ── New in Modern Plus: once, on the Dashboard, for anyone who's had its welcome
+    (
+        "plusnew",
+        &[
+            s("none", "New in Modern Plus", "Two new things since last time: a back button, and themes."),
+            s("nav.back", "A back button", "Takes you back to the page you were on, or out of a Pokédex entry or an app's store page. Alt+← and your mouse's back button do it too; Alt+→ goes forward again."),
+            s("top.settings", "Themes", "Settings → Appearance → Theme: ready-made looks, from Pokédex and Pocket (pixel buttons and icons) to Aurora glass and Spooky, plus themes that match your overlay. Your colours stays the default."),
         ],
     ),
     // ── Shiny Hunter
@@ -576,7 +586,7 @@ fn steps(id: &str) -> &'static [Step] {
         if id == "home" {
             return steps("plushome");
         }
-        if matches!(id, "plushome" | "whatsnew") || COVERS.iter().any(|(t, _)| *t == id) {
+        if matches!(id, "plushome" | "whatsnew" | "plusnew") || COVERS.iter().any(|(t, _)| *t == id) {
             return all;
         }
         // its own version, where the look changes what a step points at
@@ -591,7 +601,7 @@ fn steps(id: &str) -> &'static [Step] {
 /// The page a tour belongs to (the Companion's three all play on the Dashboard).
 fn page_of(id: &str) -> &str {
     match id {
-        "whatsnew" | "plushome" => "home",
+        "whatsnew" | "plushome" | "plusnew" => "home",
         _ => id,
     }
 }
@@ -770,7 +780,12 @@ impl App {
                     // is newer than most of them): What's new, not the welcome
                     let used_before = seen("home") || !self.cfg.apps.last_opened.is_empty() || self.cfg.apps.tours_seen.iter().any(|t| !matches!(t.as_str(), "home" | "plushome" | "whatsnew"));
                     want = if kit::plus() {
-                        "plushome"
+                        // (someone who's had Modern Plus's welcome gets what's new in it)
+                        if seen("plushome") && !seen("plusnew") {
+                            "plusnew"
+                        } else {
+                            "plushome"
+                        }
                     } else if used_before && !seen("whatsnew") {
                         "whatsnew"
                     } else {
@@ -800,7 +815,7 @@ impl App {
                 self.cfg.apps.tours_seen.push(want.to_string());
                 // (a welcome covers what's new; What's new is instead of the welcome)
                 let mut also: Vec<&str> = match want {
-                    "home" | "plushome" => vec!["whatsnew"],
+                    "home" | "plushome" => vec!["whatsnew", "plusnew"],
                     "whatsnew" => vec!["home"],
                     _ => vec![],
                 };

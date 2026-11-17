@@ -448,8 +448,6 @@ impl App {
 /// Lab's orbit border), a soft glow behind the comet and a breathing "live"
 /// dot. With Animations off the comet holds still.
 fn hunt_live_button(ui: &mut egui::Ui, size: egui::Vec2, tip: &str) -> egui::Response {
-    use eframe::egui::{pos2, vec2, Align2, Pos2, Rect, Stroke};
-    use std::f32::consts::{FRAC_PI_2, TAU};
     let (r, resp) = ui.allocate_exact_size(size, Sense::click());
     let resp = resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand);
     if !ui.is_rect_visible(r) {
@@ -457,11 +455,33 @@ fn hunt_live_button(ui: &mut egui::Ui, size: egui::Vec2, tip: &str) -> egui::Res
     }
     let ht = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered(), kit::QUICK);
     let round = kit::btn_round(8.0).min(size.y / 2.0);
-    let p = ui.painter();
+    paint_hunt_live(ui, ui.painter(), r, round, ht, kit::fs(13.5));
+    resp
+}
+
+/// The UI Lab's orbit border on a running hunt's button: a light travelling
+/// round its edge and "Hunt in progress" with a breathing dot; under the
+/// pointer it turns to "Stop overlay" (a click opens the overlay menu, as
+/// before). `ht` is the hover (0..1), `size` the text size. Used on the
+/// Shiny Hunter pages and the dock's hunt.
+pub(super) fn paint_hunt_live(ui: &egui::Ui, p: &egui::Painter, r: egui::Rect, round: f32, ht: f32, size: f32) {
+    use eframe::egui::{pos2, vec2, Pos2, Rect, Stroke};
+    use std::f32::consts::{FRAC_PI_2, TAU};
     let motion = kit::motion();
     let time = ui.input(|i| i.time) as f32;
-    let accent = kit::primary();
-    let accent2 = Color32::from_rgb(244, 114, 182);
+    // the comet in the theme's own colours (its two accents), and the
+    // button's corners and type to match it
+    let (accent, accent2) = match theme::theme_now().filter(|_| kit::plus()) {
+        Some(t) => (kit::primary(), if t.accent2 == kit::primary() { theme::blend(t.accent2, Color32::WHITE, 0.4) } else { t.accent2 }),
+        None => (kit::primary(), Color32::from_rgb(244, 114, 182)),
+    };
+    let round = round * theme::round_scale().min(1.0);
+    let round = match theme::skin() {
+        theme::Skin::Pixel | theme::Skin::Terminal | theme::Skin::Brutal => 0.0,
+        theme::Skin::Broadcast => round.min(3.0),
+        theme::Skin::Journal => round.min(5.0),
+        _ => round,
+    };
     // one turn every 2.4 s, a little quicker on hover
     let turn = if motion { (time / (2.4 - 0.6 * ht)).fract() } else { 0.12 };
 
@@ -530,23 +550,35 @@ fn hunt_live_button(ui: &mut egui::Ui, size: egui::Vec2, tip: &str) -> egui::Res
     // the comet, seen through a 2px border
     let inner = ring(r.shrink(2.0), (round - 2.0).max(0.0));
     p.add(band(&edge, &inner, &comet, &comet));
-    // a breathing "live" dot and the words
-    let font = egui::FontId::new(kit::fs(13.5), kit::strong_family(kit::fs(13.5)));
-    let g = p.layout_no_wrap("Hunt in progress".to_string(), font, TEXT());
-    let dot_r = 3.5;
-    let total = dot_r * 2.0 + 8.0 + g.size().x;
-    let x0 = r.center().x - total / 2.0;
-    let breathe = if motion { 0.55 + 0.45 * (time * 3.0).sin().abs() } else { 1.0 };
-    let live = Color32::from_rgb(52, 211, 153);
-    p.circle_filled(pos2(x0 + dot_r, r.center().y), dot_r + 3.0 * breathe, live.gamma_multiply(0.18 * breathe));
-    p.circle_filled(pos2(x0 + dot_r, r.center().y), dot_r, live);
-    p.galley(pos2(x0 + dot_r * 2.0 + 8.0, r.center().y - g.size().y / 2.0), g, TEXT());
-    let _ = Align2::CENTER_CENTER;
+    // "Hunt in progress" with a breathing live dot, fading to "Stop overlay"
+    // with a stop square under the pointer
+    let font = theme::label_font(size).unwrap_or_else(|| egui::FontId::new(size, kit::strong_family(size)));
+    let clip = p.with_clip_rect(r.shrink(2.0).intersect(p.clip_rect()));
+    let live_a = 1.0 - ht;
+    if live_a > 0.01 {
+        let g = p.layout_no_wrap("Hunt in progress".to_string(), font.clone(), TEXT().gamma_multiply(live_a));
+        let dot_r = 3.5;
+        let total = dot_r * 2.0 + 8.0 + g.size().x;
+        let x0 = r.center().x - total / 2.0;
+        let breathe = if motion { 0.55 + 0.45 * (time * 3.0).sin().abs() } else { 1.0 };
+        let live = Color32::from_rgb(52, 211, 153);
+        clip.circle_filled(pos2(x0 + dot_r, r.center().y), dot_r + 3.0 * breathe, live.gamma_multiply(0.18 * breathe * live_a));
+        clip.circle_filled(pos2(x0 + dot_r, r.center().y), dot_r, live.gamma_multiply(live_a));
+        clip.galley(pos2(x0 + dot_r * 2.0 + 8.0, r.center().y - g.size().y / 2.0), g, TEXT().gamma_multiply(live_a));
+    }
+    if ht > 0.01 {
+        let g = p.layout_no_wrap("Stop overlay".to_string(), font, TEXT().gamma_multiply(ht));
+        let sq = 8.0;
+        let total = sq + 8.0 + g.size().x;
+        let x0 = r.center().x - total / 2.0;
+        let stop = Color32::from_rgb(239, 68, 68);
+        clip.rect_filled(Rect::from_center_size(pos2(x0 + sq / 2.0, r.center().y), vec2(sq, sq)), 1.5, stop.gamma_multiply(ht));
+        clip.galley(pos2(x0 + sq + 8.0, r.center().y - g.size().y / 2.0), g, TEXT().gamma_multiply(ht));
+    }
     if motion {
         // 30 frames a second is plenty for it, and easy on the PC while hunting
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
     }
-    resp
 }
 
 impl App {

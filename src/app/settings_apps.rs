@@ -11,13 +11,13 @@ use crate::theme;
 use eframe::egui::{self, pos2, vec2, Align2, Color32, Rect, RichText, Sense, Stroke};
 
 /// The Companion's own settings, at the top of the list.
-const GENERAL: [Tab; 3] = [Tab::Appearance, Tab::Hotkeys, Tab::Advanced];
+const GENERAL: [Tab; 4] = [Tab::Appearance, Tab::Sounds, Tab::Hotkeys, Tab::Advanced];
 
 /// The section a page's ⚙ opens: its app's (Shiny Hunter's Counting and
 /// Overlay are sections of their own), else Appearance.
 pub(super) fn section_for(t: Tab) -> Tab {
     match t {
-        Tab::Appearance | Tab::Hotkeys | Tab::Advanced | Tab::Counting | Tab::Overlay => t,
+        Tab::Appearance | Tab::Sounds | Tab::Hotkeys | Tab::Advanced | Tab::Counting | Tab::Overlay => t,
         _ => app_of(t).map(app_tab).unwrap_or(Tab::Appearance),
     }
 }
@@ -36,6 +36,7 @@ fn keywords(t: Tab) -> &'static str {
         Tab::Appearance => "theme dark light colour color accent font text size modern plus look dock sidebar pinned tours",
         Tab::Hotkeys => "keys keyboard shortcuts hotkey",
         Tab::Advanced => "updates backup data game folder world counter reading help",
+        Tab::Sounds => "sound sounds volume alert song shiny chime achievement level milestone theme click hover output device speakers custom file",
         Tab::Shiny => "overlay counting count screen log game break session goal timer idle pause autostart sounds sections theme",
         Tab::Cards => "card art download playmat xp bar overlay packs",
         Tab::Gotchi => "pet name frame pearl overlay perch strip",
@@ -214,6 +215,7 @@ impl App {
             Tab::Appearance => self.page_appearance(ui),
             Tab::Hotkeys => self.page_hotkeys(ui),
             Tab::Advanced => self.page_advanced(ui),
+            Tab::Sounds => self.page_sounds(ui),
             Tab::Counting => self.page_counting(ui),
             Tab::Overlay => self.page_overlay(ui),
             t => match app_of(t) {

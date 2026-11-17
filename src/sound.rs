@@ -443,6 +443,293 @@ pub fn devices(refresh: bool) -> Vec<String> {
     l.clone().unwrap_or_default()
 }
 
+// ── the app themes' sound packs (Appearance → Theme → Theme sounds)
+
+/// A UI sound: a button pressed, a button hovered, a page opened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiSnd {
+    Click,
+    Hover,
+    Page,
+}
+
+#[derive(Clone, Copy)]
+enum Wave {
+    Sine,
+    Square,
+    Tri,
+    Saw,
+}
+
+fn osc(w: Wave, ph: f32) -> f32 {
+    let x = ph.fract();
+    match w {
+        Wave::Sine => (x * std::f32::consts::TAU).sin(),
+        Wave::Square => {
+            if x < 0.5 {
+                1.0
+            } else {
+                -1.0
+            }
+        }
+        Wave::Tri => 1.0 - 4.0 * (x - 0.5).abs(),
+        Wave::Saw => 2.0 * x - 1.0,
+    }
+}
+
+/// Adds a note into `out` from `at` seconds for `len`: its pitch gliding
+/// from `f0` to `f1`, a quick attack and a decay of `tau` seconds.
+#[allow(clippy::too_many_arguments)]
+fn tone(out: &mut Vec<f32>, at: f32, len: f32, f0: f32, f1: f32, w: Wave, amp: f32, tau: f32) {
+    let rate = TEAR_RATE as f32;
+    let start = (at * rate) as usize;
+    let n = (len * rate) as usize;
+    if out.len() < start + n {
+        out.resize(start + n, 0.0);
+    }
+    let mut ph = 0.0f32;
+    for i in 0..n {
+        let t = i as f32 / rate;
+        let u = t / len;
+        let f = f0 * (f1 / f0).powf(u);
+        ph += f / rate;
+        let tail = ((len - t) / 0.006).min(1.0);
+        let env = (t / 0.002).min(1.0) * (-t / tau).exp() * tail;
+        out[start + i] += osc(w, ph) * amp * env;
+    }
+}
+
+/// A bell: a sine and its bright, slightly out-of-tune partial.
+fn bell(out: &mut Vec<f32>, at: f32, f: f32, amp: f32, tau: f32) {
+    tone(out, at, tau * 4.0, f, f, Wave::Sine, amp, tau);
+    tone(out, at, tau * 2.0, f * 2.76, f * 2.76, Wave::Sine, amp * 0.35, tau * 0.5);
+}
+
+/// Adds filtered noise: its band moving from `fc0` to `fc1` Hz.
+#[allow(clippy::too_many_arguments)]
+fn hiss(out: &mut Vec<f32>, at: f32, len: f32, fc0: f32, fc1: f32, q: f32, amp: f32, tau: f32, seed: u32) {
+    let rate = TEAR_RATE as f32;
+    let start = (at * rate) as usize;
+    let n = (len * rate) as usize;
+    if out.len() < start + n {
+        out.resize(start + n, 0.0);
+    }
+    let mut rand = noise(seed);
+    let mut b = Band::new();
+    for i in 0..n {
+        let t = i as f32 / rate;
+        let u = t / len;
+        let fc = fc0 + (fc1 - fc0) * u;
+        let tail = ((len - t) / 0.008).min(1.0);
+        let env = (t / 0.003).min(1.0) * (-t / tau).exp() * tail;
+        out[start + i] += b.run(rand() * env, fc, q) * amp * 2.0;
+    }
+}
+
+/// One theme pack's sound. `pack` is `theme::sound_pack()`.
+fn ui_sound(pack: u8, k: UiSnd) -> Vec<f32> {
+    use UiSnd::*;
+    use Wave::*;
+    let mut o = Vec::new();
+    let v = &mut o;
+    match (pack, k) {
+        // 1 pixel: 8-bit blips and a little arpeggio
+        (1, Click) => {
+            tone(v, 0.0, 0.04, 880.0, 880.0, Square, 0.3, 0.05);
+            tone(v, 0.03, 0.05, 1320.0, 1320.0, Square, 0.3, 0.05);
+        }
+        (1, Hover) => tone(v, 0.0, 0.025, 1760.0, 1760.0, Square, 0.25, 0.03),
+        (1, Page) => {
+            for (i, f) in [523.0, 659.0, 784.0, 1047.0].iter().enumerate() {
+                tone(v, i as f32 * 0.045, 0.06, *f, *f, Square, 0.3, 0.06);
+            }
+        }
+        // 2 sticker: bubbly pops
+        (2, Click) => tone(v, 0.0, 0.07, 300.0, 900.0, Sine, 0.8, 0.03),
+        (2, Hover) => tone(v, 0.0, 0.035, 900.0, 1300.0, Sine, 0.6, 0.012),
+        (2, Page) => {
+            tone(v, 0.0, 0.07, 400.0, 1000.0, Sine, 0.8, 0.03);
+            tone(v, 0.07, 0.08, 600.0, 1400.0, Sine, 0.8, 0.03);
+        }
+        // 3 field journal: pencil ticks and a paper page turning
+        (3, Click) => {
+            hiss(v, 0.0, 0.04, 3200.0, 2600.0, 2.0, 1.0, 0.01, 3);
+            hiss(v, 0.012, 0.03, 1800.0, 1800.0, 2.5, 0.5, 0.008, 4);
+        }
+        (3, Hover) => hiss(v, 0.0, 0.03, 5000.0, 4200.0, 1.5, 0.7, 0.01, 5),
+        (3, Page) => {
+            hiss(v, 0.0, 0.24, 800.0, 4000.0, 0.7, 1.0, 0.12, 6);
+            hiss(v, 0.19, 0.06, 2500.0, 2000.0, 1.5, 0.7, 0.015, 7);
+        }
+        // 4 broadcast: crisp ticks, a whoosh and a news chime
+        (4, Click) => {
+            tone(v, 0.0, 0.03, 1500.0, 1500.0, Tri, 0.7, 0.01);
+            hiss(v, 0.0, 0.015, 6000.0, 6000.0, 1.0, 0.4, 0.004, 8);
+        }
+        (4, Hover) => tone(v, 0.0, 0.025, 2200.0, 2200.0, Sine, 0.5, 0.008),
+        (4, Page) => {
+            hiss(v, 0.0, 0.18, 600.0, 5000.0, 0.8, 0.8, 0.09, 9);
+            bell(v, 0.12, 1046.0, 0.5, 0.12);
+            bell(v, 0.17, 1568.0, 0.5, 0.15);
+        }
+        // 5 terminal: keyboard clacks and a beep
+        (5, Click) => {
+            hiss(v, 0.0, 0.025, 2500.0, 2500.0, 3.0, 1.0, 0.004, 10);
+            tone(v, 0.0, 0.025, 180.0, 160.0, Sine, 0.4, 0.006);
+        }
+        (5, Hover) => hiss(v, 0.0, 0.015, 6000.0, 6000.0, 2.0, 0.6, 0.004, 11),
+        (5, Page) => {
+            tone(v, 0.0, 0.07, 1000.0, 1000.0, Square, 0.25, 0.3);
+            tone(v, 0.1, 0.07, 1000.0, 1000.0, Square, 0.25, 0.3);
+        }
+        // 6 glass HUD: glassy bells
+        (6, Click) => bell(v, 0.0, 2093.0, 0.6, 0.06),
+        (6, Hover) => tone(v, 0.0, 0.05, 3136.0, 3136.0, Sine, 0.4, 0.015),
+        (6, Page) => {
+            for (i, f) in [1568.0, 2093.0, 2637.0].iter().enumerate() {
+                bell(v, i as f32 * 0.035, *f, 0.4, 0.12);
+            }
+        }
+        // 7 companion: cute chirps
+        (7, Click) => tone(v, 0.0, 0.06, 1200.0, 1800.0, Sine, 0.7, 0.03),
+        (7, Hover) => tone(v, 0.0, 0.03, 2000.0, 2200.0, Sine, 0.5, 0.01),
+        (7, Page) => {
+            tone(v, 0.0, 0.07, 1000.0, 1600.0, Sine, 0.7, 0.03);
+            tone(v, 0.08, 0.08, 1400.0, 2200.0, Sine, 0.7, 0.035);
+        }
+        // 9 aurora glass: soft shimmer
+        (9, Click) => {
+            bell(v, 0.0, 1318.0, 0.4, 0.08);
+            bell(v, 0.0, 1975.0, 0.3, 0.08);
+        }
+        (9, Hover) => tone(v, 0.0, 0.05, 2637.0, 2637.0, Sine, 0.35, 0.02),
+        (9, Page) => {
+            for (i, f) in [784.0, 1175.0, 1568.0, 2349.0].iter().enumerate() {
+                tone(v, i as f32 * 0.045, 0.5, *f, *f, Sine, 0.3, 0.2);
+            }
+        }
+        // 10 field guide: wooden tocks
+        (10, Click) => {
+            tone(v, 0.0, 0.06, 650.0, 520.0, Sine, 0.9, 0.012);
+            hiss(v, 0.0, 0.012, 1200.0, 1200.0, 3.0, 0.5, 0.003, 12);
+        }
+        (10, Hover) => tone(v, 0.0, 0.025, 1000.0, 950.0, Sine, 0.5, 0.006),
+        (10, Page) => {
+            tone(v, 0.0, 0.06, 520.0, 450.0, Sine, 0.9, 0.014);
+            tone(v, 0.09, 0.06, 780.0, 690.0, Sine, 0.9, 0.014);
+        }
+        // 11 synthwave: synth stabs and a laser sweep
+        (11, Click) => {
+            tone(v, 0.0, 0.08, 440.0, 220.0, Saw, 0.25, 0.03);
+            tone(v, 0.0, 0.08, 441.0, 221.0, Tri, 0.3, 0.03);
+        }
+        (11, Hover) => tone(v, 0.0, 0.025, 1320.0, 1320.0, Square, 0.15, 0.015),
+        (11, Page) => {
+            for f in [220.0, 277.0, 330.0] {
+                tone(v, 0.0, 0.28, f, f, Saw, 0.15, 0.12);
+            }
+            tone(v, 0.0, 0.2, 880.0, 220.0, Sine, 0.4, 0.1);
+        }
+        // 12 gold: coins
+        (12, Click) => {
+            tone(v, 0.0, 0.05, 988.0, 988.0, Sine, 0.5, 0.03);
+            bell(v, 0.045, 1319.0, 0.5, 0.06);
+        }
+        (12, Hover) => tone(v, 0.0, 0.04, 2637.0, 2637.0, Sine, 0.3, 0.015),
+        (12, Page) => {
+            for (i, f) in [1319.0, 1760.0, 2637.0].iter().enumerate() {
+                bell(v, i as f32 * 0.06, *f, 0.45, 0.08);
+            }
+        }
+        // 13 candy: bubble pops
+        (13, Click) => tone(v, 0.0, 0.05, 500.0, 1500.0, Sine, 0.8, 0.02),
+        (13, Hover) => tone(v, 0.0, 0.03, 1500.0, 2000.0, Sine, 0.5, 0.01),
+        (13, Page) => {
+            for (i, f) in [500.0, 700.0, 950.0].iter().enumerate() {
+                tone(v, i as f32 * 0.05, 0.05, *f, *f * 3.0, Sine, 0.7, 0.02);
+            }
+        }
+        // 14 brutal: hard thunks
+        (14, Click) => {
+            tone(v, 0.0, 0.05, 130.0, 110.0, Square, 0.35, 0.02);
+            hiss(v, 0.0, 0.02, 1500.0, 1500.0, 1.0, 0.8, 0.006, 13);
+        }
+        (14, Hover) => tone(v, 0.0, 0.02, 240.0, 240.0, Square, 0.2, 0.01),
+        (14, Page) => {
+            tone(v, 0.0, 0.1, 90.0, 70.0, Square, 0.4, 0.05);
+            hiss(v, 0.0, 0.05, 900.0, 600.0, 1.0, 0.9, 0.02, 14);
+        }
+        // 15 liquid: water drops
+        (15, Click) => tone(v, 0.0, 0.035, 700.0, 1600.0, Sine, 0.8, 0.018),
+        (15, Hover) => tone(v, 0.0, 0.025, 1200.0, 2000.0, Sine, 0.45, 0.01),
+        (15, Page) => {
+            for (i, (a, b)) in [(600.0, 1400.0), (800.0, 1800.0), (1000.0, 2200.0)].iter().enumerate() {
+                tone(v, [0.0, 0.06, 0.11][i], 0.04, *a, *b, Sine, 0.7, 0.018);
+            }
+        }
+        // 16 winter: ice chimes and a breath of wind
+        (16, Click) => bell(v, 0.0, 2637.0, 0.5, 0.07),
+        (16, Hover) => tone(v, 0.0, 0.035, 3520.0, 3520.0, Sine, 0.3, 0.012),
+        (16, Page) => {
+            for (i, f) in [2093.0, 2637.0, 3136.0].iter().enumerate() {
+                bell(v, i as f32 * 0.05, *f, 0.35, 0.12);
+            }
+            hiss(v, 0.0, 0.35, 5000.0, 7000.0, 1.0, 0.12, 0.2, 15);
+        }
+        // 17 spooky: hollow knocks and an eerie slide
+        (17, Click) => {
+            tone(v, 0.0, 0.09, 170.0, 120.0, Sine, 0.9, 0.03);
+            hiss(v, 0.0, 0.02, 700.0, 700.0, 3.0, 0.5, 0.008, 16);
+        }
+        (17, Hover) => tone(v, 0.0, 0.06, 330.0, 300.0, Tri, 0.35, 0.03),
+        (17, Page) => {
+            tone(v, 0.0, 0.5, 440.0, 400.0, Tri, 0.3, 0.3);
+            tone(v, 0.05, 0.5, 523.0, 466.0, Tri, 0.25, 0.3);
+        }
+        // 8 studio, 0 plain: a soft, neutral tap and a whoosh
+        (8, Click) | (_, Click) => {
+            tone(v, 0.0, 0.04, 1300.0, 1000.0, Sine, 0.7, 0.01);
+            hiss(v, 0.0, 0.015, 3500.0, 3500.0, 1.0, 0.35, 0.004, 17);
+        }
+        (_, Hover) => tone(v, 0.0, 0.025, 1700.0, 1700.0, Sine, 0.4, 0.006),
+        (_, Page) => {
+            hiss(v, 0.0, 0.16, 500.0, 2800.0, 0.6, 0.8, 0.07, 18);
+            tone(v, 0.08, 0.15, 660.0, 660.0, Sine, 0.2, 0.08);
+        }
+    }
+    o
+}
+
+static UI_CACHE: Mutex<Vec<(u8, UiSnd, u32, &'static [u8])>> = Mutex::new(Vec::new());
+
+/// Play one of a theme pack's sounds (at the Sounds volume and output).
+pub fn play_ui(pack: u8, k: UiSnd, volume: f32, device: &str) {
+    let vkey = (volume.clamp(0.0, 1.0) * 100.0).round() as u32;
+    if vkey == 0 {
+        return;
+    }
+    let bytes: &'static [u8] = {
+        let Ok(mut cache) = UI_CACHE.lock() else { return };
+        match cache.iter().find(|(p, s, v, _)| *p == pack && *s == k && *v == vkey) {
+            Some((_, _, _, b)) => b,
+            None => {
+                let buf = ui_sound(pack, k);
+                let peak = buf.iter().fold(0.0f32, |m, x| m.max(x.abs())).max(0.001);
+                // (hovers quiet, clicks and pages a little louder)
+                let loud = match k {
+                    UiSnd::Hover => 0.16,
+                    UiSnd::Click => 0.38,
+                    UiSnd::Page => 0.34,
+                };
+                let b: &'static [u8] = Box::leak(wav_from(&buf, (vkey as f32 / 100.0) * loud / peak).into_boxed_slice());
+                cache.push((pack, k, vkey, b));
+                b
+            }
+        }
+    };
+    imp::play(bytes, device);
+}
+
 #[cfg(windows)]
 mod imp {
     use std::ptr::null_mut;
@@ -608,6 +895,17 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn theme_sounds_are_short_and_not_silent() {
+        for pack in 0..18u8 {
+            for k in [super::UiSnd::Click, super::UiSnd::Hover, super::UiSnd::Page] {
+                let b = super::ui_sound(pack, k);
+                assert!(!b.is_empty() && b.len() < super::TEAR_RATE as usize * 2, "{pack} {k:?}");
+                assert!(b.iter().any(|x| x.abs() > 0.01), "{pack} {k:?} silent");
+            }
+        }
+    }
+
     #[test]
     fn card_sounds_are_short_and_not_silent() {
         for k in [super::CardSnd::Flip, super::CardSnd::Flick, super::CardSnd::Slide, super::CardSnd::Riffle(11)] {

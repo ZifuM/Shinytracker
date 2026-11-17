@@ -1204,6 +1204,27 @@ impl App {
 
     // ───────────────────────────── sound settings ─────────────────────────────
 
+    /// Settings → Sounds: every sound in one place.
+    pub(super) fn page_sounds(&mut self, ui: &mut egui::Ui) {
+        kit::page_header(ui, "SOUNDS", "Every sound in one place: the shiny alert and other chimes, your own sound files and alert song, the theme's sounds, and where they all play.");
+        self.sounds_card(ui);
+        ui.add_space(18.0);
+        kit::section(ui, "Theme sounds");
+        kit::card(ui, |ui| {
+            if self.cfg.appearance.plus {
+                let before = self.cfg.appearance.clone();
+                self.theme_sounds_block(ui);
+                if self.cfg.appearance != before {
+                    self.dirty = true;
+                }
+            } else {
+                ui.label(RichText::new("Each Modern Plus theme has its own sounds for clicks, hovers and pages. Turn on Modern Plus in Appearance to use them.").size(kit::fs(12.5)).color(MUTED()));
+            }
+            ui.add_space(6.0);
+            ui.label(RichText::new("Each theme's startup animation always plays its sound, at this volume.").size(kit::fs(12.0)).color(MUTED()));
+        });
+    }
+
     pub(super) fn sounds_card(&mut self, ui: &mut egui::Ui) {
         kit::section(ui, "Sounds");
         kit::card(ui, |ui| {

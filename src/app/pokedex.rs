@@ -1162,10 +1162,9 @@ impl App {
                 let sw = if wide { stage_w } else { inner };
                 let (stage, resp) = ui.allocate_exact_size(vec2(sw, 260.0), Sense::click());
                 let p = ui.painter_at(stage.expand(2.0));
-                p.add(theme::gradient_rect(stage, [20.0; 4], theme::blend(c1, Color32::BLACK, 0.15), theme::blend(c2, Color32::BLACK, 0.35)));
                 let sc = pos2(stage.center().x, stage.min.y + 112.0);
-                p.circle_filled(sc, 86.0, Color32::from_white_alpha(10));
-                p.circle_filled(sc, 62.0, Color32::from_white_alpha(12));
+                // (each theme draws the stage its own way)
+                theme::art_stage(&p, stage, 20.0, c1, c2, sc, 86.0);
                 if let Some(sp) = sp {
                     self.draw_sprite_centered(&p, sp, shiny, sc, vec2(150.0, 150.0));
                 }

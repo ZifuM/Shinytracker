@@ -296,8 +296,14 @@ impl App {
         }
         ui.add_space(18.0);
         self.ov_behaviour_card(ui);
-        ui.add_space(4.0);
-        self.sounds_card(ui);
+        // (its sounds now live in Settings → Sounds, with every other sound)
+        ui.add_space(14.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("The overlay's shiny alert, chimes and your own sound files are in Sounds.").size(kit::fs(12.5)).color(MUTED()));
+            if ui.button("🔊  Open Sounds").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                self.open_settings(super::Tab::Sounds);
+            }
+        });
     }
 
     fn ov_look_card(&mut self, ui: &mut egui::Ui) {

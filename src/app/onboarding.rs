@@ -38,12 +38,12 @@ impl Step {
         match self {
             Step::Welcome => ("👋", "Welcome", "Hello, trainer"),
             Step::Apps => ("🏪", "Your apps", "What you play for"),
-            Step::WhatsNew => ("✨", "What's new", "In version 0.5"),
+            Step::WhatsNew => ("✨", "What's new", concat!("In version ", env!("CARGO_PKG_VERSION"))),
             Step::Game => ("🎮", "Your game", "How counting works"),
             Step::Target => ("🎯", "Your target", "What you're hunting"),
             Step::Odds => ("🎲", "Method & odds", "Your shiny chances"),
             Step::Overlay => ("🖥", "The overlay", "A counter on the game"),
-            Step::Look => ("🎨", "Your look", "Mode and colours"),
+            Step::Look => ("🎨", "Your look", "Theme, sounds, motion"),
             Step::Done => ("🏁", "All set", "Start hunting"),
         }
     }
@@ -67,9 +67,11 @@ impl App {
 
     fn tour_steps(&self) -> Vec<Step> {
         if self.returning() {
-            vec![Step::WhatsNew, Step::Game, Step::Look, Step::Overlay, Step::Target, Step::Odds, Step::Done]
+            vec![Step::WhatsNew, Step::Look, Step::Game, Step::Overlay, Step::Odds, Step::Done]
         } else {
-            vec![Step::Welcome, Step::Apps, Step::Game, Step::Look, Step::Overlay, Step::Target, Step::Odds, Step::Done]
+            // (the look comes first, so the rest of the tour is in it; picking
+            // a target is left to the Shiny Hunter)
+            vec![Step::Welcome, Step::Look, Step::Apps, Step::Game, Step::Overlay, Step::Odds, Step::Done]
         }
     }
 
@@ -342,17 +344,17 @@ impl App {
 
     fn tour_whats_new(&mut self, ui: &mut egui::Ui) {
         let hi = if self.cfg.trainer_name.trim().is_empty() { "Welcome back!".to_string() } else { format!("Welcome back, {}!", self.cfg.trainer_name.trim()) };
-        heading(ui, &hi, "Version 0.5 is a big one. Here's what's new, then a quick check of your setup. Your hunts and settings are all kept.");
+        heading(ui, &hi, "Here's what's new, then a quick check of your setup. Your hunts, stats and settings are all kept.");
         feature_grid(
             ui,
             2,
             &[
-                ("✨", kit::C_VIOLET, "A fresh look", "A cleaner design with softer controls, new fonts and a proper light mode."),
-                ("🖼", kit::C_PINK, "10 overlay themes", "Sticker, Glass, Retro DS, Neon, Pokétch, Field journal, Holo card, Broadcast and Terminal."),
-                ("🔔", kit::C_ORANGE, "Themed pop-ups", "Achievements, level ups and notices now match your overlay's theme."),
-                ("📊", kit::C_CYAN, "A new Stats page", "Luck, pace, habits and records as dashboards, plus your recent runs."),
-                ("📸", kit::C_GOLD, "Share in style", "Hunt cards, trainer cards and rare grass posters in 10 looks."),
-                ("🗺", kit::C_GREEN, "A friendlier Map", "Floating search, layers, a key and today's rare grass in reach."),
+                ("✨", kit::C_VIOLET, "Modern Plus", "Your pages as tabs along the top, and your apps on a dock at the bottom that tucks away while you play."),
+                ("🎨", kit::C_PINK, "Themes", "Ready-made looks, from Pokédex and Pocket to Aurora glass, plus ones that match your overlay. Or keep your own colours."),
+                ("⚙", kit::C_ORANGE, "One Settings window", "Every app's settings in one place, behind the ⚙ at the top. It opens at the app you're on."),
+                ("‹", kit::C_CYAN, "A back button", "Back to the page you were on. Alt+← and your mouse's back button work too."),
+                ("🏪", kit::C_GOLD, "Apps", "Get the apps you want from the App Store: mini games, the Pokédex, the Map and more."),
+                ("📌", kit::C_GREEN, "Your dock", "Pin your favourite apps and drag them into your own order."),
             ],
         );
     }
@@ -592,7 +594,52 @@ impl App {
     }
 
     fn tour_look(&mut self, ui: &mut egui::Ui) {
-        heading(ui, "Make it yours", "Light or dark, and your colours. They're used for this window, the overlay and your share images.");
+        heading(ui, "Make it yours", "Pick a theme: press ▶ on any one to watch its startup animation, and try its sounds below. It's used for this window (this tour too), the overlay and your share images.");
+        // Modern Plus: a ready-made theme first (Your colours keeps the rest below)
+        if self.cfg.appearance.plus {
+            section(ui, "Theme");
+            let tw = ((ui.available_width() - 30.0) / 4.0).floor().min(170.0);
+            let mut pick = None;
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(10.0, 10.0);
+                for t in theme::PLUS_THEMES {
+                    let mut c = self.cfg.appearance.clone();
+                    c.plus_theme = t;
+                    let lk = theme::look_of(&c);
+                    let on = self.cfg.appearance.plus_theme == t;
+                    let r = super::appearance_page::theme_tile(ui, tw, super::appearance_page::theme_name(t), &lk, theme::theme_def(t), on);
+                    // ▶ plays that theme's startup animation
+                    super::appearance_page::tile_play(ui, &r, &c);
+                    if r.clicked() {
+                        pick = Some(t);
+                    }
+                }
+            });
+            if let Some(t) = pick {
+                self.cfg.appearance.plus_theme = t;
+                self.dirty = true;
+            }
+            ui.add_space(12.0);
+            // its light or dark, your colours, motion, startup animation and sounds
+            section(ui, "Theme options");
+            let before = self.cfg.appearance.clone();
+            self.theme_options(ui, true);
+            if self.cfg.appearance != before {
+                self.dirty = true;
+            }
+            ui.add_space(16.0);
+        }
+        let themed = super::appearance_page::themed(&self.cfg.appearance);
+        let mine = self.cfg.appearance.theme_colours;
+        if themed && !mine {
+            ui.label(RichText::new("Your theme brings its own colours. Turn on Use my colours above, or pick Your colours, to choose them yourself.").size(12.5).color(MUTED()));
+            ui.add_space(10.0);
+        }
+        ui.add_enabled_ui(!themed || mine, |ui| self.tour_look_own(ui));
+    }
+
+    /// Light or dark and your own colours (with Your colours as the theme).
+    fn tour_look_own(&mut self, ui: &mut egui::Ui) {
         section(ui, "Mode");
         let w = ((ui.available_width() - 24.0) / 3.0).floor().min(220.0);
         ui.horizontal(|ui| {
@@ -679,16 +726,22 @@ impl App {
                 OverlaySize::Bar => "Bar",
             })
         };
-        let look = match self.cfg.appearance.mode {
-            UiMode::Light => "Light",
-            UiMode::SemiDark => "Semi-dark",
-            UiMode::Dark => "Dark",
+        let look = if super::appearance_page::themed(&self.cfg.appearance) {
+            format!("{} theme", super::appearance_page::theme_name(self.cfg.appearance.plus_theme))
+        } else {
+            match self.cfg.appearance.mode {
+                UiMode::Light => "Light",
+                UiMode::SemiDark => "Semi-dark",
+                UiMode::Dark => "Dark",
+            }
+            .to_string()
         };
-        let rows: [(Step, &str, egui::Color32, &str, String); 5] = [
-            (Step::Game, "🎮", kit::C_GREEN, "Counting", counting.to_string()),
+        // (the target is picked in the Shiny Hunter, not here)
+        let _ = target;
+        let rows: [(Step, &str, egui::Color32, &str, String); 4] = [
             (Step::Look, "🎨", kit::C_ORANGE, "Look", look.to_string()),
+            (Step::Game, "🎮", kit::C_GREEN, "Counting", counting.to_string()),
             (Step::Overlay, "🖥", kit::C_VIOLET, "Overlay", overlay),
-            (Step::Target, "🎯", kit::C_PINK, "Target", target),
             (Step::Odds, "🎲", kit::C_GOLD, "Method & odds", odds),
         ];
         let mut go = None;

@@ -132,7 +132,7 @@ impl App {
         let mut sort = self.cfg.runs_sort.min(3);
         let mut list = self.cfg.runs_list;
         let mut query = std::mem::take(&mut self.setup.runs_query);
-        ui.horizontal(|ui| {
+        let runs_head = ui.horizontal(|ui| {
             ui.label(RichText::new("Your runs").font(ch::bold(18.0)).color(TEXT()));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
@@ -143,7 +143,17 @@ impl App {
                     self.open_log(None);
                 }
             });
-        });
+        })
+        .response
+        .rect;
+        // (from the Hunt page's Resume a run: glide down to the list, over a few
+        // frames so it lands once the page has its height)
+        let jump = egui::Id::new("runs-jump");
+        if let Some(n) = ui.ctx().data(|d| d.get_temp::<u8>(jump)) {
+            ui.scroll_to_rect(runs_head.expand2(egui::vec2(0.0, 12.0)), Some(egui::Align::TOP));
+            ui.ctx().data_mut(|d| if n <= 1 { d.remove::<u8>(jump) } else { d.insert_temp(jump, n - 1) });
+            ui.ctx().request_repaint();
+        }
         ui.add_space(10.0);
         // width of the sort box and view switch, measured last frame
         let rest_id = egui::Id::new("runs-tools-rest");

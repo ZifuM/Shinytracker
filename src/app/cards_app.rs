@@ -86,6 +86,9 @@ pub(super) struct Opening {
     /// When the front card was turned over (None: still face down, waiting
     /// for a click).
     pub flipped: Option<Instant>,
+    /// "Show them all": the cards flip and go down by themselves, a little
+    /// quicker than clicking (when the last step was).
+    pub auto: Option<Instant>,
 }
 
 enum Pic {
@@ -1530,6 +1533,7 @@ impl App {
             slide: None,
             since: Instant::now(),
             flipped: None,
+            auto: None,
         });
         self.setup.cards.holo_played = false;
         self.setup.cards.out_played = false;
@@ -2082,6 +2086,7 @@ impl App {
         let mut next = false;
         let mut flip_now = false;
         let mut skip = false;
+        let mut start_auto = false;
         let mut done = false;
         let mut again = false;
         let caption = |p: &egui::Painter, y: f32, a: &str, b: &str| {
@@ -2306,9 +2311,33 @@ impl App {
                         _ => {}
                     }
                 }
+                // "Show them all": it clicks through for you, a little quicker
+                // (each card turns over, shows a moment, and goes on the pile;
+                // the last one, the rare, gets a longer look); once it's going,
+                // the same button skips to the end
+                let auto = self.setup.cards.opening.as_ref().and_then(|o| o.auto);
+                if let Some(a0) = auto {
+                    match flipped {
+                        None if a0.elapsed().as_secs_f32() > 0.2 => flip_now = true,
+                        Some(f) => {
+                            let last = at + 1 >= order.len();
+                            let dwell = if last { FLIP_SECS + 0.9 } else { FLIP_SECS * 0.6 + 0.25 };
+                            if f.elapsed().as_secs_f32() > dwell {
+                                next = true;
+                            }
+                        }
+                        _ => {}
+                    }
+                    ui.ctx().request_repaint();
+                }
                 let sr = Rect::from_min_size(pos2(area.max.x - 150.0, area.min.y + 16.0), vec2(134.0, 32.0));
-                if pill_button(ui, sr, "Show them all  ›", false, "cards-skip").clicked() {
-                    skip = true;
+                let label = if auto.is_some() { "Skip to the end  ›" } else { "Show them all  ›" };
+                if pill_button(ui, sr, label, false, "cards-skip").clicked() {
+                    if auto.is_some() {
+                        skip = true;
+                    } else {
+                        start_auto = true;
+                    }
                 }
             }
             Stage::Summary => {
@@ -2441,6 +2470,13 @@ impl App {
                 }
                 // the click on the stack turns the first card over
                 op.flipped = (s == Stage::Reveal).then(Instant::now);
+            }
+            if start_auto {
+                op.auto = Some(Instant::now());
+            }
+            // (each step it takes by itself starts the clock for the next)
+            if (flip_now || next) && op.auto.is_some() {
+                op.auto = Some(Instant::now());
             }
             if flip_now {
                 op.flipped = Some(Instant::now());

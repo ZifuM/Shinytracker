@@ -395,29 +395,28 @@ impl App {
             let c1 = types.first().map(|t| super::pokedex::type_color(t)).unwrap_or(BOX_COL);
             (c1, types.get(1).map(|t| super::pokedex::type_color(t)).unwrap_or(theme::blend(c1, Color32::BLACK, 0.35)))
         };
-        p.add(theme::gradient_rect(stage, [12.0; 4], theme::blend(c1, Color32::BLACK, 0.15), theme::blend(c2, Color32::BLACK, 0.35)));
         let sc = stage.center();
         let big = (stage_h * 0.36).floor();
-        p.circle_filled(sc, big, Color32::from_white_alpha(10));
-        p.circle_filled(sc, big * 0.72, Color32::from_white_alpha(12));
+        // (each theme draws the stage its own way)
+        theme::art_stage(&p, stage, 12.0, c1, c2, sc, big);
         if m.egg {
             p.circle_filled(sc, big * 0.55, Color32::from_rgb(244, 238, 216));
             p.circle_stroke(sc, big * 0.55, Stroke::new(2.0f32, Color32::from_rgb(160, 150, 120)));
         } else if let Some(s) = &sp {
             self.draw_sprite_centered(&p, s, m.shiny(), sc, vec2(stage_h * 0.66, stage_h * 0.66));
         } else {
-            p.text(sc, Align2::CENTER_CENTER, "?", ch::heavy(44.0), Color32::from_white_alpha(200));
+            p.text(sc, Align2::CENTER_CENTER, "?", ch::heavy(44.0), theme::stage_ink(c1, 200));
         }
         if m.shiny() && !m.egg {
             theme::sparkle(&p, sc + vec2(big * 0.95, -big * 0.8), 7.0, theme::GOLD);
             theme::sparkle(&p, sc + vec2(-big, big * 0.55), 4.5, theme::GOLD);
         }
         if let Some(s) = sp.as_ref().filter(|_| !m.egg) {
-            p.text(stage.min + vec2(12.0, 12.0), Align2::LEFT_TOP, format!("#{:04}", s.dex), ch::bold(12.0), Color32::from_white_alpha(190));
+            p.text(stage.min + vec2(12.0, 12.0), Align2::LEFT_TOP, format!("#{:04}", s.dex), ch::bold(12.0), theme::stage_ink(c1, 190));
         }
         let lw = super::charts::bold(11.5);
         let wtxt = self.boxes_where();
-        p.text(pos2(stage.max.x - 12.0, stage.min.y + 12.0), Align2::RIGHT_TOP, super::charts::clip(ui, &wtxt, &lw, w * 0.6), lw, Color32::from_white_alpha(190));
+        p.text(pos2(stage.max.x - 12.0, stage.min.y + 12.0), Align2::RIGHT_TOP, super::charts::clip(ui, &wtxt, &lw, w * 0.6), lw, theme::stage_ink(c1, 190));
         ui.add_space(10.0);
 
         // ── name, types, chips

@@ -95,6 +95,7 @@ mod ov_broadcast;
 mod ov_terminal;
 mod ov_retro;
 mod ov_toast;
+mod ov_plus;
 mod store;
 mod library;
 mod app_modal;
@@ -195,6 +196,8 @@ enum Tab {
     Appearance,
     Hotkeys,
     Advanced,
+    /// Settings → Sounds: every sound in one place.
+    Sounds,
 }
 
 struct Shot {
@@ -214,6 +217,13 @@ struct TestRead {
 
 struct Setup {
     tab: Tab,
+    /// Pages you came from (the title bar's back button, Alt+← and the
+    /// mouse's back button).
+    nav_back: Vec<Tab>,
+    /// Pages you stepped back from (Alt+→, the mouse's forward button).
+    nav_fwd: Vec<Tab>,
+    /// The page last frame, to notice when it changes.
+    nav_last: Tab,
     /// The App Store and the Library.
     store: store::StoreState,
     /// Home's widget grid.
@@ -684,6 +694,9 @@ impl App {
             radar_flash: None,
             setup: Setup {
                 tab: Tab::Home,
+                nav_back: Vec::new(),
+                nav_fwd: Vec::new(),
+                nav_last: Tab::Home,
                 store: store::StoreState { old_look, ..Default::default() },
                 home: Default::default(),
                 log: Default::default(),
@@ -3098,6 +3111,7 @@ fn days_ago(unix: u64) -> String {
 }
 
 impl eframe::App for App {
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Keep the overlay above the game (a background thread per overlay window).
         self.borderless_fix.store(
@@ -3246,6 +3260,20 @@ impl eframe::App for App {
         self.stat_share_window(ctx);
         self.month_recap_check();
         self.avatar_window(ctx);
+        // the pixel themes square off everything in the Companion's window
+        // (before the overlays, which are windows of their own)
+        theme::pixelize(ctx);
+        // the theme's sound pack (Appearance → Theme → Theme sounds)
+        theme::ui_sounds(ctx, self.cfg.appearance.theme_sounds, self.cfg.appearance.theme_volume, &self.cfg.sounds.device);
+        // the theme's startup animation, over everything as the app opens
+        // (Broadcast's news ticker reads out today's rare grass)
+        if theme::intro_needs_news() {
+            let news: Vec<(String, String)> = self.rare_spots_today().into_iter().take(8).map(|s| (s.species.name.to_string(), s.place.clone())).collect();
+            theme::set_intro_news(news);
+        }
+        // (its sound always plays, Theme sounds on or off: that switch is for the rest of the app)
+        let snd = Some((self.cfg.appearance.theme_volume.max(0.25), self.cfg.sounds.device.as_str()));
+        theme::paint_intro(ctx, self.cfg.appearance.theme_intro, snd);
         // The overlay is its own always-on-top window while it's started.
         if self.overlay_on && !self.ov_hidden {
             self.overlay_viewport(ctx);

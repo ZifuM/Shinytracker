@@ -667,7 +667,7 @@ impl App {
         kit::card(ui, |ui| {
             card_head(ui, "💡", GREEN, "Help", "Start over with the tour, or send the dev what they need to help.");
             ui.add_space(14.0);
-            setting_row(ui, "Welcome tour", "The step-by-step setup from your first start: game, look, overlay, target and odds. Your hunt and settings are kept.", |ui| {
+            setting_row(ui, "Welcome tour", "The step-by-step setup from your first start: your look (theme, sounds, motion), apps, game, overlay and odds. Your hunt and settings are kept.", |ui| {
                 if ui.add(egui::Button::new("Start the tour").fill(kit::btn_fill())).clicked() {
                     self.cfg.onboarding_seen = 0;
                     self.setup.welcome_step = 0;

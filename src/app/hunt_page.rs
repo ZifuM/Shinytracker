@@ -141,6 +141,7 @@ impl App {
 
     fn hunt_target(&mut self, ui: &mut egui::Ui) {
         let mut new_hunt = false;
+        let mut resume_run = false;
         let mut open_dex: Option<String> = None;
         let mut log_slug: Option<String> = None;
         let mut show_rare = false;
@@ -255,6 +256,9 @@ impl App {
                                 self.setup.picking_also = None;
                                 self.setup.search.clear();
                             }
+                            if ui.add(egui::Button::new("▶  Resume a run").fill(kit::btn_fill())).on_hover_text("Pick one of your saved runs back up (on the Runs page)").clicked() {
+                                resume_run = true;
+                            }
                         }
                         if let Some(id) = hab.as_ref().and_then(|h| h.wiki_id.clone()) {
                             if ui.add(egui::Button::new("📖  Pokédex entry").fill(kit::btn_fill())).clicked() {
@@ -296,6 +300,13 @@ impl App {
         });
         if let Some(slug) = log_slug {
             self.open_log(if slug.is_empty() { None } else { Some(&slug) });
+        }
+        // Resume a run: the Runs page, showing the runs still in progress,
+        // scrolled down to the list
+        if resume_run {
+            self.setup.runs_filter = 1;
+            self.go_to(super::Tab::Runs);
+            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("runs-jump"), 4u8));
         }
         if new_hunt {
             self.open_hunt_wizard();

@@ -23,8 +23,14 @@ pub(super) const CYAN: Color32 = Color32::from_rgb(90, 200, 250);
 pub(super) const LIME: Color32 = Color32::from_rgb(170, 235, 60);
 pub(super) const GOLD: Color32 = Color32::from_rgb(255, 200, 66);
 
+/// A chart colour in the current Modern Plus theme's palette.
+pub(super) fn tc(c: Color32) -> Color32 {
+    theme::chart_colour(c)
+}
+
 /// A colour readable on the current card (darker on light themes).
 pub(super) fn ink(c: Color32) -> Color32 {
+    let c = tc(c);
     if theme::pal().light {
         theme::blend(c, Color32::BLACK, 0.25)
     } else {
@@ -54,7 +60,16 @@ pub(super) fn reg(size: f32) -> FontId {
 
 /// Big numbers: the title font (Inter Tight Bold).
 pub(super) fn heavy(size: f32) -> FontId {
-    crate::fonts::title_font(size)
+    // Modern Plus: big numbers in Inter Black with tabular digits (the
+    // share images' style); Modern keeps Inter Tight Bold
+    // (a touch smaller: Black runs wider than Inter Tight, and the numbers
+    // have to keep fitting the tiles they were laid out for)
+    if crate::theme::plus() {
+        // (a theme's own face when it has one: handwriting, Impact, pixels)
+        crate::theme::number_face(size).unwrap_or_else(|| crate::fonts::number_font(size * 0.92))
+    } else {
+        crate::fonts::title_font(size)
+    }
 }
 
 // ───────────────────────────── luck ─────────────────────────────
@@ -75,7 +90,7 @@ pub(super) fn luck_band(found: f64) -> usize {
 }
 
 pub(super) fn luck_col(found: f64) -> Color32 {
-    LUCK_BANDS[luck_band(found)].2
+    tc(LUCK_BANDS[luck_band(found)].2)
 }
 
 /// The luck bands as chart zones on a 0–100 % scale: (from, to, colour).
@@ -121,13 +136,13 @@ pub(super) fn zone_at(zones: &[(f64, f64, Color32)], v: f64) -> Option<Color32> 
         return None;
     }
     let i = zones.iter().rposition(|(a, _, _)| v >= *a).unwrap_or(0);
-    Some(zones[i].2)
+    Some(tc(zones[i].2))
 }
 
 /// The colour for an axis number: the zone it sits in, or for a number on a
 /// boundary, the zone it is the top of (0 takes the first zone).
 fn tick_zone(zones: &[(f64, f64, Color32)], v: f64) -> Option<Color32> {
-    zones.iter().find(|(a, b, _)| v > *a && v <= *b).or(zones.first().filter(|z| v <= z.0)).map(|z| z.2)
+    zones.iter().find(|(a, b, _)| v > *a && v <= *b).or(zones.first().filter(|z| v <= z.0)).map(|z| tc(z.2))
 }
 
 // ───────────────────────────── cards ─────────────────────────────
@@ -154,6 +169,7 @@ pub(super) fn card<R>(ui: &mut egui::Ui, icon: &str, title: &str, right: Option<
 
 /// "LABEL" over a big coloured number with an optional unit.
 pub(super) fn big_number(ui: &mut egui::Ui, label: &str, value: &str, unit: &str, col: Color32, size: f32) -> Response {
+    let col = tc(col);
     let p = ui.painter().clone();
     let lab = p.layout_no_wrap(label.to_uppercase(), bold(11.0), MUTED());
     let num = p.layout_no_wrap(value.to_string(), heavy(size), ink(col));
@@ -185,6 +201,34 @@ fn arc(p: &egui::Painter, c: Pos2, r: f32, a0: f32, a1: f32, w: f32, col: Color3
         let a = a0 + (a1 - a0) * i as f32 / steps as f32;
         c + egui::vec2(a.cos(), a.sin()) * r
     }).collect();
+    // (in the theme's style: pixel blocks, pencil, a glow, an inked edge)
+    match theme::chart_ring_style() {
+        1 => {
+            let len = (a1 - a0).abs() * r;
+            let n = (len / (w * 1.15)).floor().max(1.0) as usize;
+            for i in 0..=n {
+                let a = a0 + (a1 - a0) * i as f32 / n as f32;
+                let q = c + egui::vec2(a.cos(), a.sin()) * r;
+                p.rect_filled(Rect::from_center_size(egui::pos2(q.x.round(), q.y.round()), egui::vec2(w, w)), 0.0, col);
+            }
+            return;
+        }
+        2 => {
+            p.add(Shape::line(pts.clone(), Stroke::new(w * 0.75, col)));
+            let off: Vec<Pos2> = pts.iter().map(|q| *q + egui::vec2(0.7, -0.7)).collect();
+            p.add(Shape::line(off, Stroke::new(1.0f32, faint(TEXT(), 0.5))));
+            return;
+        }
+        3 => {
+            p.add(Shape::line(pts.clone(), Stroke::new(w + 6.0, faint(col, 0.2))));
+        }
+        4 => {
+            p.add(Shape::line(pts.clone(), Stroke::new(w + 3.0, theme::chart_ink())));
+            p.circle_filled(c + egui::vec2(a0.cos(), a0.sin()) * r, w / 2.0 + 1.5, theme::chart_ink());
+            p.circle_filled(c + egui::vec2(a1.cos(), a1.sin()) * r, w / 2.0 + 1.5, theme::chart_ink());
+        }
+        _ => {}
+    }
     p.add(Shape::line(pts, Stroke::new(w, col)));
     p.circle_filled(c + egui::vec2(a0.cos(), a0.sin()) * r, w / 2.0, col);
     p.circle_filled(c + egui::vec2(a1.cos(), a1.sin()) * r, w / 2.0, col);
@@ -199,14 +243,22 @@ pub(super) fn rings(p: &egui::Painter, c: Pos2, outer: f32, w: f32, gap: f32, li
         if r <= w {
             break;
         }
-        p.circle_stroke(c, r, Stroke::new(w, faint(rg.col, 0.22)));
+        if theme::chart_ring_style() == 1 {
+            arc(p, c, r, 0.0, std::f32::consts::TAU, w, faint(tc(rg.col), 0.22));
+        } else {
+            p.circle_stroke(c, r, Stroke::new(w, faint(tc(rg.col), 0.22)));
+        }
         let f = rg.frac.max(0.0);
         if f <= 0.001 {
             continue;
         }
         let laps = f.floor();
         if f >= 1.0 {
-            p.circle_stroke(c, r, Stroke::new(w, rg.col));
+            if theme::chart_ring_style() == 1 {
+                arc(p, c, r, 0.0, std::f32::consts::TAU, w, tc(rg.col));
+            } else {
+                p.circle_stroke(c, r, Stroke::new(w, tc(rg.col)));
+            }
         }
         let rest = if f >= 1.0 { f - laps } else { f };
         if f >= 1.0 && rest > 0.001 {
@@ -216,9 +268,9 @@ pub(super) fn rings(p: &egui::Painter, c: Pos2, outer: f32, w: f32, gap: f32, li
                 let a = a1 + 0.05 + k as f32 * 0.03;
                 p.circle_filled(c + egui::vec2(a.cos(), a.sin()) * r, w / 2.0, faint(Color32::BLACK, 0.18 - k as f32 * 0.04));
             }
-            arc(p, c, r, start, a1, w, theme::blend(rg.col, Color32::WHITE, 0.12));
+            arc(p, c, r, start, a1, w, theme::blend(tc(rg.col), Color32::WHITE, 0.12));
         } else if f < 1.0 {
-            arc(p, c, r, start, start + std::f32::consts::TAU * rest, w, rg.col);
+            arc(p, c, r, start, start + std::f32::consts::TAU * rest, w, tc(rg.col));
         }
         // a little arrow at the start
         let ap = c + egui::vec2(0.0, -r);
@@ -288,7 +340,7 @@ pub(super) fn bars(ui: &mut egui::Ui, b: &Bars) -> Response {
         for k in 0..=2 {
             let v = max * k as f64 / 2.0;
             let y = plot.max.y - plot.height() * k as f32 / 2.0;
-            p.add(Shape::dashed_line(&[egui::pos2(plot.min.x, y), egui::pos2(plot.max.x, y)], Stroke::new(1.0f32, grid()), 3.0, 3.0));
+            theme::chart_grid(&p, egui::pos2(plot.min.x, y), egui::pos2(plot.max.x, y), grid());
             p.text(egui::pos2(rect.max.x, y), Align2::RIGHT_CENTER, short_num(v), reg(11.0), MUTED());
         }
     }
@@ -299,16 +351,16 @@ pub(super) fn bars(ui: &mut egui::Ui, b: &Bars) -> Response {
     let rise = super::ui_kit::grow(ui.ctx(), resp.id, 1.0);
     for (i, &v) in b.values.iter().enumerate() {
         let cx = plot.min.x + slot * (i as f32 + 0.5);
-        let col = b.cols.map_or(b.col, |f| f(i));
+        let col = tc(b.cols.map_or(b.col, |f| f(i)));
         let hot = b.hot.is_none_or(|f| f(i)) || hover_i == Some(i);
         let full = Rect::from_min_max(egui::pos2(cx - bw / 2.0, plot.min.y), egui::pos2(cx + bw / 2.0, plot.max.y));
         if !b.axis {
-            p.rect_filled(full, (bw / 2.0).min(6.0), track());
+            theme::chart_track(&p, full, track());
         }
         let h = (v / max) as f32 * plot.height() * rise;
         if v > 0.0 {
             let r = Rect::from_min_max(egui::pos2(full.min.x, plot.max.y - h.max(3.0)), full.max);
-            p.rect_filled(r, (bw / 2.0).min(6.0), if hot { col } else { faint(col, 0.45) });
+            theme::chart_bar(&p, r, if hot { col } else { faint(col, 0.45) }, hot);
         }
         if b.tops && v > 0.0 || b.tops && b.axis == false {
             p.text(egui::pos2(cx, plot.max.y - h - 4.0), Align2::CENTER_BOTTOM, short_num(v), bold(12.0), if hot { ink(col) } else { MUTED() });
@@ -406,7 +458,7 @@ pub(super) fn line_chart(ui: &mut egui::Ui, l: &mut Line) -> Response {
     for (v, t) in l.ticks {
         let y = to_y(*v);
         if !l.bands.windows(2).any(|w| (w[1].0 - *v).abs() < 1e-9) {
-            p.add(Shape::dashed_line(&[egui::pos2(plot.min.x, y), egui::pos2(plot.max.x, y)], Stroke::new(1.0f32, grid()), 5.0, 4.0));
+            theme::chart_grid(&p, egui::pos2(plot.min.x, y), egui::pos2(plot.max.x, y), grid());
         }
         let c = tick_zone(l.bands, *v).map_or(MUTED(), ink);
         p.text(egui::pos2(plot.min.x - 6.0, y), Align2::RIGHT_CENTER, t, reg(11.5), c);
@@ -446,10 +498,10 @@ pub(super) fn line_chart(ui: &mut egui::Ui, l: &mut Line) -> Response {
             let (v0, v1) = (l.values[i - 1], l.values[i]);
             match (l.line, l.bands.is_empty()) {
                 (Some(c), _) => {
-                    p.line_segment([pts[i - 1], pts[i]], Stroke::new(3.0f32, c));
+                    theme::chart_line(&p, &[pts[i - 1], pts[i]], 3.0, c);
                 }
                 (None, true) => {
-                    p.line_segment([pts[i - 1], pts[i]], Stroke::new(3.0f32, (l.col)(i - 1, v0)));
+                    theme::chart_line(&p, &[pts[i - 1], pts[i]], 3.0, tc((l.col)(i - 1, v0)));
                 }
                 (None, false) => {
                     // Split the segment where it crosses a zone edge, so the
@@ -466,7 +518,7 @@ pub(super) fn line_chart(ui: &mut egui::Ui, l: &mut Line) -> Response {
                         let at = |t: f64| pts[i - 1] + (pts[i] - pts[i - 1]) * t as f32;
                         let mid = v0 + (v1 - v0) * (w[0] + w[1]) / 2.0;
                         let c = zone_at(l.bands, mid).unwrap_or(MUTED());
-                        p.line_segment([at(w[0]), at(w[1])], Stroke::new(3.0f32, c));
+                        theme::chart_line(&p, &[at(w[0]), at(w[1])], 3.0, c);
                     }
                 }
             }
@@ -477,11 +529,13 @@ pub(super) fn line_chart(ui: &mut egui::Ui, l: &mut Line) -> Response {
     });
     for (i, q) in pts.iter().enumerate() {
         // On a zoned chart a point always takes the colour of the zone it sits in.
-        let c = zone_at(l.bands, l.values[i]).unwrap_or_else(|| (l.col)(i, l.values[i]));
+        let c = tc(zone_at(l.bands, l.values[i]).unwrap_or_else(|| (l.col)(i, l.values[i])));
         if l.dots || hover_i == Some(i) {
             let r = if hover_i == Some(i) { 8.0 } else { 6.5 };
-            p.circle_filled(*q, r + 2.5, faint(c, 0.35));
-            p.circle_filled(*q, r, c);
+            if theme::chart_ring_style() == 0 {
+                p.circle_filled(*q, r + 2.5, faint(c, 0.35));
+            }
+            theme::chart_dot(&p, *q, r, c);
         }
         if l.stars.contains(&i) {
             crate::theme::sparkle(&p, *q + egui::vec2(0.0, -16.0), 7.0, GOLD);
@@ -532,11 +586,11 @@ pub(super) fn dist_bar(ui: &mut egui::Ui, segs: &[(String, f64, Color32)], legen
     let mut x = rect.min.x;
     for s in &shown {
         let w = (room * (s.1 / total) as f32).max(8.0);
-        p.rect_filled(Rect::from_min_size(egui::pos2(x, rect.min.y), egui::vec2(w.min(rect.max.x - x), rect.height())), 8.0, s.2);
+        theme::chart_bar(&p, Rect::from_min_size(egui::pos2(x, rect.min.y), egui::vec2(w.min(rect.max.x - x), rect.height())), tc(s.2), true);
         x += w + gap;
     }
     if shown.is_empty() {
-        p.rect_filled(rect, 8.0, track());
+        theme::chart_track(&p, rect, track());
     }
     ui.add_space(10.0);
     let per = legend_cols.max(1);
@@ -547,7 +601,7 @@ pub(super) fn dist_bar(ui: &mut egui::Ui, segs: &[(String, f64, Color32)], legen
             for (name, v, c) in row {
                 let (r, _) = ui.allocate_exact_size(egui::vec2(cw, 24.0), Sense::hover());
                 let p = ui.painter_at(r);
-                p.circle_filled(egui::pos2(r.min.x + 7.0, r.center().y), 6.0, *c);
+                theme::chart_dot(&p, egui::pos2(r.min.x + 7.0, r.center().y), 6.0, tc(*c));
                 let pct = (v / total * 100.0).round();
                 p.text(egui::pos2(r.min.x + 20.0, r.center().y), Align2::LEFT_CENTER, format!("{name} {pct:.0}%"), reg(13.5), if *v > 0.0 { TEXT() } else { MUTED() });
             }
@@ -559,6 +613,7 @@ pub(super) fn dist_bar(ui: &mut egui::Ui, segs: &[(String, f64, Color32)], legen
 
 /// A 24-hour clock: a bar for each hour pointing out from the middle.
 pub(super) fn clock(ui: &mut egui::Ui, vals: &[f64; 24], col: Color32, size: f32, centre: (&str, &str)) -> Response {
+    let col = tc(col);
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), size), Sense::hover());
     let p = ui.painter_at(rect);
     let c = rect.center();
@@ -580,7 +635,7 @@ pub(super) fn clock(ui: &mut egui::Ui, vals: &[f64; 24], col: Color32, size: f32
         p.line_segment([c + dir * r_in, c + dir * (r_out)], Stroke::new(7.0f32, track()));
         if v > 0.0 {
             let hot = Some(h) == best || hover_h == Some(h);
-            p.line_segment([c + dir * r_in, c + dir * (r_in + len.max(3.0))], Stroke::new(7.0f32, if hot { col } else { faint(col, 0.55) }));
+            theme::chart_line(&p, &[c + dir * r_in, c + dir * (r_in + len.max(3.0))], 7.0, if hot { col } else { faint(col, 0.55) });
         }
     }
     for (h, t) in [(0, "12a"), (6, "6a"), (12, "12p"), (18, "6p")] {
@@ -613,6 +668,7 @@ pub(super) fn heatmap_marked(
     hover: &dyn Fn(i64, u64) -> String,
     mark: Option<&dyn Fn(i64) -> bool>,
 ) -> Response {
+    let col = tc(col);
     let gap = 3.0;
     let avail = ui.available_width();
     let cell = ((avail - 26.0 - gap * (weeks as f32 - 1.0)) / weeks as f32).clamp(6.0, 26.0);
@@ -642,7 +698,7 @@ pub(super) fn heatmap_marked(
             let r = Rect::from_min_size(egui::pos2(x0 + w as f32 * (cell + gap), rect.min.y + 16.0 + wd as f32 * (cell + gap)), egui::vec2(cell, cell));
             let v = value(d);
             let c = if v == 0 { track() } else { theme::blend(faint(col, 0.35), col, (v as f32 / max).sqrt()) };
-            p.rect_filled(r, 3.0, c);
+            theme::chart_cell(&p, r, c);
             if mark.is_some_and(|m| m(d)) {
                 p.circle_filled(r.center(), (cell * 0.24).max(2.0), GOLD);
             }
@@ -672,6 +728,7 @@ pub(super) fn heatmap_marked(
 
 /// The heatmap's key: "Less ▢▢▢▢ More", plus what the dot means.
 pub(super) fn heat_legend(ui: &mut egui::Ui, col: Color32, dot: Option<&str>) {
+    let col = tc(col);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         ui.label(egui::RichText::new("Less").size(11.0).color(MUTED()));
@@ -694,6 +751,7 @@ pub(super) fn heat_legend(ui: &mut egui::Ui, col: Color32, dot: Option<&str>) {
 /// "Keep it going" / "Worth a look" tile: a chevron (up, down or flat),
 /// a label, a coloured value and a sentence.
 pub(super) fn trend_tile(ui: &mut egui::Ui, w: f32, dir: Option<bool>, label: &str, value: &str, note: &str, col: Color32) {
+    let col = tc(col);
     let galley = ui.painter().layout(note.to_string(), reg(12.0), MUTED(), w - 70.0);
     let h = 62.0 + if note.is_empty() { 0.0 } else { galley.size().y + 6.0 };
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, h), Sense::hover());
@@ -723,6 +781,7 @@ pub(super) fn trend_tile(ui: &mut egui::Ui, w: f32, dir: Option<bool>, label: &s
 
 /// A small fact: an emoji, a coloured value and what it is.
 pub(super) fn fact_tile(ui: &mut egui::Ui, w: f32, icon: &str, value: &str, label: &str, col: Color32) {
+    let col = tc(col);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 72.0), Sense::hover());
     let p = ui.painter_at(rect.expand(2.0));
     p.rect_filled(rect, 14.0, CARD_HOVER());
@@ -765,6 +824,7 @@ pub(super) fn clip(ui: &egui::Ui, s: &str, f: &FontId, w: f32) -> String {
 /// a title and sub line, and a big score on the right with a side stripe.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn rank_row(ui: &mut egui::Ui, rank: usize, title: &str, sub: &str, score: &str, score_note: &str, col: Color32, pic: &mut dyn FnMut(&egui::Painter, Rect)) -> Response {
+    let col = tc(col);
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 76.0), Sense::hover());
     let p = ui.painter_at(rect.expand(2.0));
     p.rect_filled(rect, 16.0, if resp.hovered() { theme::blend(CARD_HOVER(), TEXT(), 0.04) } else { CARD_HOVER() });
@@ -795,6 +855,7 @@ pub(super) fn rank_row(ui: &mut egui::Ui, rank: usize, title: &str, sub: &str, s
 /// A horizontal bar row: a picture, a name, a bar of `frac` and a value.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn hbar_row(ui: &mut egui::Ui, name: &str, value: &str, frac: f32, col: Color32, highlight: bool, pic: &mut dyn FnMut(&egui::Painter, Rect)) {
+    let col = tc(col);
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 40.0), Sense::hover());
     let frac = super::ui_kit::grow(ui.ctx(), resp.id, frac);
     let p = ui.painter_at(rect.expand(2.0));
@@ -812,8 +873,8 @@ pub(super) fn hbar_row(ui: &mut egui::Ui, name: &str, value: &str, frac: f32, co
     let bx1 = vx - vw;
     if bx1 > bx0 + 10.0 {
         let tr = Rect::from_min_max(egui::pos2(bx0, rect.center().y - 6.0), egui::pos2(bx1, rect.center().y + 6.0));
-        p.rect_filled(tr, 6.0, track());
-        p.rect_filled(Rect::from_min_size(tr.min, egui::vec2((tr.width() * frac.clamp(0.0, 1.0)).max(6.0), tr.height())), 6.0, col);
+        theme::chart_track(&p, tr, track());
+        theme::chart_bar(&p, Rect::from_min_size(tr.min, egui::vec2((tr.width() * frac.clamp(0.0, 1.0)).max(6.0), tr.height())), col, highlight);
     }
 }
 
@@ -832,7 +893,7 @@ pub(super) fn luck_scale(ui: &mut egui::Ui, found: f64, you: &str) {
         let x0 = bar.min.x + bar.width() * lo as f32 + if i > 0 { gap / 2.0 } else { 0.0 };
         let x1 = bar.min.x + bar.width() * hi as f32 - if i < 4 { gap / 2.0 } else { 0.0 };
         let r = Rect::from_min_max(egui::pos2(x0, bar.min.y), egui::pos2(x1, bar.max.y));
-        p.rect_filled(r, 7.0, *c);
+        theme::chart_bar(&p, r, tc(*c), true);
         p.text(egui::pos2(r.center().x, bar.max.y + 12.0), Align2::CENTER_CENTER, *name, reg(11.0), MUTED());
         lo = hi;
     }
@@ -866,7 +927,7 @@ pub(super) fn legend(ui: &mut egui::Ui, items: &[(Color32, &str)]) {
     ui.horizontal_wrapped(|ui| {
         for (c, t) in items {
             let (r, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), Sense::hover());
-            ui.painter().circle_filled(r.center(), 5.0, *c);
+            theme::chart_dot(ui.painter(), r.center(), 5.0, tc(*c));
             ui.label(egui::RichText::new(*t).size(kit::fs(12.0)).color(MUTED()));
             ui.add_space(10.0);
         }

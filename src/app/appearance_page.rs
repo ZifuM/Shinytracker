@@ -6,7 +6,7 @@ use super::charts::{self as ch, CYAN, GOLD, GREEN, ORANGE, PINK, PURPLE};
 use super::hunt_pages::{mode_tile, swatch_row};
 use super::ui_kit::{self as kit, MUTED, TEXT};
 use super::App;
-use crate::config::{Appearance, UiMode};
+use crate::config::{Appearance, PlusTheme, UiMode};
 use crate::theme::{self, Look};
 use eframe::egui::{self, pos2, vec2, Align2, Color32, Rect, RichText, Sense, Stroke};
 
@@ -80,10 +80,18 @@ impl App {
 
     fn look_settings(&mut self, ui: &mut egui::Ui, hover: &mut Hover) {
         self.look_plus_card(ui);
+        if self.cfg.appearance.plus {
+            ui.add_space(18.0);
+            self.look_theme_card(ui, hover);
+        }
+        // a theme brings its own mode and colours: those cards rest meanwhile
+        let themed = themed(&self.cfg.appearance);
         ui.add_space(18.0);
-        self.look_style_card(ui, hover);
+        ui.add_enabled_ui(!themed, |ui| self.look_style_card(ui, &mut *hover));
         ui.add_space(18.0);
-        self.look_colours_card(ui, hover);
+        // (with Use my colours on, the Colours card colours the theme)
+        let own = themed && (self.cfg.appearance.theme_colours || theme::theme_def(self.cfg.appearance.plus_theme).is_some_and(|d| d.own_accent));
+        ui.add_enabled_ui(!themed || own, |ui| self.look_colours_card(ui, &mut *hover));
         ui.add_space(18.0);
         self.look_comfort_card(ui);
         ui.add_space(18.0);
@@ -121,6 +129,173 @@ impl App {
             };
             ui.label(egui::RichText::new(text).size(kit::fs(12.0)).color(MUTED()));
         });
+    }
+
+    // ───────────────────────────── theme ─────────────────────────────
+
+    /// Modern Plus's themes: "Your colours" (your own mode and colours) or a
+    /// ready-made look from the UI Lab. Hover one to try it in the preview.
+    fn look_theme_card(&mut self, ui: &mut egui::Ui, hover: &mut Hover) {
+        kit::card(ui, |ui| {
+            card_head(ui, "🖌", ORANGE, "Theme");
+            ui.add_space(14.0);
+            let a = self.cfg.appearance.clone();
+            let avail = ui.available_width();
+            let cols = ((avail + 10.0) / (150.0 + 10.0)).floor().clamp(2.0, 4.0);
+            let tw = ((avail - 10.0 * (cols - 1.0)) / cols).floor();
+            let mut pick: Option<PlusTheme> = None;
+            // ready-made looks first, then the ones that match an overlay theme
+            let ready: Vec<PlusTheme> = theme::PLUS_THEMES.into_iter().filter(|t| !theme::OVERLAY_MATCH.contains(t)).collect();
+            for (group, list) in [(None, ready), (Some("MATCH YOUR OVERLAY"), theme::OVERLAY_MATCH.to_vec())] {
+            if let Some(g) = group {
+                ui.add_space(14.0);
+                ui.horizontal(|ui| {
+                    label(ui, g);
+                    kit::info(ui, "App themes made to match the overlay themes: Sticker, Glass HUD, Retro DS, Field journal, Broadcast and Terminal.");
+                });
+                ui.add_space(8.0);
+            }
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(10.0, 10.0);
+                for t in list {
+                    let on = a.plus_theme == t;
+                    let mut c = a.clone();
+                    c.plus_theme = t;
+                    let lk = theme::look_of(&c);
+                    let name = theme_name(t);
+                    let r = theme_tile(ui, tw, name, &lk, theme::theme_def(t), on);
+                    // ▶ on a tile: watch that theme's startup animation
+                    tile_play(ui, &r, &c);
+                    if r.hovered() && !on {
+                        *hover = Some((c, format!("{name} theme")));
+                    }
+                    let tip = match theme::theme_def(t) {
+                        Some(d) => d.blurb.to_string(),
+                        None => "Your own mode and colours, from the cards below.".to_string(),
+                    };
+                    if r.on_hover_text(tip).clicked() {
+                        pick = Some(t);
+                    }
+                }
+            });
+            }
+            // the one that matches your overlay, a click away
+            if let Some(m) = theme::theme_for_overlay(self.cfg.overlay.theme) {
+                if a.plus_theme != m && self.cfg.overlay.style != crate::config::OverlayStyle::Legacy {
+                    ui.add_space(10.0);
+                    let text = format!("Match my overlay ({})", theme_name(m));
+                    if ui.add(egui::Button::new(text).fill(kit::btn_fill())).on_hover_text("Use the app theme made for your overlay theme").clicked() {
+                        pick = Some(m);
+                    }
+                }
+            }
+            if let Some(t) = pick {
+                self.cfg.appearance.plus_theme = t;
+            }
+            self.theme_options(ui, false);
+            ui.add_space(8.0);
+            let note = if themed(&self.cfg.appearance) {
+                if self.cfg.appearance.theme_colours { "This theme takes your colours from Colours below, in its Light or Dark above. Mode below rests while a theme is on." } else { "This theme brings its own colours (in its Light or Dark above), so Mode and Colours below rest until you pick Your colours again, or turn on Use my colours." }
+            } else {
+                "Your colours: your own mode and colours, set below. Or pick a theme for a ready-made look."
+            };
+            ui.label(RichText::new(note).size(kit::fs(12.0)).color(MUTED()));
+        });
+    }
+
+    /// The theme's options: its light or dark, your colours through it, its
+    /// background, transitions, startup animation and sounds (with previews).
+    /// On the Theme card, and in the welcome tour's Look step.
+    pub(super) fn theme_options(&mut self, ui: &mut egui::Ui, with_sounds: bool) {
+        // every theme comes light and dark: its own mode, or flipped
+        if let Some(d) = theme::theme_def(self.cfg.appearance.plus_theme) {
+            ui.add_space(10.0);
+            let own = if d.light { "Light" } else { "Dark" };
+            let other = if d.light { "Dark" } else { "Light" };
+            let mut flip = self.cfg.appearance.theme_flip;
+            setting_row(ui, "Mode", "Each theme comes in its own mode, or the other one (made from its colours).", |ui| {
+                kit::segmented(ui, &mut flip, &[(false, own), (true, other)]);
+            });
+            self.cfg.appearance.theme_flip = flip;
+        }
+        // any theme in your own colours
+        if let Some(d) = theme::theme_def(self.cfg.appearance.plus_theme).filter(|d| !d.own_accent) {
+            ui.add_space(10.0);
+            let help = format!("{} in the colours you pick in Colours below: it keeps its style, light and dark, and takes your colour. Off: the theme's own colours.", d.name);
+            if kit::toggle_row(ui, "Use my colours", &help, &mut self.cfg.appearance.theme_colours) {
+                self.dirty = true;
+            }
+        }
+        // Winter's snow, Spooky's embers and the other moving backgrounds can be turned off
+        if theme::theme_def(self.cfg.appearance.plus_theme).is_some_and(|d| d.particles.is_some() || theme::has_ambient(d.skin)) {
+            ui.add_space(10.0);
+            kit::toggle_row(ui, "Background effects", "The theme's moving background: snow, embers, glints, drifting glows, bubbles or a rolling grid. Off for a still one.", &mut self.cfg.appearance.particles);
+        }
+        // each theme's own way of bringing a page in
+        if theme::theme_def(self.cfg.appearance.plus_theme).is_some() {
+            ui.add_space(10.0);
+            kit::toggle_row(ui, "Page transitions", "Pages come in the theme's own way: a page ripped out (Field journal), pixels breaking up (pixel themes), a news wipe (Broadcast), a ripple (Liquid), bubbles popping (Companion)... Off (the default): a plain fade.", &mut self.cfg.appearance.theme_transitions);
+        }
+        // every theme (Your colours too) opens the app with its own little show
+        {
+            ui.add_space(10.0);
+            kit::toggle_row(ui, "Startup animation", "The theme's own intro as the app opens (a Pokédex opening, a Game Boy boot, a sunrise over a neon grid...). It plays its own sound even with Theme sounds off. A click skips it.", &mut self.cfg.appearance.theme_intro);
+            ui.horizontal(|ui| {
+                ui.add_space(4.0);
+                if ui.button("▶  Play it now").on_hover_text("Or the ▶ on any theme's tile, to watch that one's").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    theme::replay_intro();
+                }
+            });
+        }
+        // every theme has its own sounds (also in Settings → Sounds)
+        if with_sounds {
+            self.theme_sounds_block(ui);
+        } else if self.cfg.appearance.plus {
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(if self.cfg.appearance.theme_sounds { "Theme sounds: on" } else { "Theme sounds: off" }).size(kit::fs(13.0)).color(TEXT()));
+                if ui.button("🔊  Sounds settings").on_hover_text("The theme's sounds, their volume and previews, with every other sound").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    self.open_settings(super::Tab::Sounds);
+                }
+            });
+        }
+    }
+
+    /// The theme's sounds: on or off, their volume, and a ▶ for each.
+    pub(super) fn theme_sounds_block(&mut self, ui: &mut egui::Ui) {
+        {
+            ui.add_space(10.0);
+            let was = self.cfg.appearance.theme_sounds;
+            kit::toggle_row(ui, "Theme sounds", "Little sounds for clicks, hovers and pages, made to match the theme (8-bit blips, pencil ticks, coins, ice chimes...). Off unless you turn them on; they play on the output picked in Sounds.", &mut self.cfg.appearance.theme_sounds);
+            if self.cfg.appearance.theme_sounds && !was {
+                // (a taste of the pack as it's turned on)
+                crate::sound::play_ui(theme::sound_pack(), crate::sound::UiSnd::Page, self.cfg.appearance.theme_volume, &self.cfg.sounds.device);
+            }
+            // (the volume shows either way: the startup animation's sound uses it too)
+            {
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Volume").size(kit::fs(13.0)).color(TEXT()));
+                    ui.spacing_mut().slider_width = (ui.available_width() - kit::SLIDER_VALUE_W - 16.0).max(80.0);
+                    let text = format!("{:.0}%", self.cfg.appearance.theme_volume * 100.0);
+                    let r = kit::slider_f32(ui, &mut self.cfg.appearance.theme_volume, 0.0..=1.0, &text);
+                    // (a sample when you let go, to hear the new level)
+                    if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                        crate::sound::play_ui(theme::sound_pack(), crate::sound::UiSnd::Click, self.cfg.appearance.theme_volume, &self.cfg.sounds.device);
+                    }
+                });
+                ui.add_space(6.0);
+                // hear each of the pack's sounds
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Hear it").size(kit::fs(13.0)).color(TEXT()));
+                    for (k, label) in [(crate::sound::UiSnd::Click, "▶ Click"), (crate::sound::UiSnd::Hover, "▶ Hover"), (crate::sound::UiSnd::Page, "▶ New page")] {
+                        if ui.button(label).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                            crate::sound::play_ui(theme::sound_pack(), k, self.cfg.appearance.theme_volume, &self.cfg.sounds.device);
+                        }
+                    }
+                });
+            }
+        }
     }
 
     // ───────────────────────────── style ─────────────────────────────
@@ -309,7 +484,8 @@ impl App {
                 "Pages fade in, tabs and the sidebar's highlight slide, buttons ease on hover and charts grow in. Off for a still window. (The overlay's own effects aren't affected.)",
                 &mut a.animations,
             );
-            {
+            // (Modern Plus has no sidebar: tabs in the title bar and the dock)
+            if !a.plus {
                 ui.add_space(10.0);
                 divider(ui);
                 ui.add_space(10.0);
@@ -329,10 +505,13 @@ impl App {
                 &mut self.cfg.show_party,
             );            ui.add_space(10.0);
             divider(ui);
-            ui.add_space(12.0);
-            self.pins_place_picker(ui);
-            ui.add_space(10.0);
-            divider(ui);
+            // (Modern Plus keeps pins on the dock: nothing to pick there)
+            if !self.cfg.appearance.plus {
+                ui.add_space(12.0);
+                self.pins_place_picker(ui);
+                ui.add_space(10.0);
+                divider(ui);
+            }
             ui.add_space(10.0);
             let mut show = !self.cfg.apps.tours_off;
             if kit::toggle_row(
@@ -503,13 +682,22 @@ impl App {
                 ui.add_space(12.0);
                 let a = shown.as_ref().map(|(a, _)| a.clone()).unwrap_or_else(|| self.cfg.appearance.clone());
                 let lk = theme::look_of(&a);
+                // Modern Plus draws its own layout, in the theme's colours
+                let def = if themed(&a) { theme::theme_def(a.plus_theme) } else { None };
+                let mock = |p: &egui::Painter, r: Rect| {
+                    if a.plus {
+                        draw_mock_plus(p, r, &lk, def);
+                    } else {
+                        draw_mock_window(p, r, &lk, a.nav_compact);
+                    }
+                };
                 let inner = ui.available_width();
                 // over the settings (narrow windows) it's kept short
                 let tall = inner < 560.0;
                 let mh = if tall { (inner * 0.70).clamp(240.0, 320.0) } else { 232.0 };
                 if tall {
                     let (r, _) = ui.allocate_exact_size(vec2(inner, mh), Sense::hover());
-                    draw_mock_window(ui.painter(), r, &lk, a.nav_compact);
+                    mock(ui.painter(), r);
                     ui.add_space(10.0);
                     // the overlay's header follows the main colour too
                     let (r2, _) = ui.allocate_exact_size(vec2(inner, 64.0), Sense::hover());
@@ -518,7 +706,7 @@ impl App {
                     let ow = (inner * 0.30).min(220.0);
                     let (row, _) = ui.allocate_exact_size(vec2(inner, mh), Sense::hover());
                     let win = Rect::from_min_size(row.min, vec2(inner - ow - 12.0, mh));
-                    draw_mock_window(ui.painter(), win, &lk, a.nav_compact);
+                    mock(ui.painter(), win);
                     let ov = Rect::from_min_max(pos2(win.max.x + 12.0, row.min.y), row.max);
                     draw_mock_overlay(ui.painter(), ov, &lk);
                 }
@@ -536,6 +724,9 @@ impl App {
                     },
                 ];
                 cap.push(palette_name(&a).unwrap_or_else(|| "Custom colours".into()));
+                if themed(&a) {
+                    cap = vec![format!("{} theme", theme_name(a.plus_theme))];
+                }
                 ui.label(RichText::new(cap.join(" · ")).size(12.0).color(MUTED()));
                 if shown.is_some() {
                     ui.label(RichText::new("Click to keep it.").size(12.0).color(ch::ink(ORANGE)));
@@ -569,6 +760,45 @@ fn palette_name(a: &Appearance) -> Option<String> {
     PALETTES.iter().find(|p| palette_on(a, p.accent, p.second)).map(|p| p.name.to_string())
 }
 
+/// Is a Modern Plus theme setting the mode and colours?
+pub(super) fn themed(a: &Appearance) -> bool {
+    a.plus && a.plus_theme != PlusTheme::Yours && theme::theme_ready(a.plus_theme)
+}
+
+pub(super) fn theme_name(t: PlusTheme) -> &'static str {
+    theme::theme_def(t).map(|d| d.name).unwrap_or("Your colours")
+}
+
+/// A theme's number in look codes.
+fn theme_num(t: PlusTheme) -> u8 {
+    match t {
+        PlusTheme::Yours => 0,
+        PlusTheme::Studio => 1,
+        PlusTheme::Pokedex => 2,
+        PlusTheme::Aurora => 3,
+        PlusTheme::Field => 4,
+        PlusTheme::Synthwave => 5,
+        PlusTheme::Gold => 6,
+        PlusTheme::Companion => 7,
+        PlusTheme::Pocket => 8,
+        PlusTheme::Candy => 9,
+        PlusTheme::Brutal => 10,
+        PlusTheme::Liquid => 11,
+        PlusTheme::Winter => 12,
+        PlusTheme::Spooky => 13,
+        PlusTheme::Sticker => 14,
+        PlusTheme::GlassHud => 15,
+        PlusTheme::RetroDs => 16,
+        PlusTheme::Journal => 17,
+        PlusTheme::Broadcast => 18,
+        PlusTheme::Terminal => 19,
+    }
+}
+
+fn theme_of_num(n: u8) -> Option<PlusTheme> {
+    theme::PLUS_THEMES.into_iter().find(|t| theme_num(*t) == n)
+}
+
 // ───────────────────────────── look codes ─────────────────────────────
 
 fn hex(c: [u8; 3]) -> String {
@@ -584,7 +814,14 @@ pub(super) fn look_code(a: &Appearance) -> String {
     };
     let style = 0; // Modern
     let flags = (a.gradient as u8) | (a.separate_buttons as u8) << 1 | (a.button_gradient as u8) << 2 | (a.solid_buttons as u8) << 3 | (a.follow_system as u8) << 4;
-    format!("PTC1-{mode}{style}{flags:02X}-{}-{}-{}-{}", hex(a.accent), hex(a.accent2), hex(a.button), hex(a.button2))
+    let code = format!("PTC1-{mode}{style}{flags:02X}-{}-{}-{}-{}", hex(a.accent), hex(a.accent2), hex(a.button), hex(a.button2));
+    // (a Modern Plus theme rides on the end: "-T1")
+    if a.plus_theme == PlusTheme::Yours {
+        code
+    } else {
+        // (an F: in the other mode)
+        format!("{code}-T{}{}{}", theme_num(a.plus_theme), if a.theme_flip { "F" } else { "" }, if a.theme_colours { "C" } else { "" })
+    }
 }
 
 /// Read a look code (keeps the parts a code doesn't carry, like animations).
@@ -601,9 +838,26 @@ fn parse_look_raw(code: &str, keep: &Appearance) -> Option<Appearance> {
     let code: String = code.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_uppercase();
     let rest = code.strip_prefix("PTC1-")?;
     let parts: Vec<&str> = rest.split('-').collect();
-    if parts.len() != 5 || parts[0].len() != 4 {
+    if !(parts.len() == 5 || parts.len() == 6) || parts[0].len() != 4 {
         return None;
     }
+    let mut colours = false;
+    let (th, flip) = match parts.get(5) {
+        Some(t) => {
+            let t = t.strip_prefix('T')?;
+            let (t, mine) = match t.strip_suffix('C') {
+                Some(n) => (n, true),
+                None => (t, false),
+            };
+            colours = mine;
+            let (num, flip) = match t.strip_suffix('F') {
+                Some(n) => (n, true),
+                None => (t, false),
+            };
+            (theme_of_num(num.parse().ok()?)?, flip)
+        }
+        None => (PlusTheme::Yours, false),
+    };
     let col = |s: &str| -> Option<[u8; 3]> {
         if s.len() != 6 {
             return None;
@@ -635,6 +889,9 @@ fn parse_look_raw(code: &str, keep: &Appearance) -> Option<Appearance> {
     a.accent2 = col(parts[2])?;
     a.button = col(parts[3])?;
     a.button2 = col(parts[4])?;
+    a.plus_theme = th;
+    a.theme_flip = flip;
+    a.theme_colours = colours;
     Some(a)
 }
 
@@ -760,6 +1017,133 @@ fn draw_mock_window(p: &egui::Painter, r: Rect, lk: &Look, compact: bool) {
     p.rect_stroke(r, rad, Stroke::new(1.0f32, theme::blend(s.line, s.text, 0.08)));
 }
 
+/// A small picture of the Companion in Modern Plus: tabs in the title bar
+/// (with the back button), cards, and the dock with your hunt, all in the
+/// theme's colours (its painted title bar, glows, sky and glass too).
+fn draw_mock_plus(p: &egui::Painter, r: Rect, lk: &Look, def: Option<theme::ThemeDef>) {
+    let s = &lk.s;
+    let rad = 8.0;
+    p.rect_filled(r, rad, s.page);
+    let inner = p.with_clip_rect(r.shrink(2.5));
+    if let Some((top, bottom)) = def.and_then(|d| d.backdrop) {
+        theme::paint_backdrop_colours(&inner, r, top, bottom);
+    }
+    if let Some((a, b)) = def.and_then(|d| d.glow) {
+        let big = r.width().max(r.height()) * 0.62;
+        theme::glow_spot(&inner, r.min + vec2(r.width() * 0.15, r.height() * 0.10), big, a, 0.20);
+        theme::glow_spot(&inner, r.min + vec2(r.width() * 0.85, r.height() * 0.30), big, b, 0.24);
+    }
+    let glass = def.is_some_and(|d| d.glass);
+    let (gf, gr) = theme::glass_colours(lk.light);
+    let card_fill = if glass { gf } else { s.card };
+    let card_line = if glass { gr } else { s.line };
+    let hard = def.and_then(|d| d.hard_shadow);
+    let pixel = def.is_some_and(|d| d.pixel);
+    let cr = 10.0 * def.map_or(1.0, |d| d.round);
+    // title bar
+    let bar = Rect::from_min_size(r.min, vec2(r.width(), 28.0));
+    let chrome = def.and_then(|d| d.chrome);
+    let (hf, hi) = match chrome {
+        Some((c, ink)) => (c, ink),
+        None if def.is_some() => (s.sidebar, s.text),
+        None => (s.page, s.text),
+    };
+    p.rect_filled(bar, egui::Rounding { nw: rad, ne: rad, sw: 0.0, se: 0.0 }, hf);
+    if chrome.is_none() {
+        p.rect_filled(Rect::from_min_size(bar.min + vec2(rad, 0.0), vec2(bar.width() - rad * 2.0, 1.5)), 0.0, lk.accent);
+    }
+    p.line_segment([bar.left_bottom(), bar.right_bottom()], Stroke::new(1.0f32, s.line));
+    p.circle_filled(pos2(bar.min.x + 14.0, bar.center().y), 5.5, lk.accent);
+    // the back button and the tabs
+    let bc = pos2(bar.min.x + 34.0, bar.center().y);
+    p.add(egui::Shape::line(vec![bc + vec2(2.0, -4.0), bc + vec2(-2.0, 0.0), bc + vec2(2.0, 4.0)], Stroke::new(1.5f32, theme::blend(hf, hi, 0.7))));
+    let mut x = bar.min.x + 46.0;
+    for (k, w) in [26.0, 30.0, 24.0, 22.0].into_iter().enumerate() {
+        if x + w > bar.max.x - 70.0 {
+            break;
+        }
+        let ink = if k == 0 { hi } else { theme::blend(hf, hi, 0.6) };
+        p.rect_filled(Rect::from_min_size(pos2(x, bar.center().y - 2.0), vec2(w, 4.0)), 2.0, ink);
+        if k == 0 {
+            let under = match (chrome, def) {
+                (Some(_), Some(d)) => d.accent2,
+                _ => lk.button,
+            };
+            p.rect_filled(Rect::from_min_size(pos2(x, bar.max.y - 3.0), vec2(w, 2.0)), 1.0, under);
+        }
+        x += w + 10.0;
+    }
+    // search
+    let sr = Rect::from_min_size(pos2(bar.max.x - 64.0, bar.center().y - 7.0), vec2(54.0, 14.0));
+    p.rect_filled(sr, 7.0, theme::blend(hf, hi, 0.10));
+    // the hunt card: a big number, a bar and Caught!
+    let body = Rect::from_min_max(pos2(r.min.x + 12.0, bar.max.y + 10.0), pos2(r.max.x - 12.0, r.max.y - 40.0));
+    let hero = Rect::from_min_size(body.min, vec2(body.width(), (body.height() * 0.58).max(60.0)));
+    if let Some(sh) = hard {
+        p.rect_filled(hero.translate(vec2(4.0, 4.0)), cr, sh);
+    } else if !glass {
+        p.rect_filled(hero.translate(vec2(0.0, 3.0)), cr, Color32::from_black_alpha(if lk.light { 10 } else { 40 }));
+    }
+    p.rect_filled(hero, cr, card_fill);
+    p.rect_stroke(hero, cr, Stroke::new(1.0f32, card_line));
+    p.text(hero.min + vec2(12.0, 14.0), Align2::LEFT_CENTER, "SHINY HUNT", ch::bold(9.0), s.muted);
+    p.text(hero.min + vec2(12.0, 36.0), Align2::LEFT_CENTER, "1,234", ch::heavy(22.0), s.text);
+    if hero.height() > 64.0 {
+        let pb = Rect::from_min_size(pos2(hero.min.x + 12.0, hero.max.y - 14.0), vec2(hero.width() * 0.55, 5.0));
+        p.rect_filled(pb, 2.5, theme::blend(s.card, s.text, 0.12));
+        p.rect_filled(Rect::from_min_size(pb.min, vec2(pb.width() * 0.62, 5.0)), 2.5, lk.accent);
+    }
+    let cb = Rect::from_min_size(pos2(hero.max.x - 76.0, hero.center().y - 11.0), vec2(64.0, 22.0));
+    if pixel {
+        p.add(theme::pixel_key(cb, lk.button, 0.0, 0.0));
+    } else {
+        p.rect_filled(cb, 11.0 * def.map_or(1.0, |d| d.round), lk.button);
+    }
+    p.text(cb.center(), Align2::CENTER_CENTER, "Caught!", ch::bold(10.0), ink_on(lk.button));
+    // two small cards
+    let row = Rect::from_min_max(pos2(body.min.x, hero.max.y + 8.0), body.max);
+    if row.height() > 16.0 {
+        let half = (row.width() - 8.0) / 2.0;
+        for k in 0..2 {
+            let c = Rect::from_min_size(pos2(row.min.x + k as f32 * (half + 8.0), row.min.y), vec2(half, row.height()));
+            if let Some(sh) = hard {
+                p.rect_filled(c.translate(vec2(3.0, 3.0)), cr, sh);
+            }
+            p.rect_filled(c, cr, card_fill);
+            p.rect_stroke(c, cr, Stroke::new(1.0f32, card_line));
+            p.rect_filled(Rect::from_min_size(c.min + vec2(10.0, 10.0), vec2(half * 0.4, 5.0)), 2.5, s.text);
+            if c.height() > 26.0 {
+                p.rect_filled(Rect::from_min_size(c.min + vec2(10.0, 20.0), vec2(half * 0.6, 4.0)), 2.0, s.muted);
+            }
+        }
+    }
+    // the dock: your hunt with Start overlay, then your apps
+    let dw = (r.width() * 0.62).clamp(150.0, 300.0);
+    let dock = Rect::from_center_size(pos2(r.center().x, r.max.y - 18.0), vec2(dw, 26.0));
+    p.rect_filled(dock, 13.0 * def.map_or(1.0, |d| d.round), if glass { gf } else { theme::blend(s.card, s.text, 0.06) });
+    p.rect_stroke(dock, 13.0, Stroke::new(1.0f32, card_line));
+    let cap = Rect::from_min_size(dock.min + vec2(4.0, 4.0), vec2(dw * 0.38, 18.0));
+    p.rect_filled(cap, 9.0, theme::blend(s.card, s.text, 0.10));
+    let go = Rect::from_min_size(pos2(cap.max.x - 30.0, cap.min.y + 2.0), vec2(28.0, 14.0));
+    p.rect_filled(go, 7.0, lk.button);
+    let cols = [lk.accent, PINK, GOLD, CYAN, GREEN];
+    let step = (dock.max.x - cap.max.x - 8.0) / cols.len() as f32;
+    for (k, c) in cols.into_iter().enumerate() {
+        let cx = cap.max.x + 4.0 + step * (k as f32 + 0.5);
+        let ir = Rect::from_center_size(pos2(cx, dock.center().y), vec2(16.0, 16.0));
+        if pixel {
+            // the pixel icons (Shiny Hunter, Pokédex, Card Collector, Stats, Boxes)
+            let icon = ["✨", "📖", "🃏", "📊", "📦"][k];
+            if let Some(bits) = theme::pixel_icon(icon) {
+                theme::pixel_chip(p, ir, bits, c, Color32::WHITE);
+            }
+        } else {
+            p.rect_filled(ir.shrink(1.0), 4.0, c);
+        }
+    }
+    p.rect_stroke(r, rad, Stroke::new(1.0f32, theme::blend(s.line, s.text, 0.08)));
+}
+
 /// The overlay's header strip in a look (sitting over a bit of "game").
 fn draw_mock_overlay(p: &egui::Painter, r: Rect, lk: &Look) {
     p.add(theme::gradient_rect(r, [12.0; 4], Color32::from_rgb(84, 138, 96), Color32::from_rgb(118, 170, 112)));
@@ -823,6 +1207,100 @@ fn palette_tile(ui: &mut egui::Ui, w: f32, name: &str, acc: [u8; 3], sec: Option
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// A theme as a tile: a little window in its colours, and its name.
+/// The ▶ on a theme tile (shown on hover): plays that theme's startup
+/// animation, in the light or dark and colours `a` gives it.
+pub(super) fn tile_play(ui: &mut egui::Ui, r: &egui::Response, a: &Appearance) {
+    let pr = Rect::from_center_size(pos2(r.rect.max.x - 20.0, r.rect.min.y + 20.0), vec2(24.0, 24.0));
+    let pb = ui.interact(pr, r.id.with("intro"), Sense::click());
+    if r.hovered() || pb.hovered() {
+        let hot = pb.hovered();
+        let p = ui.painter();
+        p.circle_filled(pr.center(), 12.0, if hot { kit::primary() } else { Color32::from_black_alpha(150) });
+        let c = pr.center() + vec2(1.5, 0.0);
+        p.add(egui::Shape::convex_polygon(vec![c + vec2(-4.0, -5.5), c + vec2(5.5, 0.0), c + vec2(-4.0, 5.5)], Color32::WHITE, Stroke::NONE));
+    }
+    if pb.on_hover_text("Play this theme's startup animation").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+        theme::preview_intro(a);
+    }
+}
+
+pub(super) fn theme_tile(ui: &mut egui::Ui, w: f32, name: &str, lk: &Look, def: Option<theme::ThemeDef>, on: bool) -> egui::Response {
+    let chrome = def.and_then(|d| d.chrome);
+    let glow = def.and_then(|d| d.glow);
+    let glass = def.is_some_and(|d| d.glass);
+    let (r, resp) = ui.allocate_exact_size(vec2(w, 100.0), Sense::click());
+    let p = ui.painter_at(r.expand(4.0));
+    let t = kit::anim(ui.ctx(), resp.id.with("h"), resp.hovered() || on, kit::QUICK);
+    let fill = if on { kit::SELECTED_BG() } else { theme::blend(kit::CARD(), kit::CARD_HOVER(), t) };
+    p.rect_filled(r, 12.0, fill);
+    let s = &lk.s;
+    let win = Rect::from_min_size(r.min + vec2(8.0, 8.0), vec2(w - 16.0, 58.0));
+    p.rect_filled(win, 8.0, s.page);
+    // its sky (Synthwave)
+    if let Some((top, bottom)) = def.and_then(|d| d.backdrop) {
+        // (rounded ends in the end colours, the wash in between)
+        let k = 8.0;
+        p.rect_filled(Rect::from_min_size(win.min, vec2(win.width(), k + 1.0)), egui::Rounding { nw: k, ne: k, sw: 0.0, se: 0.0 }, top);
+        p.rect_filled(Rect::from_min_max(pos2(win.min.x, win.max.y - k - 1.0), win.max), egui::Rounding { nw: 0.0, ne: 0.0, sw: k, se: k }, bottom);
+        theme::paint_backdrop_colours(&p, win.shrink2(vec2(0.0, k)), top, bottom);
+    }
+    // its glows (Aurora glass)
+    if let Some((a, b)) = glow {
+        let gp = p.with_clip_rect(win.shrink(1.0));
+        theme::glow_spot(&gp, win.min + vec2(win.width() * 0.15, 6.0), win.width() * 0.7, a, 0.30);
+        theme::glow_spot(&gp, win.min + vec2(win.width() * 0.85, 18.0), win.width() * 0.7, b, 0.34);
+    }
+    // title bar: the theme's own colour, or the page's with a hairline
+    let bar = Rect::from_min_size(win.min, vec2(win.width(), 13.0));
+    match chrome {
+        Some((c, ink)) => {
+            p.rect_filled(bar, egui::Rounding { nw: 8.0, ne: 8.0, sw: 0.0, se: 0.0 }, c);
+            p.rect_filled(Rect::from_min_size(bar.min + vec2(8.0, 5.0), vec2(22.0, 3.0)), 1.5, ink);
+        }
+        None => {
+            p.rect_filled(Rect::from_min_size(bar.min + vec2(5.0, 0.0), vec2(bar.width() - 10.0, 1.5)), 0.0, lk.accent);
+            p.rect_filled(Rect::from_min_size(bar.min + vec2(8.0, 5.0), vec2(22.0, 3.0)), 1.5, s.text);
+        }
+    }
+    // a card with a number, a line of text and a button
+    let card = Rect::from_min_max(win.min + vec2(7.0, 18.0), win.max - vec2(7.0, 8.0));
+    let cr = 5.0 * def.map_or(1.0, |d| d.round);
+    if let Some(sh) = def.and_then(|d| d.hard_shadow) {
+        p.rect_filled(card.translate(vec2(2.5, 2.5)), cr, sh);
+    }
+    if glass {
+        let (gf, gr) = theme::glass_colours(lk.light);
+        p.rect_filled(card, cr, gf);
+        p.rect_stroke(card, cr, Stroke::new(1.0f32, gr));
+    } else {
+        p.rect_filled(card, cr, s.card);
+        p.rect_stroke(card, cr, Stroke::new(1.0f32, s.line));
+    }
+    p.rect_filled(Rect::from_min_size(card.min + vec2(6.0, 7.0), vec2(card.width() * 0.32, 6.0)), 3.0, s.text);
+    p.rect_filled(Rect::from_min_size(card.min + vec2(6.0, 18.0), vec2(card.width() * 0.48, 4.0)), 2.0, s.muted);
+    let btn = Rect::from_min_size(pos2(card.max.x - 34.0, card.center().y - 6.0), vec2(28.0, 12.0));
+    if def.is_some_and(|d| d.pixel) {
+        // (a tiny pixel key: outline, fill, bevel)
+        p.rect_filled(btn.expand(1.5), 0.0, theme::blend(lk.button, Color32::BLACK, 0.82));
+        p.rect_filled(btn, 0.0, lk.button);
+        p.rect_filled(Rect::from_min_size(btn.min, vec2(btn.width(), 2.0)), 0.0, theme::blend(lk.button, Color32::WHITE, 0.55));
+        p.rect_filled(Rect::from_min_max(pos2(btn.min.x, btn.max.y - 2.0), btn.max), 0.0, theme::blend(lk.button, Color32::BLACK, 0.28));
+    } else {
+        p.rect_filled(btn, 6.0 * def.map_or(1.0, |d| d.round), lk.button);
+    }
+    if on {
+        let c = pos2(win.max.x - 10.0, win.max.y - 10.0);
+        p.circle_filled(c, 8.0, Color32::WHITE);
+        p.add(egui::Shape::line(vec![c + vec2(-3.5, 0.0), c + vec2(-1.0, 2.5), c + vec2(4.0, -3.0)], Stroke::new(2.0f32, lk.accent)));
+    }
+    p.rect_stroke(win, 8.0, Stroke::new(1.0f32, theme::blend(s.line, s.text, 0.10)));
+    p.text(pos2(r.min.x + 10.0, win.max.y + 17.0), Align2::LEFT_CENTER, name, ch::bold(12.0), TEXT());
+    let stroke = if on { Stroke::new(2.0f32, kit::ACCENT()) } else { Stroke::new(1.0f32, kit::LINE()) };
+    p.rect_stroke(r, 12.0, stroke);
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 fn card_head(ui: &mut egui::Ui, icon: &str, col: Color32, title: &str) {
     ui.horizontal(|ui| {
         let (r, _) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::hover());
@@ -878,5 +1356,10 @@ mod tests {
         assert_eq!(parse_look(&code, &Appearance::default()), Some(a.clone()));
         assert_eq!(parse_look(&code.to_lowercase(), &Appearance::default()), Some(a));
         assert!(parse_look("hello", &Appearance::default()).is_none());
+        let mut b = Appearance::default();
+        b.plus_theme = PlusTheme::Studio;
+        let code = look_code(&b);
+        assert!(code.ends_with("-T1"));
+        assert_eq!(parse_look(&code, &Appearance::default()), Some(b));
     }
 }
